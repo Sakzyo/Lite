@@ -36,6 +36,9 @@ launched process. The Codex Run action uses the same script.
   optional API tokens kept in Keychain for access to private repositories.
 - Browser Task Manager with live Chromium resource measurements, sorting, and
   guarded process termination; customizable, persisted native menu shortcuts.
+- Native ad/tracker blocking and cosmetic hiding using bundled uBlock Origin Lite
+  filter data, with a sidebar shield and persistent per-site controls. See the
+  [supported subset and filter provenance](docs/content-blocking.md).
 - Read-only Arc migration with preview, schema variations, ordering, nested folders,
   multiple containers, and safe rejection of broken references. HTML, Chromium JSON,
   and Safari plist bookmark import are separate workflows.
@@ -71,7 +74,8 @@ is not evidence of a security audit. See [release status](docs/release-status.md
 - [Performance and measurements](docs/performance.md)
 - [Keyboard shortcuts](docs/shortcuts.md)
 - [Verification record](docs/verification.md)
+- [Native content blocking](docs/content-blocking.md)
 
-CEF and Chromium notices are included in the application Resources directory.
+CEF, Chromium, uBlock Origin Lite, and Public Suffix List notices are included in the application Resources directory.
 Lite contains no account service, telemetry SDK, AI subsystem, or proprietary Arc
 assets. Arc names occur only when identifying an import source or imported data.

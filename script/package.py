@@ -26,6 +26,7 @@ for suffix, bundle in [('', ''), (' (Alerts)', '.alerts'), (' (GPU)', '.gpu'), (
     subprocess.run(['codesign', '--force', '--sign', '-', str(helper.parent)], check=True, capture_output=True)
 for source in ['LICENSE.txt', 'CREDITS.html']:
     shutil.copy2(root/'vendor/cef'/source, contents/'Resources'/source)
+shutil.copytree(root/'resources/ContentBlocking', contents/'Resources/ContentBlocking', dirs_exist_ok=True)
 if (root/'resources/Lite.icns').exists():
     shutil.copy2(root/'resources/Lite.icns', contents/'Resources/Lite.icns')
 subprocess.run([sys.executable, str(root/'script/test_package.py')], check=True)

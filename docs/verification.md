@@ -126,3 +126,24 @@ VoiceOver, Intel hardware, older supported macOS versions, crash/power-loss and
 disk-full recovery, energy use, and baseline-browser comparisons remain release
 qualification work. See [release status](release-status.md) and
 [performance methodology](performance.md).
+
+## Native uBOL filtering — 22–23 September 2026
+
+- Canonical build and ad-hoc bundle signing passed. All 98 existing core checks
+  and 50 new content-blocking checks passed, plus both packaging checks.
+- All 36 bundled Chromium checks passed in an isolated profile, including the
+  original navigation, storage, lifecycle, login-fill, and task-manager checks.
+- Real upstream filters stopped direct and redirected tracker requests before
+  they reached the loopback server. Service-worker fetches were also blocked.
+  Allowed content remained accessible; site/global pause restored requests and
+  cosmetic content, and re-enabling restored blocking. Private-context filtering
+  remained enabled while the regular context was paused.
+- Cosmetic hiding passed with `style-src 'none'`, including elements inserted
+  after page load. The native sheet and sidebar were visually checked in a
+  separate signed app/profile. Its pause/apply/reload/re-enable flow was exercised
+  through the UI; no top bar was added.
+- Indexed matching of 10,000 benign synthetic requests took approximately 0.12 s
+  on this Mac. This is a focused matcher measurement, not a browsing benchmark.
+- Scope, skipped-rule categories, pinned versions, and licensing are documented
+  in [content blocking](content-blocking.md). Filter resources add about 8.2 MiB
+  to the bundle, including the compressed upstream input sources.

@@ -29,6 +29,7 @@ class RenderApp : public CefApp, public CefRenderProcessHandler {
     }
     void OnContextCreated(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame,
                           CefRefPtr<CefV8Context> context) override {
+        frame->SendProcessMessage(PID_BROWSER, CefProcessMessage::Create("LiteCosmeticReady"));
         context->GetGlobal()->SetValue(
             "__liteLifecycle", CefV8Value::CreateFunction("__liteLifecycle", new Lifecycle),
             static_cast<cef_v8_propertyattribute_t>(V8_PROPERTY_ATTRIBUTE_READONLY |

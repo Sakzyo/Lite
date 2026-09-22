@@ -1,4 +1,5 @@
 #import "LTEngine.h"
+#import "LTContentBlocker.h"
 #include "include/cef_app.h"
 #include "include/cef_browser.h"
 #include "include/cef_client.h"
@@ -6,12 +7,16 @@
 #include "include/cef_devtools_message_observer.h"
 #include "include/cef_parser.h"
 #include "include/cef_request_context.h"
+#include "include/cef_request_context_handler.h"
+#include "include/cef_resource_request_handler.h"
 #include "include/cef_ssl_status.h"
 #include "include/cef_task.h"
 #include "include/cef_task_manager.h"
 #include "include/wrapper/cef_closure_task.h"
 #include <map>
 #include <set>
+#include <atomic>
+#include <memory>
 
 static NSString *N(const CefString &s) {
     return [NSString stringWithUTF8String:s.ToString().c_str()] ?: @"";
@@ -64,21 +69,28 @@ void LTQuitWhenBrowsersClose(void) {
         CefQuitMessageLoop();
 }
 
+static CefRefPtr<CefRequestContextHandler> BlockingContext(LTBlockingPolicy *policy);
 @interface LTBrowserContext () {
   @public
     CefRefPtr<CefRequestContext> _context;
+    LTBlockingPolicy *_blocking;
 }
 @end
 @implementation LTBrowserContext
 - (instancetype)initPrivate:(BOOL)privateMode {
     if ((self = [super init])) {
+        [LTContentBlocker shared]; // Compile once on the UI thread, before requests begin.
+        _blocking = [LTBlockingPolicy new];
         if (privateMode) {
             CefRequestContextSettings settings;
-            _context = CefRequestContext::CreateContext(settings, nullptr);
+            _context = CefRequestContext::CreateContext(settings, BlockingContext(_blocking));
         } else
-            _context = CefRequestContext::GetGlobalContext();
+            _context = CefRequestContext::CreateContext(CefRequestContext::GetGlobalContext(), BlockingContext(_blocking));
     }
     return self;
+}
+- (void)updateBlockingPreferences:(NSDictionary *)preferences {
+    [_blocking updatePreferences:preferences];
 }
 - (void)clearData {
     _context->GetCookieManager(nullptr)->DeleteCookies("", "", nullptr);
@@ -88,16 +100,81 @@ void LTQuitWhenBrowsersClose(void) {
 }
 @end
 
+struct BlockingState {
+    std::atomic<NSUInteger> count{0};
+    std::atomic<unsigned> generation{0};
+};
 @interface LTPage () {
   @public
     CefRefPtr<CefBrowser> _browser;
     LTBrowserContext *_context;
     std::map<uint32_t, CefRefPtr<CefDownloadItemCallback>> _downloads;
     BOOL _discarding;
+    std::shared_ptr<BlockingState> _blockingState;
 }
 - (void)didClose;
 @end
-static bool CreatePopup(CefWindowInfo &info, CefRefPtr<CefClient> &client);
+static bool CreatePopup(CefWindowInfo &info, CefRefPtr<CefClient> &client, LTBrowserContext *context);
+
+static NSString *BlockingResourceType(cef_resource_type_t type) {
+    switch (type) {
+        case RT_MAIN_FRAME: return @"main_frame";
+        case RT_SUB_FRAME: return @"sub_frame";
+        case RT_STYLESHEET: return @"stylesheet";
+        case RT_SCRIPT: case RT_WORKER: case RT_SHARED_WORKER: case RT_SERVICE_WORKER: return @"script";
+        case RT_IMAGE: case RT_FAVICON: return @"image";
+        case RT_FONT_RESOURCE: return @"font";
+        case RT_OBJECT: return @"object";
+        case RT_MEDIA: return @"media";
+        case RT_XHR: return @"xmlhttprequest";
+        case RT_PING: return @"ping";
+        default: return @"other";
+    }
+}
+class BlockingRequest : public CefResourceRequestHandler {
+  public:
+    BlockingRequest(LTBlockingPolicy *policy, const CefString &initiator,
+                    std::shared_ptr<BlockingState> state)
+        : policy_(policy), initiator_(N(initiator)), state_(state), generation_(state ? state->generation.load() : 0) {}
+    cef_return_value_t OnBeforeResourceLoad(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame>,
+                                            CefRefPtr<CefRequest> request, CefRefPtr<CefCallback>) override {
+        @autoreleasepool {
+            NSString *url = N(request->GetURL());
+            auto main = browser ? browser->GetMainFrame() : nullptr;
+            NSString *top = request->GetResourceType() == RT_MAIN_FRAME ? url : main ? N(main->GetURL()) : initiator_;
+            if ([policy_ enabledForURL:top] && [[LTContentBlocker shared] blocksURL:url
+                    initiator:initiator_ type:BlockingResourceType(request->GetResourceType())
+                    method:N(request->GetMethod())]) {
+                if (state_ && generation_ == state_->generation.load()) ++state_->count;
+                return RV_CANCEL;
+            }
+        }
+        return RV_CONTINUE;
+    }
+  private:
+    LTBlockingPolicy *__strong policy_;
+    NSString *__strong initiator_;
+    std::shared_ptr<BlockingState> state_;
+    unsigned generation_;
+    IMPLEMENT_REFCOUNTING(BlockingRequest);
+};
+class BlockingContextHandler : public CefRequestContextHandler {
+  public:
+    explicit BlockingContextHandler(LTBlockingPolicy *policy) : policy_(policy) {}
+    CefRefPtr<CefResourceRequestHandler> GetResourceRequestHandler(
+        CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>, CefRefPtr<CefRequest>, bool, bool,
+        const CefString &initiator, bool &) override {
+        // Service-worker requests can have no browser/frame. Use their initiating
+        // origin for site policy, and do not attribute them to an arbitrary tab.
+        return new BlockingRequest(policy_, initiator, nullptr);
+    }
+  private:
+    LTBlockingPolicy *__strong policy_;
+    IMPLEMENT_REFCOUNTING(BlockingContextHandler);
+};
+static CefRefPtr<CefRequestContextHandler> BlockingContext(LTBlockingPolicy *policy) {
+    return new BlockingContextHandler(policy);
+}
 class SaveSource : public CefStringVisitor {
   public:
     explicit SaveSource(NSURL *url) : url_(url) {}
@@ -165,7 +242,7 @@ class Client : public CefClient,
                public CefFocusHandler,
                public CefJSDialogHandler {
   public:
-    explicit Client(LTPage *p) : page_(p) {}
+    explicit Client(LTPage *p) : page_(p), blocking_(p->_context->_blocking), blockingState_(p->_blockingState) {}
     CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override {
         return this;
     }
@@ -177,6 +254,25 @@ class Client : public CefClient,
     }
     CefRefPtr<CefRequestHandler> GetRequestHandler() override {
         return this;
+    }
+    CefRefPtr<CefResourceRequestHandler> GetResourceRequestHandler(
+        CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>, CefRefPtr<CefRequest>, bool, bool,
+        const CefString &initiator, bool &) override {
+        return new BlockingRequest(blocking_, initiator, blockingState_);
+    }
+    bool OnBeforeBrowse(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame,
+                        CefRefPtr<CefRequest>, bool, bool) override {
+        if (frame->IsMain()) { ++blockingState_->generation; blockingState_->count = 0; }
+        return false;
+    }
+    void InjectCosmetics(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame) {
+        auto main = browser->GetMainFrame();
+        if (!main || ![blocking_ cosmeticEnabledForURL:N(main->GetURL())]) return;
+        NSString *script = [[LTContentBlocker shared] cosmeticScriptForURL:N(frame->GetURL())];
+        if (script.length) frame->ExecuteJavaScript(C(script), frame->GetURL(), 0);
+    }
+    void OnLoadEnd(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame, int) override {
+        InjectCosmetics(browser, frame);
     }
     CefRefPtr<CefPermissionHandler> GetPermissionHandler() override {
         return this;
@@ -252,7 +348,8 @@ class Client : public CefClient,
                        const CefString &, WindowOpenDisposition, bool gesture,
                        const CefPopupFeatures &, CefWindowInfo &info, CefRefPtr<CefClient> &client,
                        CefBrowserSettings &, CefRefPtr<CefDictionaryValue> &, bool *) override {
-        return !gesture || !CreatePopup(info, client);
+        LTPage *p = page_;
+        return !gesture || !p || !CreatePopup(info, client, p->_context);
     }
     bool OnOpenURLFromTab(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>, const CefString &url,
                           WindowOpenDisposition, bool) override {
@@ -417,9 +514,13 @@ class Client : public CefClient,
                 @"canceled" : @(d->IsCanceled())
             }];
     }
-    bool OnProcessMessageReceived(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame,
+    bool OnProcessMessageReceived(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame,
                                   CefProcessId source,
                                   CefRefPtr<CefProcessMessage> message) override {
+        if (source == PID_RENDERER && message->GetName() == "LiteCosmeticReady") {
+            InjectCosmetics(browser, frame);
+            return true;
+        }
         if (source != PID_RENDERER || message->GetName() != "LiteLifecycle")
             return false;
         auto args = message->GetArgumentList();
@@ -447,6 +548,8 @@ class Client : public CefClient,
 
   private:
     __weak LTPage *page_;
+    LTBlockingPolicy *__strong blocking_;
+    std::shared_ptr<BlockingState> blockingState_;
     std::set<CefString> audio_frames_, pip_frames_;
     std::set<uint32_t> download_ids_;
     IMPLEMENT_REFCOUNTING(Client);
@@ -456,6 +559,7 @@ class Client : public CefClient,
                        url:(NSString *)url
                    context:(LTBrowserContext *)context {
     if ((self = [super init])) {
+        _blockingState = std::make_shared<BlockingState>();
         _identifier = identifier;
         _url = url;
         _title = @"New Tab";
@@ -470,6 +574,7 @@ class Client : public CefClient,
 - (BOOL)alive {
     return _browser != nullptr;
 }
+- (NSUInteger)blockedRequests { return _blockingState->count.load(); }
 - (void)loadIfNeeded {
     if (_browser || _closing)
         return;
@@ -680,7 +785,7 @@ static NSMutableArray<LTPopup *> *popups;
 - (void)page:(LTPage *)page downloadChanged:(NSDictionary *)download {
 }
 @end
-static bool CreatePopup(CefWindowInfo &info, CefRefPtr<CefClient> &client) {
+static bool CreatePopup(CefWindowInfo &info, CefRefPtr<CefClient> &client, LTBrowserContext *context) {
     if (!popups)
         popups = [NSMutableArray new];
     if (popups.count >= 10)
@@ -696,7 +801,7 @@ static bool CreatePopup(CefWindowInfo &info, CefRefPtr<CefClient> &client) {
     LTPopup *popup = [[LTPopup alloc] initWithWindow:window];
     LTPage *page = [[LTPage alloc] initWithID:NSUUID.UUID.UUIDString
                                           url:@"about:blank"
-                                      context:nil];
+                                      context:context];
     popup.page = page;
     page.delegate = popup;
     page.keepAwake = YES;

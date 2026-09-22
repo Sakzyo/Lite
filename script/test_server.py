@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """Loopback-only, deterministic browser verification pages. No external services."""
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-import struct, zlib
+import json, struct, zlib
+from urllib.parse import urlsplit, parse_qs
+
+blocking_hits = {}
 
 def png():
     def chunk(kind, data):
@@ -12,7 +15,53 @@ def png():
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
-        if self.path == '/echo':
+        parsed = urlsplit(self.path)
+        phase = parse_qs(parsed.query).get('phase', ['enabled'])[0]
+        if parsed.path == '/content-blocking':
+            body = '''<!doctype html><meta charset="utf-8"><title>Lite content blocking test</title>
+<h1>Content blocking verification</h1><p id="normal-content">Normal content remains visible.</p>
+<div id="AC_ad">Advertising fixture</div>
+<script nonce="lite-test">addEventListener('load',async()=>{
+ const phase=new URL(location.href).searchParams.get('phase')||'enabled';
+ const get=async path=>{try{return (await fetch(path,{cache:'no-store'})).ok}catch{return false}};
+ const blocked=await get('/webtracking.min.js?phase='+phase);
+ const redirected=await get('/blocking-redirect?phase='+phase);
+ const allowed=await get('/echo');
+ await navigator.serviceWorker.register('/blocking-worker.js');
+ const registration=await navigator.serviceWorker.ready;
+ const workerBlocked=await new Promise(resolve=>{const channel=new MessageChannel();
+  const timer=setTimeout(()=>resolve(null),3000);
+  channel.port1.onmessage=e=>{clearTimeout(timer);resolve(e.data)};
+  registration.active.postMessage(phase,[channel.port2]);});
+ const late=document.createElement('div');late.id='AD_160';late.textContent='Dynamically inserted advertising';document.body.append(late);
+ const hits=await(await fetch('/blocking-hits?phase='+phase)).json();
+ window.blockingResult={blocked:!blocked,redirectBlocked:!redirected,workerBlocked,allowed,hits,
+  cosmetic:getComputedStyle(document.querySelector('#AC_ad')).display==='none',
+  dynamicCosmetic:getComputedStyle(late).display==='none',
+  normalVisible:getComputedStyle(document.querySelector('#normal-content')).display!=='none'};
+});</script>'''.encode()
+            content = 'text/html'
+        elif parsed.path == '/blocking-worker.js':
+            body = b'''self.addEventListener('install',()=>self.skipWaiting());
+self.addEventListener('activate',e=>e.waitUntil(self.clients.claim()));
+self.addEventListener('message',e=>e.waitUntil((async()=>{
+ let blocked=false;try{await fetch('/webtracking.min.js?phase='+e.data,{cache:'no-store'})}catch{blocked=true}
+ e.ports[0].postMessage(blocked);
+})()));'''
+            content = 'application/javascript'
+        elif parsed.path == '/blocking-redirect':
+            self.send_response(302)
+            self.send_header('Location', '/webtracking.min.js?phase='+phase)
+            self.send_header('Cache-Control', 'no-store')
+            self.send_header('Content-Length', '0')
+            self.end_headers()
+            return
+        elif parsed.path == '/webtracking.min.js':
+            blocking_hits[phase] = blocking_hits.get(phase, 0) + 1
+            body, content = b'/* tracker fixture, no tracking */', 'application/javascript'
+        elif parsed.path == '/blocking-hits':
+            body, content = json.dumps(blocking_hits.get(phase, 0)).encode(), 'application/json'
+        elif self.path == '/echo':
             body, content = b'lite-ok', 'text/plain'
         elif self.path == '/second':
             body, content = b'<title>Second Page</title><h1>Second page</h1><a href="/">Back to first</a>', 'text/html'
@@ -38,6 +87,10 @@ class Handler(BaseHTTPRequestHandler):
         else:
             body = b'''<!doctype html><title>Lite Test Page</title><meta charset="utf-8"><style>body{font:18px system-ui;background:#f4f6f3;color:#24372d;padding:48px}h1{font-size:36px}input,button{font:inherit;padding:10px;margin:8px}a{color:#287850}</style><h1>Lite browser test</h1><p>Chromium rendering, storage, navigation, and form protection.</p><input placeholder="Form protection"><a href="/second">Next page</a><button onclick="window.open('/second','login','width=600,height=500')">Open popup</button><a download="lite-test.txt" href="/echo">Download test file</a>'''
             content = 'text/html'
-        self.send_response(200); self.send_header('Content-Type', content); self.send_header('Content-Length', str(len(body))); self.end_headers(); self.wfile.write(body)
+        self.send_response(200)
+        if parsed.path == '/content-blocking':
+            self.send_header('Content-Security-Policy', "default-src 'self'; script-src 'self' 'nonce-lite-test'; style-src 'none'")
+        self.send_header('Cache-Control', 'no-store')
+        self.send_header('Content-Type', content); self.send_header('Content-Length', str(len(body))); self.end_headers(); self.wfile.write(body)
     def log_message(self, *args): pass
 ThreadingHTTPServer(('127.0.0.1', 18743), Handler).serve_forever()

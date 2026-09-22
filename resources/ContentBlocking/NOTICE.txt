@@ -1,0 +1,26 @@
+Lite native content blocking
+
+Filter data derived from uBlock Origin Lite by Raymond Hill and contributors:
+https://github.com/uBlockOrigin/uBOL-home
+Version and exact source revision: provenance.json
+
+uBlock Origin Lite is licensed under GNU GPL version 3 or, at your option,
+any later version. See COPYING-uBOL.txt. It is provided without warranty.
+The unmodified input files and upstream license are in upstream-source.tar.xz.
+The conversion source is script/import_ubol.py in the Lite source tree.
+Lite's native adapter is lite/browser/LTContentBlocker.h/.mm and LTEngine.mm.
+This integration is a subset and is not an official uBlock Origin Lite release.
+
+Included rulesets: uBlock filters, EasyList, EasyPrivacy, Peter Lowe's list,
+uBlock Badware, and Online Malicious URL Blocklist (URLhaus).
+Upstream ruleset names and home URLs are retained in the source archive's
+chromium/rulesets/ruleset-details.json. No upstream JavaScript is executed.
+
+Public Suffix List: https://publicsuffix.org/list/public_suffix_list.dat
+Copyright and Mozilla Public License 2.0 notice are retained in the original
+public_suffix_list.dat. suffixes.txt is its ASCII/IDNA-derived representation.
+MPL 2.0: https://mozilla.org/MPL/2.0/
+
+When distributing binaries that incorporate these materials, retain these
+notices and licenses and provide the corresponding source, including Lite's
+integration and build/conversion scripts, as required by the applicable licenses.

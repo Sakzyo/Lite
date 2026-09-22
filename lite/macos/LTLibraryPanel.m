@@ -34,7 +34,7 @@
     _content = LTStack(@[], NSUserInterfaceLayoutOrientationVertical, 16);
     LTPin(_content, root, 22);
     if ([mode isEqual:@"settings"]) {
-        [self.window setContentSize:NSMakeSize(620, 600)];
+        [self.window setContentSize:NSMakeSize(620, 640)];
         [self buildSettings];
     } else {
         _search = [NSSearchField new];
@@ -94,6 +94,7 @@
         @[ @"Clear browsing data…", @"clearData" ], @[ @"Manage saved logins…", @"passwords" ],
         @[ @"Keyboard shortcuts…", @"shortcuts" ],
         @[ @"Browser task manager…", @"taskManager" ],
+        @[ @"Content blocking…", @"contentBlocking" ],
         @[ @"New GitHub Live Folder…", @"githubFolder" ],
         @[ @"Extensions and compatibility", @"extensions" ]
     ];

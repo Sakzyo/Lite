@@ -10,6 +10,7 @@ NS_ASSUME_NONNULL_BEGIN
 @end
 @interface LTBrowserContext : NSObject
 - (instancetype)initPrivate:(BOOL)privateMode;
+- (void)updateBlockingPreferences:(nullable NSDictionary *)preferences;
 - (void)clearData;
 @end
 @interface LTPage : NSObject
@@ -35,6 +36,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic) BOOL pictureInPicture;
 @property (nonatomic) double lastVisible;
 @property (nonatomic, readonly) BOOL alive;
+@property (nonatomic, readonly) NSUInteger blockedRequests;
 - (instancetype)initWithID:(NSString *)identifier
                        url:(NSString *)url
                    context:(nullable LTBrowserContext *)context;

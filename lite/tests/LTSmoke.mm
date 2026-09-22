@@ -70,6 +70,10 @@ static LTSmoke *running;
     _window.title = @"Lite — Engine Verification";
     _window.releasedWhenClosed = NO;
     _normal = [[LTPage alloc] initWithID:@"normal" url:_origin context:_normalContext];
+    if ([NSProcessInfo.processInfo.arguments containsObject:@"--lite-blocking-smoke"]) {
+        _stage = 19;
+        _normal.url = [_origin stringByAppendingString:@"content-blocking?phase=enabled"];
+    }
     _normal.delegate = self;
     _normal.visible = YES;
     _window.contentView = _normal.container;
@@ -218,7 +222,55 @@ static LTSmoke *running;
         _stage = 18;
     } else if (_stage == 18 && !_normal.loading && !_normal.errorText.length) {
         _results[@"taskManagerReloadAfterEnd"] = @YES;
-        [self finish];
+        _stage = 19;
+        [_normal navigate:[_origin stringByAppendingString:@"content-blocking?phase=enabled"]];
+    } else if ((_stage == 19 || _stage == 21 || _stage == 23 || _stage == 25) && !_normal.loading &&
+               [_normal.title isEqual:@"Lite content blocking test"]) {
+        NSInteger phase = _stage++;
+        [_normal evaluateForTesting:@"window.blockingResult || null" completion:^(id value, BOOL success) {
+            if (!success || ![value isKindOfClass:NSDictionary.class]) { self.stage = phase; return; }
+            BOOL paused = phase == 21;
+            NSString *key = phase == 19 ? @"blockingEnabled" : phase == 21 ? @"blockingSitePause" :
+                            phase == 23 ? @"blockingResumed" : @"blockingGlobalPause";
+            if (phase == 25) paused = YES;
+            self.results[key] = @([value[@"blocked"] boolValue] != paused &&
+                [value[@"redirectBlocked"] boolValue] != paused && [value[@"allowed"] boolValue] &&
+                value[@"workerBlocked"] != NSNull.null && [value[@"workerBlocked"] boolValue] != paused &&
+                [value[@"cosmetic"] boolValue] != paused && [value[@"dynamicCosmetic"] boolValue] != paused &&
+                [value[@"normalVisible"] boolValue] &&
+                (paused ? [value[@"hits"] integerValue] >= 3 : [value[@"hits"] integerValue] == 0));
+            self.results[[key stringByAppendingString:@"Details"]] = value;
+            if (phase == 19) {
+                self.results[@"blockingCounter"] = @(self.normal.blockedRequests >= 2);
+                [self.normalContext updateBlockingPreferences:@{@"disabledSites": @[@"127.0.0.1"]}];
+                self.stage = 21;
+                [self.normal navigate:[self.origin stringByAppendingString:@"content-blocking?phase=paused"]];
+            } else if (phase == 21) {
+                [self.normalContext updateBlockingPreferences:nil];
+                self.stage = 23;
+                [self.normal navigate:[self.origin stringByAppendingString:@"content-blocking?phase=resumed"]];
+            } else if (phase == 23) {
+                [self.normalContext updateBlockingPreferences:@{@"disabled": @YES}];
+                self.stage = 25;
+                [self.normal navigate:[self.origin stringByAppendingString:@"content-blocking?phase=global"]];
+            } else {
+                // The regular context is paused; a fresh private context must still block.
+                self.privatePage = [[LTPage alloc] initWithID:@"blocking-private"
+                    url:[self.origin stringByAppendingString:@"content-blocking?phase=private"] context:self.privateContext];
+                self.privatePage.delegate = self;
+                [self.privatePage loadIfNeeded];
+                self.stage = 27;
+            }
+        }];
+    } else if (_stage == 27 && !_privatePage.loading && [_privatePage.title isEqual:@"Lite content blocking test"]) {
+        _stage = 28;
+        [_privatePage evaluateForTesting:@"window.blockingResult || null" completion:^(id value, BOOL success) {
+            if (!success || ![value isKindOfClass:NSDictionary.class]) { self.stage = 27; return; }
+            self.results[@"blockingPrivateIsolation"] = @([value[@"blocked"] boolValue] &&
+                [value[@"workerBlocked"] boolValue] && [value[@"cosmetic"] boolValue] &&
+                [value[@"hits"] integerValue] == 0 && self.privatePage.blockedRequests >= 2);
+            [self finish];
+        }];
     }
 }
 - (void)checkLoginScripts {

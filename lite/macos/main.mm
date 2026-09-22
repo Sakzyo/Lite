@@ -293,6 +293,7 @@ static BOOL smokeTest = NO;
             @[ @"Enter Full Screen", @"fullScreen", @"" ],
             @[ @"Developer Tools", @"devTools", @"I" ],
             @[ @"Browser Task Manager", @"taskManager", @"" ],
+            @[ @"Content Blocking…", @"contentBlocking", @"" ],
             @[ @"Keyboard Shortcuts…", @"shortcuts", @"" ]
         ],
         @[

@@ -1,4 +1,5 @@
 #import "LTWindow.h"
+#import "../browser/LTContentBlocker.h"
 #import "../migration/LTImporter.h"
 #import "../model/LTGitHub.h"
 #import "LTCommandPanel.h"
@@ -84,7 +85,7 @@
     NSView *_content;
     NSView *_landing;
     NSView *_parking;
-    NSButton *_address, *_back, *_forward, *_reload, *_media;
+    NSButton *_address, *_back, *_forward, *_reload, *_media, *_shield;
     NSTextField *_error;
     NSSearchField *_find;
     NSStackView *_findBar;
@@ -129,6 +130,7 @@
             !store.privateMode && logins ? [[LTPasswords alloc] initWithStore:logins] : nil;
         _mini = mini;
         _context = [[LTBrowserContext alloc] initPrivate:store.privateMode];
+        [_context updateBlockingPreferences:store.profile.settings[@"contentBlocking"]];
         _pageMap = [NSMutableDictionary new];
         _closed = [NSMutableArray new];
         _downloadRows = [NSMutableDictionary new];
@@ -219,10 +221,11 @@
     [_address setContentCompressionResistancePriority:250
                                        forOrientation:NSLayoutConstraintOrientationHorizontal];
     _media = LTButton(@"play.rectangle", @"Media controls", self, @selector(media:));
+    _shield = LTButton(@"shield.lefthalf.filled", @"Content blocking", self, @selector(contentBlocking:));
     NSButton *security =
         LTButton(@"info.circle", @"Site information and permissions", self, @selector(siteInfo:));
     NSArray *controls = @[
-        _back, _forward, _reload, security, _media,
+        _back, _forward, _reload, security, _shield, _media,
         LTButton(@"rectangle.split.2x1", @"Split View", self, @selector(split:)),
         LTButton(@"square.and.arrow.up", @"Share page", self, @selector(share:))
     ];
@@ -424,6 +427,7 @@
         LTAlert(self.window, @"Could not save", e.localizedDescription);
 }
 - (void)storeChanged:(NSNotification *)note {
+    [_context updateBlockingPreferences:_store.profile.settings[@"contentBlocking"]];
     if (!_metadataChange)
         [self refresh];
 }
@@ -572,6 +576,13 @@
                               : nil;
     _address.imagePosition = NSImageLeft;
     _address.toolTip = p.url;
+    LTBlockingPolicy *policy = [LTBlockingPolicy new];
+    [policy updatePreferences:_store.profile.settings[@"contentBlocking"]];
+    BOOL blockingEnabled = [LTContentBlocker shared] && [policy enabledForURL:p.url ?: @""];
+    _shield.image = [NSImage imageWithSystemSymbolName:blockingEnabled ? @"shield.lefthalf.filled" : @"shield.slash"
+                           accessibilityDescription:@"Content blocking"];
+    _shield.toolTip = blockingEnabled ? @"Content blocking on. Click to view blocked requests."
+                                     : @"Content blocking off. Click to configure.";
     BOOL playing = NO;
     for (LTPage *source in self.pages)
         playing |= source.audible || source.pictureInPicture;
@@ -677,7 +688,9 @@
 }
 - (void)command:(NSString *)command item:(NSString *)identifier {
     LTNode *node = [_store.profile node:identifier];
-    if ([command isEqual:@"newTab"]) {
+    if ([command isEqual:@"contentBlocking"]) {
+        [self contentBlocking:nil];
+    } else if ([command isEqual:@"newTab"]) {
         _addressMode = NO;
         [self showCommand:@""];
     } else if ([command isEqual:@"address"]) {
@@ -1450,6 +1463,58 @@
                           p.capturing
                               ? @"Camera or microphone access is active. Close this tab to end it."
                               : @"No camera or microphone access is active."]);
+}
+- (void)contentBlocking:(id)sender {
+    LTContentBlocker *blocker = [LTContentBlocker shared];
+    if (!blocker) {
+        LTAlert(self.window, @"Content blocking is unavailable", @"The bundled filter data could not be loaded. Rebuild Lite to restore it.");
+        return;
+    }
+    LTPage *page = [self activePage];
+    NSURL *url = [NSURL URLWithString:page.url ?: @""];
+    NSString *host = url.host.lowercaseString ?: @"";
+    if ([host hasSuffix:@"."]) host = [host substringToIndex:host.length - 1];
+    NSDictionary *prefs = _store.profile.settings[@"contentBlocking"] ?: @{};
+    NSAlert *alert = [NSAlert new];
+    alert.messageText = @"Content blocking";
+    alert.informativeText = [NSString stringWithFormat:
+        @"%@\n%lu requests blocked on this page.\n\nUses %lu native rules from uBlock Origin Lite %@. "
+        @"Changes apply to new page loads; Apply reloads this page.%@",
+        host.length ? host : @"No website selected", (unsigned long)page.blockedRequests,
+        (unsigned long)[blocker.provenance[@"networkRules"] unsignedIntegerValue], blocker.provenance[@"version"],
+        _store.privateMode ? @" Private-window settings are temporary." : @""];
+    NSButton *enabled = [NSButton checkboxWithTitle:@"Block ads and trackers" target:nil action:nil];
+    enabled.state = ![prefs[@"disabled"] boolValue];
+    NSButton *cosmetic = [NSButton checkboxWithTitle:@"Hide advertising elements" target:nil action:nil];
+    cosmetic.state = ![prefs[@"cosmeticDisabled"] boolValue];
+    NSButton *site = [NSButton checkboxWithTitle:@"Pause blocking on this hostname" target:nil action:nil];
+    site.state = [prefs[@"disabledSites"] containsObject:host];
+    site.enabled = host.length && ([@[@"http", @"https"] containsObject:url.scheme.lowercaseString]);
+    NSTextField *details = LTLabel(@"Built-in filters: uBlock, EasyList, EasyPrivacy, Peter Lowe’s,\nuBlock Badware, and URLhaus.\n\nThis native subset excludes scriptlets, redirects, regex rules,\nheader changes, and procedural cosmetic filters.\nFilter updates are bundled with Lite builds.", 11, NSFontWeightRegular);
+    details.maximumNumberOfLines = 0;
+    details.textColor = NSColor.secondaryLabelColor;
+    NSStackView *options = LTStack(@[enabled, cosmetic, site, details], NSUserInterfaceLayoutOrientationVertical, 12);
+    options.frame = NSMakeRect(0, 0, 440, 200);
+    [options.widthAnchor constraintEqualToConstant:440].active = YES;
+    alert.accessoryView = options;
+    [alert addButtonWithTitle:@"Apply and Reload"];
+    [alert addButtonWithTitle:@"Cancel"];
+    [alert beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse response) {
+        if (response != NSAlertFirstButtonReturn) return;
+        [self commit:^(LTProfile *profile) {
+            NSMutableDictionary *updated = [profile.settings[@"contentBlocking"] mutableCopy] ?: [NSMutableDictionary new];
+            NSMutableSet *sites = [NSMutableSet setWithArray:updated[@"disabledSites"] ?: @[]];
+            if (site.enabled) {
+                if (site.state == NSControlStateValueOn) [sites addObject:host];
+                else [sites removeObject:host];
+            }
+            updated[@"disabled"] = @(enabled.state != NSControlStateValueOn);
+            updated[@"cosmeticDisabled"] = @(cosmetic.state != NSControlStateValueOn);
+            updated[@"disabledSites"] = [sites.allObjects sortedArrayUsingSelector:@selector(compare:)];
+            profile.settings[@"contentBlocking"] = updated;
+        }];
+        [page reload];
+    }];
 }
 - (void)findNext:(id)s {
     [[self activePage] find:_find.stringValue forward:YES next:YES];
