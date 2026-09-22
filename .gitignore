@@ -1,0 +1,9 @@
+vendor/
+.build/
+dist/
+.DS_Store
+*.xcuserstate
+test-results/
+.codex/
+__pycache__/
+*.pyc

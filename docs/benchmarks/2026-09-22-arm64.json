@@ -1,0 +1,62 @@
+{
+  "afterDiscard": {
+    "cpuSeconds": 3.9369402083333336,
+    "footprintMiB": 258.36647033691406,
+    "processes": 6,
+    "rssMiB": 713.125,
+    "time": 1790070118.712933
+  },
+  "backgroundFreeze": true,
+  "backgroundResume": true,
+  "backNavigation": true,
+  "dirtyTabNotFrozen": true,
+  "discardReleasedBrowser": true,
+  "discardRestore": true,
+  "elapsedSeconds": 16.879607915878296,
+  "formProtectionSignal": true,
+  "forwardNavigation": true,
+  "idleCPUPercent": 2.1549333738645164,
+  "independentChromiumPages": true,
+  "memory1": {
+    "cpuSeconds": 1.3870030416666668,
+    "footprintMiB": 207.25686645507812,
+    "processes": 6,
+    "rssMiB": 640.296875,
+    "time": 1790070111.113775
+  },
+  "memory10": {
+    "cpuSeconds": 2.4735140416666663,
+    "footprintMiB": 648.158821105957,
+    "processes": 16,
+    "rssMiB": 1675.125,
+    "time": 1790070111.3128219
+  },
+  "memory50": {
+    "cpuSeconds": 9.14987575,
+    "footprintMiB": 2176.5843353271484,
+    "processes": 56,
+    "rssMiB": 6301.609375,
+    "time": 1790070112.514319
+  },
+  "os": "Version 26.5.2 (Build 25F84)",
+  "physicalMemoryGiB": 32,
+  "privateAlive": false,
+  "privateError": "",
+  "privateIsolation": true,
+  "privateTitle": "Lite Test Page",
+  "processID": 14559,
+  "rendererDiscardCount": 49,
+  "restoredCookies": true,
+  "stage": 14,
+  "startupSeconds": 0.4790220260620117,
+  "webPlatform": {
+    "chromium": true,
+    "cookie": true,
+    "dom": true,
+    "fetch": true,
+    "indexedDB": true,
+    "wasm": true,
+    "webgl": true
+  },
+  "webPlatformEvaluation": true
+}
