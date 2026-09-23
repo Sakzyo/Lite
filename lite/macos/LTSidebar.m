@@ -1,5 +1,11 @@
 #import "LTSidebar.h"
 #import "LTUI.h"
+@interface LTSidebarCell : NSTableCellView
+@property NSButton *closeButton;
+@property NSLayoutConstraint *closeWidth;
+@end
+@implementation LTSidebarCell
+@end
 @interface LTSidebar () <NSOutlineViewDataSource, NSOutlineViewDelegate, NSMenuDelegate>
 @end
 @implementation LTSidebar {
@@ -51,6 +57,14 @@
         menu.delegate = self;
         _tree.menu = menu;
         NSScrollView *scroll = [NSScrollView new];
+        NSMenu *backgroundMenu = [NSMenu new];
+        NSMenuItem *newFolder = [[NSMenuItem alloc] initWithTitle:@"New Folder…"
+                                                        action:@selector(contextAction:)
+                                                 keyEquivalent:@""];
+        newFolder.target = self;
+        newFolder.representedObject = @[ @"newFolder", @"" ];
+        [backgroundMenu addItem:newFolder];
+        scroll.menu = backgroundMenu;
         scroll.documentView = _tree;
         scroll.hasVerticalScroller = YES;
         scroll.drawsBackground = NO;
@@ -82,6 +96,10 @@
         [utilities.heightAnchor constraintEqualToConstant:30].active = YES;
     }
     return self;
+}
+- (void)layout {
+    [super layout];
+    [_tree sizeLastColumnToFit];
 }
 - (void)commit:(void (^)(LTProfile *))block {
     NSError *e = nil;
@@ -248,28 +266,51 @@
                        : state[@"audio"]          ? @"speaker.wave.2"
                        : state[@"frozen"]         ? @"moon.zzz"
                                                   : @"globe";
-    NSTableCellView *cell = [view makeViewWithIdentifier:@"row" owner:self];
+    LTSidebarCell *cell = [view makeViewWithIdentifier:@"row" owner:self];
     if (!cell) {
-        cell = [NSTableCellView new];
+        cell = [LTSidebarCell new];
         cell.identifier = @"row";
         NSImageView *icon = [NSImageView new];
         NSTextField *title = LTLabel(@"", 12, NSFontWeightRegular);
+        NSButton *close = [NSButton buttonWithImage:[NSImage imageWithSystemSymbolName:@"xmark"
+                                                           accessibilityDescription:@"Close tab"]
+                                           target:self action:@selector(closeTab:)];
+        close.bordered = NO;
+        close.symbolConfiguration = [NSImageSymbolConfiguration configurationWithPointSize:9
+                                                                                  weight:NSFontWeightMedium];
+        close.contentTintColor = NSColor.secondaryLabelColor;
+        cell.closeButton = close;
         cell.imageView = icon;
         cell.textField = title;
         icon.translatesAutoresizingMaskIntoConstraints = NO;
         title.translatesAutoresizingMaskIntoConstraints = NO;
+        close.translatesAutoresizingMaskIntoConstraints = NO;
+        [title setContentCompressionResistancePriority:250 forOrientation:NSLayoutConstraintOrientationHorizontal];
         [cell addSubview:icon];
         [cell addSubview:title];
+        [cell addSubview:close];
+        cell.closeWidth = [close.widthAnchor constraintEqualToConstant:20];
         [NSLayoutConstraint activateConstraints:@[
             [icon.leadingAnchor constraintEqualToAnchor:cell.leadingAnchor constant:2],
             [icon.centerYAnchor constraintEqualToAnchor:cell.centerYAnchor],
             [icon.widthAnchor constraintEqualToConstant:16],
             [icon.heightAnchor constraintEqualToConstant:16],
             [title.leadingAnchor constraintEqualToAnchor:icon.trailingAnchor constant:9],
-            [title.trailingAnchor constraintEqualToAnchor:cell.trailingAnchor constant:-6],
-            [title.centerYAnchor constraintEqualToAnchor:cell.centerYAnchor]
+            [title.trailingAnchor constraintEqualToAnchor:close.leadingAnchor constant:-4],
+            [title.centerYAnchor constraintEqualToAnchor:cell.centerYAnchor],
+            [close.trailingAnchor constraintEqualToAnchor:cell.trailingAnchor constant:-2],
+            [close.centerYAnchor constraintEqualToAnchor:cell.centerYAnchor],
+            [close.heightAnchor constraintEqualToConstant:22],
+            cell.closeWidth
         ]];
     }
+    BOOL folder = [n.kind isEqual:@"folder"];
+    cell.closeButton.hidden = folder;
+    cell.closeButton.enabled = !folder;
+    cell.closeWidth.constant = folder ? 0 : 20;
+    cell.closeButton.identifier = n.identifier;
+    cell.closeButton.toolTip = [@"Close " stringByAppendingString:n.displayTitle];
+    cell.closeButton.accessibilityLabel = cell.closeButton.toolTip;
     cell.imageView.image = state[@"favicon"]
                                ?: [NSImage imageWithSystemSymbolName:symbol
                                             accessibilityDescription:nil];
@@ -279,6 +320,11 @@
     cell.toolTip = state[@"liveStatus"] ?: n.url;
     cell.accessibilityLabel = n.displayTitle;
     return cell;
+}
+- (void)closeTab:(NSButton *)sender {
+    LTNode *node = [_store.profile node:sender.identifier];
+    if (node && ![node.kind isEqual:@"folder"])
+        self.command(@"closeTab", node.identifier);
 }
 - (void)choose:(id)sender {
     id item = [_tree itemAtRow:_tree.selectedRow];
@@ -365,9 +411,16 @@
 }
 - (void)menuNeedsUpdate:(NSMenu *)menu {
     [menu removeAllItems];
+    NSMenuItem *newFolder = [[NSMenuItem alloc] initWithTitle:@"New Folder…"
+                                                    action:@selector(contextAction:)
+                                             keyEquivalent:@""];
+    newFolder.target = self;
+    newFolder.representedObject = @[ @"newFolder", @"" ];
+    [menu addItem:newFolder];
     LTNode *n = [_tree itemAtRow:_tree.clickedRow];
     if (![n isKindOfClass:LTNode.class])
         return;
+    [menu addItem:NSMenuItem.separatorItem];
     NSArray *actions=[n.kind isEqual:@"folder"]?@[@[@"Rename",@"rename"],@[@"New Folder Inside",@"folderInside"],@[@"Open All",@"openAll"],@[@"Move to Space…",@"moveTab"],@[@"Delete Folder…",@"deleteNode"]]:@[@[[n.kind isEqual:@"pinned"]?@"Unpin Tab":@"Pin Tab",@"pinTab"],@[@"Rename",@"rename"],@[@"Duplicate",@"duplicate"],@[@"Reload",@"reload"],@[@"Return to Pinned URL",@"resetPinned"],@[@"Move to Space…",@"moveTab"],@[@"Move to Folder…",@"moveFolder"],@[@"Add to Favorites",@"favorite"],@[@"Open in Split",@"splitTab"],@[@"Keep Tab Awake",@"keepAwake"],@[@"Copy URL",@"copyURL"],@[@"Close",@"closeTab"]];
     for (NSArray *a in actions) {
         NSMenuItem *i = [[NSMenuItem alloc] initWithTitle:a[0]
