@@ -57,6 +57,8 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)print;
 - (void)save;
 - (void)showDevTools;
+- (BOOL)hasDevTools;
+- (void)closeDevTools;
 - (void)toggleMute;
 - (void)togglePlayback;
 - (void)enterPictureInPicture;

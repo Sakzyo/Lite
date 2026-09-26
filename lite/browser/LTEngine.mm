@@ -1,5 +1,6 @@
 #import "LTEngine.h"
 #import "LTContentBlocker.h"
+#include "LTYouTubeFilter.h"
 #include "include/cef_app.h"
 #include "include/cef_browser.h"
 #include "include/cef_client.h"
@@ -70,6 +71,16 @@ void LTQuitWhenBrowsersClose(void) {
 }
 
 static CefRefPtr<CefRequestContextHandler> BlockingContext(LTBlockingPolicy *policy);
+static void UpdateYouTubeGuard(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame,
+                              LTBlockingPolicy *policy) {
+    if (!frame || !LTIsYouTubeURL(N(frame->GetURL()))) return;
+    auto main = browser->GetMainFrame();
+    BOOL enabled = main && [policy enabledForURL:N(main->GetURL())] &&
+                          [policy enabledForURL:N(frame->GetURL())];
+    NSString *script = enabled ? [[LTContentBlocker shared] youtubeScriptForURL:N(frame->GetURL())] :
+        @"window.__liteYouTubeAds?.setEnabled(false);";
+    if (script.length) frame->ExecuteJavaScript(C(script), frame->GetURL(), 0);
+}
 @interface LTBrowserContext () {
   @public
     CefRefPtr<CefRequestContext> _context;
@@ -91,6 +102,14 @@ static CefRefPtr<CefRequestContextHandler> BlockingContext(LTBlockingPolicy *pol
 }
 - (void)updateBlockingPreferences:(NSDictionary *)preferences {
     [_blocking updatePreferences:preferences];
+    for (auto &entry : browsers) {
+        auto browser = entry.second;
+        if (!browser->GetHost()->GetRequestContext()->IsSame(_context)) continue;
+        std::vector<CefString> frames;
+        browser->GetFrameIdentifiers(frames);
+        for (const auto &identifier : frames)
+            UpdateYouTubeGuard(browser, browser->GetFrameByIdentifier(identifier), _blocking);
+    }
 }
 - (void)clearData {
     _context->GetCookieManager(nullptr)->DeleteCookies("", "", nullptr);
@@ -150,6 +169,21 @@ class BlockingRequest : public CefResourceRequestHandler {
             }
         }
         return RV_CONTINUE;
+    }
+    CefRefPtr<CefResponseFilter> GetResourceResponseFilter(CefRefPtr<CefBrowser> browser,
+            CefRefPtr<CefFrame>, CefRefPtr<CefRequest> request,
+            CefRefPtr<CefResponse> response) override {
+        @autoreleasepool {
+            NSString *url = N(request->GetURL());
+            auto main = browser ? browser->GetMainFrame() : nullptr;
+            NSString *top = request->GetResourceType() == RT_MAIN_FRAME ? url :
+                main ? N(main->GetURL()) : initiator_;
+            if ([policy_ enabledForURL:top] && [policy_ enabledForURL:url] &&
+                LTFilterYouTubeResponse(url, BlockingResourceType(request->GetResourceType()),
+                                        N(response->GetMimeType())))
+                return new LTYouTubeFilter;
+        }
+        return nullptr;
     }
   private:
     LTBlockingPolicy *__strong policy_;
@@ -232,6 +266,21 @@ class IconCallback : public CefDownloadImageCallback {
     NSString *url_;
     IMPLEMENT_REFCOUNTING(IconCallback);
 };
+// DevTools is a standalone Chromium window: it has no LTPage or page policy.
+class DevToolsClient : public CefClient, public CefLifeSpanHandler {
+  public:
+    CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
+    void OnAfterCreated(CefRefPtr<CefBrowser> browser) override {
+        browsers[browser->GetIdentifier()] = browser;
+        browser->GetHost()->SetAccessibilityState(STATE_ENABLED);
+    }
+    void OnBeforeClose(CefRefPtr<CefBrowser> browser) override {
+        browsers.erase(browser->GetIdentifier());
+        if (quitting && browsers.empty()) CefQuitMessageLoop();
+    }
+  private:
+    IMPLEMENT_REFCOUNTING(DevToolsClient);
+};
 class Client : public CefClient,
                public CefLifeSpanHandler,
                public CefDisplayHandler,
@@ -242,7 +291,8 @@ class Client : public CefClient,
                public CefFocusHandler,
                public CefJSDialogHandler {
   public:
-    explicit Client(LTPage *p) : page_(p), blocking_(p->_context->_blocking), blockingState_(p->_blockingState) {}
+    explicit Client(LTPage *p) : page_(p), blocking_(p ? p->_context->_blocking : nil),
+        blockingState_(p ? p->_blockingState : std::make_shared<BlockingState>()) {}
     CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override {
         return this;
     }
@@ -266,6 +316,7 @@ class Client : public CefClient,
         return false;
     }
     void InjectCosmetics(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame) {
+        UpdateYouTubeGuard(browser, frame, blocking_);
         auto main = browser->GetMainFrame();
         if (!main || ![blocking_ cosmeticEnabledForURL:N(main->GetURL())]) return;
         NSString *script = [[LTContentBlocker shared] cosmeticScriptForURL:N(frame->GetURL())];
@@ -697,8 +748,14 @@ class Client : public CefClient,
     if (_browser) {
         CefWindowInfo info;
         CefBrowserSettings settings;
-        _browser->GetHost()->ShowDevTools(info, new Client(nil), settings, CefPoint());
+        _browser->GetHost()->ShowDevTools(info, new DevToolsClient, settings, CefPoint());
     }
+}
+- (BOOL)hasDevTools {
+    return _browser && _browser->GetHost()->HasDevTools();
+}
+- (void)closeDevTools {
+    if (_browser) _browser->GetHost()->CloseDevTools();
 }
 - (void)toggleMute {
     if (_browser)

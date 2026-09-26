@@ -1,5 +1,6 @@
 #import "../browser/LTContentBlocker.h"
 #import "../model/LTStore.h"
+#include "../browser/LTYouTubeFilter.h"
 
 static NSUInteger checks, failures;
 static void Check(BOOL result, NSString *name) {
@@ -11,12 +12,74 @@ static NSDictionary *Rule(NSString *pattern, NSDictionary *conditions, NSString 
     if (pattern) c[@"urlFilter"] = pattern;
     return @{@"condition": c, @"action": @{@"type": action}, @"priority": @(priority)};
 }
+static std::string FilterYouTube(const std::string &input, size_t chunk, size_t capacity) {
+    CefRefPtr<LTYouTubeFilter> filter = new LTYouTubeFilter;
+    filter->InitFilter();
+    std::string result;
+    char output[256];
+    for (size_t offset = 0; offset < input.size();) {
+        size_t end = std::min(offset + chunk, input.size());
+        while (offset < end) {
+            size_t read = 0, written = 0;
+            filter->Filter(const_cast<char *>(input.data() + offset), end - offset, read,
+                           output, capacity, written);
+            result.append(output, written);
+            offset += read;
+        }
+    }
+    while (true) {
+        size_t read = 0, written = 0;
+        auto status = filter->Filter(nullptr, 0, read, output, capacity, written);
+        result.append(output, written);
+        if (status == RESPONSE_FILTER_DONE) break;
+    }
+    return result;
+}
 int main(int argc, const char **argv) {
     @autoreleasepool {
+        for (NSString *host in @[@"www.youtube.com", @"m.youtube.com", @"youtube.com",
+                                @"www.youtube-nocookie.com", @"www.youtubekids.com"])
+            Check(LTFilterYouTubeResponse([NSString stringWithFormat:@"https://%@/watch?v=test", host],
+                                         @"main_frame", @"text/html"), @"YouTube document scope");
+        Check(LTFilterYouTubeResponse(@"https://WWW.YOUTUBE.COM./youtubei/v1/player?key=x", @"xmlhttprequest", @"application/json; charset=utf-8"), @"player API and canonical host");
+        for (NSString *url in @[@"https://notyoutube.com/watch", @"https://youtube.com.evil.test/watch",
+                                @"https://example.com/youtube.com/watch", @"file:///youtube.com/watch"])
+            Check(!LTFilterYouTubeResponse(url, @"main_frame", @"text/html"), @"unrelated host unchanged");
+        Check(!LTFilterYouTubeResponse(@"https://www.youtube.com/youtubei/v1/account", @"xmlhttprequest", @"application/json"), @"other YouTube APIs unchanged");
+        Check(!LTFilterYouTubeResponse(@"https://www.youtube.com/s/player.js", @"script", @"application/javascript"), @"player code unchanged");
+        Check(!LTFilterYouTubeResponse(@"https://rr1.googlevideo.com/videoplayback", @"media", @"video/mp4"), @"video media unchanged");
+        const std::string before = R"(<script>var ytInitialPlayerResponse={"adPlacements":[],"adSlots" : [1],"playerAds"\n:[],"videoDetails":{"videoId":"content"},"streamingData":{"url":"https://video.test/a"},"label":"adSlots","text":"\"adPlacements\":keep"};</script>)";
+        std::string input = before;
+        input.replace(input.find("\\n:"), 3, "\n:");
+        std::string expected = input;
+        for (const char *key : {"adPlacements", "adSlots", "playerAds"}) expected[expected.find(key)] = '_';
+        BOOL boundaries = YES;
+        for (size_t chunk = 1; chunk < input.size(); ++chunk)
+            for (size_t capacity : {size_t(1), size_t(7), size_t(256)})
+                boundaries &= FilterYouTube(input, chunk, capacity) == expected;
+        Check(boundaries, @"YouTube keys filtered across every input boundary and small output buffers");
+        const std::string encoded = R"({"playerResponse":"{\"adPlacements\":[],\"adSlots\" : [1],\"playerAds\":{},\"videoDetails\":{\"videoId\":\"main\"}}","text":"\"adSlots\":[1]"})";
+        std::string encodedExpected = encoded;
+        for (const char *key : {"adPlacements", "adSlots", "playerAds"})
+            encodedExpected[encodedExpected.find(key)] = '_';
+        BOOL encodedBoundaries = YES;
+        for (size_t chunk = 1; chunk < encoded.size(); ++chunk)
+            for (size_t capacity : {size_t(1), size_t(7), size_t(256)})
+                encodedBoundaries &= FilterYouTube(encoded, chunk, capacity) == encodedExpected;
+        Check(encodedBoundaries, @"serialized player responses filtered without changing ordinary escaped text");
+        Check(FilterYouTube(R"({\"adSlots\":keep})", 1, 1) == R"({\"adSlots\":keep})",
+              @"escaped prose without a structured ad value preserved");
+        Check(FilterYouTube("ends in \"adPlacements", 1, 1) == "ends in \"adPlacements", @"incomplete final token preserved");
+        std::string spaced = "{\"playerAds\"" + std::string(200, ' ') + ":[1]}";
+        Check(FilterYouTube(spaced, 3, 7) == spaced, @"unusual whitespace passes through with bounded buffering");
         NSString *resources = [NSString stringWithUTF8String:argv[1]];
         double start = NSDate.timeIntervalSinceReferenceDate;
         LTContentBlocker *real = [[LTContentBlocker alloc] initWithDirectory:resources];
         Check(real != nil, @"bundled filters load");
+        Check([real youtubeScriptForURL:@"https://www.youtube.com/watch"].length > 0,
+              @"YouTube player fallback bundled");
+        Check([real youtubeScriptForURL:@"https://youtube.com.evil.test/watch"].length == 0,
+              @"YouTube player fallback excludes unrelated sites");
         Check([real.provenance[@"networkRules"] unsignedIntegerValue] == 17665, @"pinned rule coverage");
         Check([real blocksURL:@"https://googleads.g.doubleclick.net/pagead/ads" initiator:@"https://example.com" type:@"script" method:@"GET"], @"real advertising host");
         Check([real blocksURL:@"https://www.google-analytics.com/analytics.js" initiator:@"https://example.com" type:@"script" method:@"GET"], @"real analytics host");

@@ -1,6 +1,9 @@
 #import <Foundation/Foundation.h>
 NS_ASSUME_NONNULL_BEGIN
 
+FOUNDATION_EXPORT BOOL LTFilterYouTubeResponse(NSString *url, NSString *type, NSString *mimeType);
+FOUNDATION_EXPORT BOOL LTIsYouTubeURL(NSString *url);
+
 // Immutable compiled rules, shared by every regular and private browser context.
 @interface LTContentBlocker : NSObject
 @property (nonatomic, readonly) NSDictionary *provenance;
@@ -9,6 +12,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (BOOL)blocksURL:(NSString *)url initiator:(NSString *)initiator
             type:(NSString *)type method:(NSString *)method;
 - (NSString *)cosmeticScriptForURL:(NSString *)url;
+- (NSString *)youtubeScriptForURL:(NSString *)url;
 - (NSString *)siteForHost:(NSString *)host;
 @end
 

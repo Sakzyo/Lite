@@ -5,6 +5,29 @@
 #include <unordered_set>
 #include <vector>
 
+BOOL LTIsYouTubeURL(NSString *url) {
+    NSURL *parsed = [NSURL URLWithString:url];
+    if (![@[@"http", @"https"] containsObject:parsed.scheme.lowercaseString]) return NO;
+    NSString *host = parsed.host.lowercaseString;
+    if ([host hasSuffix:@"."]) host = [host substringToIndex:host.length - 1];
+    BOOL youtube = NO;
+    for (NSString *domain in @[@"youtube.com", @"youtube-nocookie.com", @"youtubekids.com"])
+        if ([host isEqual:domain] || [host hasSuffix:[@"." stringByAppendingString:domain]]) youtube = YES;
+    return youtube;
+}
+BOOL LTFilterYouTubeResponse(NSString *url, NSString *type, NSString *mimeType) {
+    if (!LTIsYouTubeURL(url)) return NO;
+    NSURL *parsed = [NSURL URLWithString:url];
+    NSString *mime = [[mimeType componentsSeparatedByString:@";"][0]
+        stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet].lowercaseString;
+    if (([type isEqual:@"main_frame"] || [type isEqual:@"sub_frame"]) &&
+        [mime isEqual:@"text/html"]) return YES;
+    if (![type isEqual:@"xmlhttprequest"] ||
+        ![@[@"application/json", @"text/json", @"text/html"] containsObject:mime]) return NO;
+    return [@[@"/youtubei/v1/player", @"/youtubei/v1/get_watch", @"/youtubei/v1/next",
+              @"/watch", @"/playlist"] containsObject:parsed.path];
+}
+
 namespace {
 using Strings = std::unordered_set<std::string>;
 using Index = std::unordered_map<std::string, std::vector<size_t>>;
@@ -98,6 +121,7 @@ struct Rule {
     Strings _suffixes;
     NSDictionary *_cosmetic;
     NSCache<NSString *, NSString *> *_scripts;
+    NSString *_youtubeScript;
 }
 + (instancetype)shared {
     static LTContentBlocker *instance;
@@ -118,6 +142,8 @@ struct Rule {
         NSArray *raw = read(@"network.json");
         _cosmetic = read(@"cosmetic.json");
         _provenance = read(@"provenance.json");
+        _youtubeScript = [NSString stringWithContentsOfFile:[directory stringByAppendingPathComponent:@"youtube.js"]
+                                                  encoding:NSUTF8StringEncoding error:nil] ?: @"";
         NSString *psl = [NSString stringWithContentsOfFile:[directory stringByAppendingPathComponent:@"suffixes.txt"]
                                                encoding:NSUTF8StringEncoding error:nil];
         if (![raw isKindOfClass:NSArray.class] || ![_cosmetic isKindOfClass:NSDictionary.class] ||
@@ -217,6 +243,9 @@ struct Rule {
         }
     }
     return !allow;
+}
+- (NSString *)youtubeScriptForURL:(NSString *)url {
+    return LTIsYouTubeURL(url) ? _youtubeScript : @"";
 }
 - (NSString *)cosmeticScriptForURL:(NSString *)url {
     NSString *scheme = [NSURL URLWithString:url].scheme.lowercaseString;

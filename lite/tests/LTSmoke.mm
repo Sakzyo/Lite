@@ -35,6 +35,19 @@ static NSDictionary *ResourceSample(void) {
         @"time" : @(NSDate.date.timeIntervalSince1970)
     };
 }
+static BOOL YouTubeGuardPassed(NSDictionary *result, BOOL enabled) {
+    if (![result isKindOfClass:NSDictionary.class] || result.count != 10) return NO;
+    for (NSString *name in result) {
+        NSDictionary *state = result[name];
+        BOOL seek = enabled && ([@[@"clientAd", @"serverAd"] containsObject:name]);
+        NSInteger clicks = !enabled ? 0 : [name isEqual:@"skip"] ? 1 : [name isEqual:@"reusedSkip"] ? 2 : 0;
+        if ([state[@"seeks"] integerValue] != (seek ? 1 : 0) ||
+            [state[@"clicks"] integerValue] != clicks ||
+            [state[@"currentTime"] integerValue] != (seek ? 15 : 11) ||
+            [state[@"volume"] doubleValue] != 1 || [state[@"rate"] doubleValue] != 1) return NO;
+    }
+    return YES;
+}
 @interface LTSmoke : NSObject <LTPageDelegate>
 @property NSWindow *window;
 @property LTPage *normal;
@@ -49,6 +62,7 @@ static NSDictionary *ResourceSample(void) {
 @property NSTimer *timer;
 @property NSMutableArray<LTPage *> *benchmarkPages;
 @property double settledAt;
+@property NSUInteger browsersBeforeDevTools;
 - (void)begin;
 @end
 static LTSmoke *running;
@@ -269,6 +283,67 @@ static LTSmoke *running;
             self.results[@"blockingPrivateIsolation"] = @([value[@"blocked"] boolValue] &&
                 [value[@"workerBlocked"] boolValue] && [value[@"cosmetic"] boolValue] &&
                 [value[@"hits"] integerValue] == 0 && self.privatePage.blockedRequests >= 2);
+            [self.normalContext updateBlockingPreferences:nil];
+            self.stage = 29;
+            [self.normal navigate:@"https://www.youtube.com:18744/watch?v=first"];
+        }];
+    } else if ((_stage == 29 || _stage == 31 || _stage == 33 || _stage == 35 || _stage == 37) &&
+               !(_stage == 37 ? _privatePage.loading : _normal.loading)) {
+        NSInteger phase = _stage++;
+        LTPage *page = phase == 37 ? _privatePage : _normal;
+        [page evaluateForTesting:@"window.youtubeResult || null" completion:^(id value, BOOL success) {
+            if (!success || ![value isKindOfClass:NSDictionary.class] || ![value[@"complete"] boolValue]) {
+                self.stage = phase; return;
+            }
+            BOOL paused = phase == 31 || phase == 35;
+            NSString *key = phase == 29 ? @"youtubeEnabled" : phase == 31 ? @"youtubeSitePause" :
+                phase == 33 ? @"youtubeResumed" : phase == 35 ? @"youtubeGlobalPause" : @"youtubePrivateIsolation";
+            BOOL passed = [value[@"contentPreserved"] boolValue] && [value[@"unrelatedPreserved"] boolValue] &&
+                [value[@"tailPreserved"] boolValue] && [value[@"encodedContentPreserved"] boolValue] &&
+                YouTubeGuardPassed(value[@"guard"], !paused);
+            for (NSString *field in @[@"initialClean", @"fetchClean", @"xhrClean", @"spaClean", @"encodedClean"])
+                passed &= [value[field] boolValue] != paused;
+            self.results[key] = @(passed);
+            self.results[[key stringByAppendingString:@"Details"]] = value;
+            if (phase == 37) {
+                // Policy changes must stop/restart the existing guard without reloading.
+                [self.privateContext updateBlockingPreferences:@{@"disabled": @YES}];
+                self.stage = 39;
+                return;
+            }
+            NSDictionary *preferences = phase == 29 ? @{@"disabledSites": @[@"www.youtube.com"]} :
+                phase == 31 ? @{@"cosmeticDisabled": @YES} : @{@"disabled": @YES};
+            [self.normalContext updateBlockingPreferences:preferences];
+            self.stage = phase + 2;
+            [(phase == 35 ? self.privatePage : self.normal) navigate:@"https://www.youtube.com:18744/watch?v=first"];
+        }];
+    } else if (_stage == 39 || _stage == 41) {
+        NSInteger phase = _stage++;
+        [_privatePage evaluateForTesting:@"new Promise(r=>setTimeout(r,100)).then(()=>window.testYouTubePlayer())"
+            completion:^(id value, BOOL success) {
+                NSString *key = phase == 39 ? @"youtubeLivePause" : @"youtubeLiveResume";
+                self.results[key] = @(success && YouTubeGuardPassed(value, phase == 41));
+                self.results[[key stringByAppendingString:@"Details"]] = value ?: @{};
+                if (phase == 39) {
+                    [self.privateContext updateBlockingPreferences:nil];
+                    self.stage = 41;
+                } else {
+                    self.browsersBeforeDevTools = LTLivingBrowserCount();
+                    [self.normal showDevTools];
+                    self.stage = 43;
+                }
+            }];
+    } else if (_stage == 43 && [_normal hasDevTools] && LTLivingBrowserCount() > _browsersBeforeDevTools) {
+        // Reopening an existing inspector must reuse its window and client.
+        [_normal showDevTools];
+        _results[@"devToolsSingleWindow"] = @(LTLivingBrowserCount() == _browsersBeforeDevTools + 1);
+        [_normal closeDevTools];
+        _stage = 45;
+    } else if (_stage == 45 && ![_normal hasDevTools] && LTLivingBrowserCount() == _browsersBeforeDevTools) {
+        _stage = 46;
+        [_normal evaluateForTesting:@"1 + 1" completion:^(id value, BOOL success) {
+            self.results[@"devToolsOpenClose"] = @(success && [value integerValue] == 2 &&
+                [self.results[@"devToolsSingleWindow"] boolValue]);
             [self finish];
         }];
     }

@@ -37,7 +37,8 @@ launched process. The Codex Run action uses the same script.
 - Browser Task Manager with live Chromium resource measurements, sorting, and
   guarded process termination; customizable, persisted native menu shortcuts.
 - Native ad/tracker blocking and cosmetic hiding using bundled uBlock Origin Lite
-  filter data, with a sidebar shield and persistent per-site controls. See the
+  filter data, with YouTube player-response filtering and a player fallback for pre-roll ads, a sidebar
+  shield, and persistent per-site controls. See the
   [supported subset and filter provenance](docs/content-blocking.md).
 - Read-only Arc migration with preview, schema variations, ordering, nested folders,
   multiple containers, and safe rejection of broken references. HTML, Chromium JSON,

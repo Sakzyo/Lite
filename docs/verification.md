@@ -1,5 +1,52 @@
 # Verification record — 22 September 2026
 
+## Developer Tools crash and YouTube follow-up — 27 September 2026
+
+- The supplied incident `66A846B1-E073-41C2-9F99-1B9C65CA302C` is the earlier
+  `EXC_BAD_ACCESS` at address `0x10` in `-[LTPage showDevTools]`: the regular
+  page client was constructed with a nil page. Developer Tools now has a dedicated
+  lifecycle-only CEF client, with no page/policy dereferences. The automated browser
+  test opens it, opens it again to check window reuse, closes it, verifies browser
+  cleanup, and evaluates JavaScript in the surviving parent page.
+- The native filter now also handles escaped keys in serialized player-response
+  objects. The bundled player fallback covers visible/reused skip buttons,
+  distinct finite client-ad media, and explicit `SSAP, AD` markers. Negative
+  fixtures protect ordinary/unknown/live media, hidden controls, stale ad classes,
+  and the user's volume and playback speed.
+- `./script/build_and_run.sh --verify` passed: **98 core checks**, **70 blocking
+  checks**, two packaging checks, signing, and launch. All **44 bundled Chromium
+  checks** passed, including strict-CSP fixtures, gzip and serialized JSON,
+  in-page player replacement, site/global pause, immediate pause/resume without
+  navigation, cosmetic independence, private-context isolation, and the crash
+  regression. Logs: `.build/crash-youtube-final-build.log` and
+  `.build/crash-youtube-full-browser.log`.
+- The supplied [video](https://www.youtube.com/watch?v=GoHmHA37Sbg) was checked
+  in a signed-out private window. The main film reached its opening scene with
+  no visible pre-roll and advanced beyond 1:05 of the 8:01 video; Developer Tools
+  opened without the reported crash. Media
+  requests initially showed HTTP 403/connection-reset errors before playback
+  began. This single visit does not establish whether an ad was offered or cover
+  every account, server variant, or future YouTube player change.
+
+## YouTube pre-roll filtering — 27 September 2026
+
+- `./script/build_and_run.sh --verify` passed Release compilation, 98 core checks,
+  66 content-blocking checks, both packaging checks, and ad-hoc signature validation.
+- All 41 bundled Chromium checks passed in a disposable profile. The new YouTube
+  cases cover the initial inline player response, compressed Fetch/XHR responses,
+  in-page video changes, ordinary video data and unrelated API preservation,
+  incomplete final response tokens, site/global pause, cosmetic independence,
+  and private-context isolation. HTTPS fixtures use a temporary key pinned only
+  in the test process; the regular profile and system trust store are unchanged.
+- A signed-out private-window live check loaded the official Blender Big Buck
+  Bunny video and reached the film's opening frame without a visible pre-roll.
+  Repeat live checks encountered `ERR_CONNECTION_CLOSED`, so this does not establish
+  universal ad removal or sustained playback across accounts and server variants.
+- Developer Tools exposed an existing null-page dereference in the shared CEF
+  client. The constructor now handles its page-less client; opening and closing
+  Developer Tools was verified after the fix. The final app remains running, and
+  the disposable private window was closed.
+
 ## Bluetooth privacy crash fix
 
 - The supplied crash report identified a macOS TCC abort caused by a missing

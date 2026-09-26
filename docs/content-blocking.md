@@ -30,12 +30,28 @@ resources; it does not automatically pause other subdomains.
   tab, using the worker's initiating origin for the site preference. Such requests
   are not added to an arbitrary tab's counter. Responses already produced from a
   worker's own CacheStorage are outside this network layer.
+- YouTube pre-roll filtering: native response filtering neutralizes the
+  `adPlacements`, `adSlots`, and `playerAds` property keys in YouTube HTML and
+  player/watch API responses before the page consumes them. This covers initial
+  playback, Fetch/XHR responses, serialized player-response JSON, and in-page
+  video changes without an extension. Video URLs and media streams are preserved.
+  The global and per-site switches also control this filter; cosmetic hiding is
+  independent. Reload an already-open video after enabling blocking. The shield's
+  request counter counts canceled network requests, not rewritten player fields.
+- A bundled YouTube player fallback handles ads that still reach the player. It
+  clicks visible Skip Ad controls only while the player reports an ad. It can
+  advance explicitly marked `SSAP, AD` segments, or distinct finite ad media when
+  the main video's duration is known. Unknown/live media and a stale ad class on
+  the main video are left alone. It observes player changes and media events,
+  preserves volume/playback speed, and stops immediately when blocking is paused
+  for the page, frame, or context. Disabling cosmetic hiding does not disable it.
 
 ## Deliberate limits
 
-This is a native subset, not full uBOL parity. It does not execute scriptlets,
+This is a native subset, not full uBOL parity. It does not execute upstream scriptlets,
 replacement/redirect scripts, procedural cosmetic filters, regex-based network
-rules, response-header conditions, or header-modification rules. These rules are
+rules, response-header conditions, or header-modification rules. Apart from the
+targeted native YouTube response filter, response-body rules are unsupported. Other rules are
 omitted rather than approximated; per-list counts are recorded in `provenance.json`.
 Missing exceptions or anti-adblock workarounds can affect compatibility: pause the
 site if it breaks. Cosmetic styles are page-level CSS, not privileged browser user
@@ -45,7 +61,18 @@ There is no element picker, user-authored filter editor, regional/annoyance-list
 selector, dedicated popup-filter list, strict-block interstitial, or automatic
 filter updater. Lite's existing gesture-based popup handling remains in place.
 WebSocket handshakes are not intercepted by this CEF resource hook. No claim is
-made to remove all advertisements, including first-party or video ads.
+made to remove all advertisements. YouTube can change its player format or deliver
+ads within the video stream itself; these filters do not edit media or guarantee
+removal of every server-inserted ad or anti-adblock challenge.
+
+The YouTube field handling follows the approach documented in the upstream
+[uBlock filters](https://github.com/uBlockOrigin/uAssets/blob/master/filters/filters.txt)
+and [quick fixes](https://github.com/uBlockOrigin/uAssets/blob/master/filters/quick-fixes.txt),
+reviewed on 2026-09-27. Lite implements its own bounded streaming adapter in
+`lite/browser/LTYouTubeFilter.h` and a targeted fallback in
+`resources/ContentBlocking/youtube.js`; it does not download or execute these
+lists at runtime. Escaped-key rewriting requires a structural key boundary and
+an object/array value; ordinary escaped mentions are preserved.
 
 ## Source, updates, and licensing
 
@@ -79,3 +106,14 @@ digests and license/source presence. The bundled Chromium smoke suite checks act
 network/server-hit counts, redirects, service workers, strict-CSP cosmetic hiding,
 dynamic DOM elements, site/global pause, re-enabling, and private-context isolation.
 Use `LITE_BLOCKING_ONLY=1 python3 script/test_browser.py` for the focused browser run.
+YouTube regression fixtures run through the same Chromium response hook using a
+test-process-only hostname mapping to loopback and an ephemeral HTTPS certificate
+pinned only for that test process. They check filtering before the
+first inline script, compressed Fetch/XHR JSON, in-page navigation, preservation
+of regular content and unrelated APIs, incomplete final chunks, site/global
+pause, cosmetic independence, and private-context isolation. Player fixtures also
+check visible/hidden/reused skip buttons, explicit server-ad markers, finite client
+ads, stale ad classes, unknown/live content, unchanged volume/speed, and immediate
+pause/resume without a reload. Native tests also
+exercise every input-chunk boundary and one-byte output buffers. These fixtures
+verify the mechanism; they are not a substitute for live YouTube compatibility checks.

@@ -18,6 +18,7 @@ class PackagePrivacyTests(unittest.TestCase):
                     self.assertEqual(hashlib.sha256((directory/name).read_bytes()).hexdigest(), digest, name)
                 self.assertTrue((directory/'NOTICE.txt').is_file())
                 self.assertTrue((directory/'COPYING-uBOL.txt').is_file())
+                self.assertTrue((directory/'youtube.js').read_text().strip())
                 rules = json.loads((directory/'network.json').read_text())
                 self.assertEqual(len(rules), metadata['networkRules'])
                 self.assertTrue(all(r['action']['type'] in ['block', 'allow'] for r in rules))
