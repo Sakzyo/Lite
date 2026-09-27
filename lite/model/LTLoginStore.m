@@ -1,4 +1,5 @@
 #import "LTLoginStore.h"
+#import "LTLoginVault.h"
 #import <CommonCrypto/CommonDigest.h>
 #import <Security/Security.h>
 NSString *LTLoginOrigin(NSString *url) {
@@ -36,6 +37,7 @@ static BOOL Status(OSStatus status, NSError **error) {
 }
 @implementation LTLoginStore {
     NSString *_service;
+    LTLoginVault *_vault;
 }
 - (instancetype)initWithProfilePath:(NSString *)path {
     if ((self = [super init])) {
@@ -46,6 +48,8 @@ static BOOL Status(OSStatus status, NSError **error) {
         for (NSUInteger i = 0; i < sizeof(hash); i++)
             [suffix appendFormat:@"%02x", hash[i]];
         _service = [@"app.lite.browser.logins." stringByAppendingString:suffix];
+        _vault = [[LTLoginVault alloc] initWithProfilePath:path
+            keyService:[_service stringByAppendingString:@".vault"]];
     }
     return self;
 }
@@ -62,56 +66,93 @@ static BOOL Status(OSStatus status, NSError **error) {
     }
     return query;
 }
-- (NSArray<NSDictionary *> *)entriesForOrigin:(NSString *)origin error:(NSError **)error {
+// Read only this profile's older Lite entries. Unrelated Apple Passwords and
+// GitHub tokens stay in Keychain. Originals are deleted only after a vault commit.
+- (NSArray *)legacyRecords:(NSError **)error {
     NSMutableDictionary *query = [self queryForEntry:nil];
     query[(id)kSecReturnAttributes] = @YES;
     query[(id)kSecMatchLimit] = (id)kSecMatchLimitAll;
     CFTypeRef result = NULL;
     OSStatus status = SecItemCopyMatching((__bridge CFDictionaryRef)query, &result);
-    NSArray *attributes = CFBridgingRelease(result);
-    if (status == errSecItemNotFound)
-        return @[];
-    if (!Status(status, error))
-        return nil;
-    NSMutableArray *entries = [NSMutableArray new];
-    for (NSDictionary *item in attributes) {
+    NSArray *items = CFBridgingRelease(result);
+    if (status == errSecItemNotFound) return @[];
+    if (!Status(status, error)) return nil;
+    NSMutableArray *records = [NSMutableArray new];
+    for (NSDictionary *item in items) {
         NSData *data = item[(id)kSecAttrGeneric];
-        NSDictionary *entry =
-            data ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil] : nil;
+        id entry = [data isKindOfClass:NSData.class]
+            ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil] : nil;
         if (![entry isKindOfClass:NSDictionary.class] ||
             ![entry[@"origin"] isKindOfClass:NSString.class] ||
             ![entry[@"username"] isKindOfClass:NSString.class] ||
-            ![LTLoginOrigin(entry[@"origin"]) isEqual:entry[@"origin"]])
-            continue;
-        if (!origin || [origin isEqual:entry[@"origin"]])
-            [entries addObject:entry];
+            ![LTLoginOrigin(entry[@"origin"]) isEqual:entry[@"origin"]] ||
+            [entry[@"username"] length] > 1024 ||
+            ![[self queryForEntry:entry][(id)kSecAttrAccount] isEqual:item[(id)kSecAttrAccount]]) {
+            Status(errSecDecode, error);
+            return nil;
+        }
+        // The macOS login Keychain does not support returning data for all
+        // matches. Read each validated legacy entry separately.
+        NSMutableDictionary *read = [self queryForEntry:entry];
+        read[(id)kSecReturnData] = @YES;
+        CFTypeRef secret = NULL;
+        status = SecItemCopyMatching((__bridge CFDictionaryRef)read, &secret);
+        NSData *passwordData = CFBridgingRelease(secret);
+        if (!Status(status, error)) return nil;
+        NSString *password = [[NSString alloc] initWithData:passwordData encoding:NSUTF8StringEncoding];
+        if (!password.length || password.length > 16384) { Status(errSecDecode, error); return nil; }
+        [records addObject:@{@"origin": entry[@"origin"], @"username": entry[@"username"], @"password": password}];
     }
-    return [entries sortedArrayUsingDescriptors:@[
-        [NSSortDescriptor sortDescriptorWithKey:@"origin" ascending:YES],
-        [NSSortDescriptor sortDescriptorWithKey:@"username" ascending:YES]
-    ]];
+    return records;
 }
-- (BOOL)saveUsername:(NSString *)username
-            password:(NSString *)password
-              origin:(NSString *)origin
-               error:(NSError **)error {
+- (BOOL)withRecords:(BOOL (^)(NSMutableArray *, BOOL *, NSError **))action error:(NSError **)error {
+    __block NSArray *legacy;
+    return [_vault withRecords:^BOOL(NSMutableArray *records, BOOL *changed, NSError **failure) {
+        legacy = [self legacyRecords:failure];
+        if (!legacy) return NO;
+        for (NSDictionary *old in legacy) {
+            BOOL found = NO;
+            for (NSDictionary *record in records)
+                if ([record[@"origin"] isEqual:old[@"origin"]] &&
+                    [record[@"username"] isEqual:old[@"username"]]) { found = YES; break; }
+            // A partially completed migration must never replace newer vault data.
+            if (!found) [records addObject:old];
+        }
+        *changed = legacy.count > 0;
+        return action(records, changed, failure);
+    } afterCommit:^BOOL(NSError **failure) {
+        for (NSDictionary *old in legacy) {
+            OSStatus status = SecItemDelete((__bridge CFDictionaryRef)[self queryForEntry:old]);
+            if (status != errSecItemNotFound && !Status(status, failure)) return NO;
+        }
+        return YES;
+    } error:error];
+}
+- (NSArray<NSDictionary *> *)entriesForOrigin:(NSString *)origin error:(NSError **)error {
+    NSMutableArray *entries = [NSMutableArray new];
+    BOOL ok = [self withRecords:^BOOL(NSMutableArray *records, BOOL *changed, NSError **failure) {
+        for (NSDictionary *record in records)
+            if (!origin || [record[@"origin"] isEqual:origin])
+                [entries addObject:@{@"origin": record[@"origin"], @"username": record[@"username"]}];
+        return YES;
+    } error:error];
+    return ok ? [entries sortedArrayUsingDescriptors:@[
+        [NSSortDescriptor sortDescriptorWithKey:@"origin" ascending:YES],
+        [NSSortDescriptor sortDescriptorWithKey:@"username" ascending:YES]]] : nil;
+}
+- (BOOL)saveUsername:(NSString *)username password:(NSString *)password
+              origin:(NSString *)origin error:(NSError **)error {
     if (![LTLoginOrigin(origin) isEqual:origin] || !password.length || password.length > 16384 ||
-        username.length > 1024)
-        return Status(errSecParam, error);
-    NSDictionary *entry = @{@"origin" : origin, @"username" : username ?: @""};
-    NSMutableDictionary *query = [self queryForEntry:entry];
-    NSDictionary *attributes = @{
-        (id)kSecValueData : [password dataUsingEncoding:NSUTF8StringEncoding],
-        (id)kSecAttrGeneric : [NSJSONSerialization dataWithJSONObject:entry options:0 error:nil],
-        (id)kSecAttrLabel : [@"Lite — " stringByAppendingString:origin]
-    };
-    OSStatus status =
-        SecItemUpdate((__bridge CFDictionaryRef)query, (__bridge CFDictionaryRef)attributes);
-    if (status == errSecItemNotFound) {
-        [query addEntriesFromDictionary:attributes];
-        status = SecItemAdd((__bridge CFDictionaryRef)query, NULL);
-    }
-    return Status(status, error);
+        username.length > 1024) return Status(errSecParam, error);
+    return [self withRecords:^BOOL(NSMutableArray *records, BOOL *changed, NSError **failure) {
+        NSIndexSet *matches = [records indexesOfObjectsPassingTest:^BOOL(NSDictionary *row, NSUInteger idx, BOOL *stop) {
+            return [row[@"origin"] isEqual:origin] && [row[@"username"] isEqual:username ?: @""];
+        }];
+        [records removeObjectsAtIndexes:matches];
+        [records addObject:@{@"origin": origin, @"username": username ?: @"", @"password": password}];
+        *changed = YES;
+        return YES;
+    } error:error];
 }
 - (NSString *)passwordForEntry:(NSDictionary *)entry error:(NSError **)error {
     if ([entry[@"keychainReference"] isKindOfClass:NSData.class]) {
@@ -137,15 +178,15 @@ static BOOL Status(OSStatus status, NSError **error) {
         }
         return [[NSString alloc] initWithData:item[(id)kSecValueData] encoding:NSUTF8StringEncoding];
     }
-    NSMutableDictionary *query = [self queryForEntry:entry];
-    query[(id)kSecReturnData] = @YES;
-    query[(id)kSecMatchLimit] = (id)kSecMatchLimitOne;
-    CFTypeRef result = NULL;
-    OSStatus status = SecItemCopyMatching((__bridge CFDictionaryRef)query, &result);
-    NSData *data = CFBridgingRelease(result);
-    return Status(status, error)
-               ? [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding]
-               : nil;
+    __block NSString *password = nil;
+    BOOL ok = [self withRecords:^BOOL(NSMutableArray *records, BOOL *changed, NSError **failure) {
+        for (NSDictionary *record in records)
+            if ([record[@"origin"] isEqual:entry[@"origin"]] &&
+                [record[@"username"] isEqual:entry[@"username"]]) { password = record[@"password"]; break; }
+        return YES;
+    } error:error];
+    if (ok && !password) Status(errSecItemNotFound, error);
+    return ok ? password : nil;
 }
 - (NSArray<NSDictionary *> *)keychainEntriesForOrigin:(NSString *)origin error:(NSError **)error {
     if (![LTLoginOrigin(origin) isEqual:origin] || ![origin hasPrefix:@"https://"])
@@ -205,7 +246,15 @@ static BOOL Status(OSStatus status, NSError **error) {
     return Status(status, error);
 }
 - (BOOL)deleteEntry:(NSDictionary *)entry error:(NSError **)error {
-    OSStatus status = SecItemDelete((__bridge CFDictionaryRef)[self queryForEntry:entry]);
-    return status == errSecItemNotFound || Status(status, error);
+    if (entry[@"keychainReference"] || ![LTLoginOrigin(entry[@"origin"]) isEqual:entry[@"origin"]] ||
+        ![entry[@"username"] isKindOfClass:NSString.class]) return Status(errSecParam, error);
+    return [self withRecords:^BOOL(NSMutableArray *records, BOOL *changed, NSError **failure) {
+        NSIndexSet *matches = [records indexesOfObjectsPassingTest:^BOOL(NSDictionary *row, NSUInteger idx, BOOL *stop) {
+            return [row[@"origin"] isEqual:entry[@"origin"]] && [row[@"username"] isEqual:entry[@"username"]];
+        }];
+        [records removeObjectsAtIndexes:matches];
+        *changed = *changed || matches.count > 0;
+        return YES;
+    } error:error];
 }
 @end

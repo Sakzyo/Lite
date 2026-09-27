@@ -1,6 +1,7 @@
 #import "../model/LTGitHub.h"
 #import "../macos/LTShortcuts.h"
 #import <Security/Security.h>
+#import <CommonCrypto/CommonDigest.h>
 #import "../macos/LTFaviconCache.h"
 #import "../migration/LTImporter.h"
 #import "../model/LTCommandIndex.h"
@@ -296,20 +297,22 @@ int main(int argc, char **argv) {
             [icons shutdown];
         }
         if ([arguments containsObject:@"--check-keychain"]) {
-            LTLoginStore *logins = [[LTLoginStore alloc] initWithProfilePath:path];
+            NSString *loginPath = [path.stringByDeletingLastPathComponent stringByAppendingPathComponent:@"LoginProfile"];
+            LTLoginStore *logins = [[LTLoginStore alloc] initWithProfilePath:loginPath];
             NSDictionary *entry =
                 @{@"origin" : @"https://synthetic.lite.invalid", @"username" : @"lite-test-user"};
             CHECK([logins saveUsername:entry[@"username"]
                               password:@"Synthetic-only-1!"
                                 origin:entry[@"origin"]
                                  error:&e],
-                  "save synthetic login to macOS Keychain");
+                  "save synthetic login to encrypted vault");
+            if (e) fprintf(stderr, "Synthetic vault error: %s (%ld)\n", e.domain.UTF8String, (long)e.code);
             CHECK([logins entriesForOrigin:entry[@"origin"] error:&e].count == 1 &&
                       ![logins entriesForOrigin:entry[@"origin"] error:&e].firstObject[@"password"],
                   "login listings expose metadata without passwords");
-            logins = [[LTLoginStore alloc] initWithProfilePath:path];
+            logins = [[LTLoginStore alloc] initWithProfilePath:loginPath];
             CHECK([[logins passwordForEntry:entry error:&e] isEqual:@"Synthetic-only-1!"],
-                  "Keychain login persists across store recreation");
+                  "vault login persists across store recreation");
             CHECK([logins saveUsername:entry[@"username"]
                               password:@"Synthetic-only-2!"
                                 origin:entry[@"origin"]
@@ -320,14 +323,14 @@ int main(int argc, char **argv) {
             CHECK([logins entriesForOrigin:@"https://other.lite.invalid" error:&e].count == 0,
                   "saved logins are never suggested for a different origin");
             LTLoginStore *other =
-                [[LTLoginStore alloc] initWithProfilePath:[path stringByAppendingString:@"-other"]];
+                [[LTLoginStore alloc] initWithProfilePath:[loginPath stringByAppendingString:@"-other"]];
             CHECK([other entriesForOrigin:nil error:&e].count == 0,
                   "isolated profiles cannot see each other's saved logins");
             CHECK(![logins saveUsername:@"invalid"
                                password:@"test"
                                  origin:@"http://remote.invalid"
                                   error:&e],
-                  "Keychain store rejects unsafe website origins");
+                  "vault rejects unsafe website origins");
             CHECK([logins deleteEntry:entry error:&e] &&
                       [logins entriesForOrigin:nil error:&e].count == 0,
                   "delete synthetic login and leave no test credentials");
@@ -351,7 +354,51 @@ int main(int argc, char **argv) {
             CHECK(SecItemDelete((__bridge CFDictionaryRef)internet) == errSecSuccess, "remove synthetic system Keychain entry");
             CHECK([logins setGitHubToken:@"Synthetic-token-only" error:&e] && [[logins githubToken:&e] isEqual:@"Synthetic-token-only"] && [logins entriesForOrigin:nil error:&e].count == 0, "GitHub token is in Keychain, separate from website logins");
             CHECK([logins setGitHubToken:@"" error:&e] && [[logins githubToken:&e] isEqual:@""], "forget GitHub token removes its Keychain item");
-
+            NSData *profileBytes = [loginPath.stringByStandardizingPath dataUsingEncoding:NSUTF8StringEncoding];
+            unsigned char hash[CC_SHA256_DIGEST_LENGTH];
+            CC_SHA256(profileBytes.bytes, (CC_LONG)profileBytes.length, hash);
+            NSMutableString *service = [@"app.lite.browser.logins." mutableCopy];
+            for (NSUInteger i = 0; i < sizeof(hash); i++) [service appendFormat:@"%02x", hash[i]];
+            NSMutableDictionary *legacy = [@{(id)kSecClass: (id)kSecClassGenericPassword,
+                (id)kSecAttrService: service,
+                (id)kSecAttrAccount: [JSON(@[entry[@"origin"], entry[@"username"]]) base64EncodedStringWithOptions:0],
+                (id)kSecAttrGeneric: JSON(entry),
+                (id)kSecValueData: [@"Synthetic-legacy-only!" dataUsingEncoding:NSUTF8StringEncoding]} mutableCopy];
+            CHECK(SecItemAdd((__bridge CFDictionaryRef)legacy, NULL) == errSecSuccess, "create synthetic legacy Lite login");
+            [legacy removeObjectForKey:(id)kSecValueData];
+            [legacy removeObjectForKey:(id)kSecAttrGeneric];
+            CHECK([[logins passwordForEntry:entry error:&e] isEqual:@"Synthetic-legacy-only!"] &&
+                SecItemCopyMatching((__bridge CFDictionaryRef)legacy, NULL) == errSecItemNotFound,
+                "legacy login migrates into vault before its Keychain original is deleted");
+            CHECK([[([[LTLoginStore alloc] initWithProfilePath:loginPath]) passwordForEntry:entry error:&e]
+                isEqual:@"Synthetic-legacy-only!"], "migrated login survives reopening");
+            NSString *vaultPath = [loginPath stringByAppendingPathComponent:@"Credentials/Logins.vault"];
+            NSData *vaultBytes = [NSData dataWithContentsOfFile:vaultPath];
+            NSMutableDictionary *retry = [legacy mutableCopy];
+            retry[(id)kSecAttrGeneric] = JSON(entry);
+            retry[(id)kSecValueData] = [@"Synthetic-stale-legacy!" dataUsingEncoding:NSUTF8StringEncoding];
+            CHECK(SecItemAdd((__bridge CFDictionaryRef)retry, NULL) == errSecSuccess, "simulate an interrupted legacy cleanup");
+            NSMutableData *damaged = [vaultBytes mutableCopy];
+            if (damaged.length) ((unsigned char *)damaged.mutableBytes)[damaged.length - 1] ^= 1;
+            [damaged writeToFile:vaultPath atomically:NO];
+            CHECK(![logins entriesForOrigin:nil error:&e] &&
+                SecItemCopyMatching((__bridge CFDictionaryRef)legacy, NULL) == errSecSuccess &&
+                [damaged isEqual:[NSData dataWithContentsOfFile:vaultPath]],
+                "failed migration preserves both the damaged vault and original Keychain login");
+            [vaultBytes writeToFile:vaultPath atomically:NO];
+            CHECK([[logins passwordForEntry:entry error:&e] isEqual:@"Synthetic-legacy-only!"] &&
+                SecItemCopyMatching((__bridge CFDictionaryRef)legacy, NULL) == errSecItemNotFound,
+                "retrying legacy cleanup never replaces newer vault credentials");
+            vaultBytes = [NSData dataWithContentsOfFile:vaultPath];
+            NSMutableDictionary *vaultKey = [@{(id)kSecClass: (id)kSecClassGenericPassword,
+                (id)kSecAttrService: [service stringByAppendingString:@".vault"],
+                (id)kSecAttrAccount: @"vault-key-v1"} mutableCopy];
+            CHECK(SecItemDelete((__bridge CFDictionaryRef)vaultKey) == errSecSuccess, "remove only the synthetic vault key");
+            CHECK(![logins saveUsername:entry[@"username"] password:@"No-reset" origin:entry[@"origin"] error:&e] &&
+                [vaultBytes isEqual:[NSData dataWithContentsOfFile:vaultPath]], "missing real Keychain key preserves existing vault");
+            SecItemDelete((__bridge CFDictionaryRef)legacy);
+            [NSFileManager.defaultManager removeItemAtPath:loginPath error:nil];
+            [NSFileManager.defaultManager removeItemAtPath:[loginPath stringByAppendingString:@"-other"] error:nil];
         }
         CHECK([LTURLFromInput(@"example.org", @"DuckDuckGo") isEqual:@"https://example.org"],
               "URL normalization");

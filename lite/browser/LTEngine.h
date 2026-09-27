@@ -7,6 +7,8 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)pageCloseCanceled:(LTPage *)page;
 - (void)page:(LTPage *)page openURL:(NSString *)url;
 - (void)page:(LTPage *)page downloadChanged:(NSDictionary *)download;
+@optional
+- (void)page:(LTPage *)page submittedLogin:(NSDictionary *)login;
 @end
 @interface LTBrowserContext : NSObject
 - (instancetype)initPrivate:(BOOL)privateMode;

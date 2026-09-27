@@ -58,6 +58,7 @@ try:
     required = blocking_checks if blocking_only else required + blocking_checks
     failures = [key for key in required if result.get(key) is not True]
     login_checks = ['loginFill', 'loginNoSubmit', 'loginCrossSiteRejected', 'loginNewPasswordRejected', 'loginHiddenRejected', 'loginWrongOriginRejected']
+    login_checks += ['loginBridgeHidden', 'loginSubmissionUnsafeRejected', 'loginSubmissionCaptured', 'loginSubmissionPrivateRejected']
     if not blocking_only:
         failures += [key for key in login_checks if result.get(key) is not True]
         failures += ['webPlatform.'+key for key in ['chromium','dom','indexedDB','wasm','webgl','fetch','cookie'] if result.get('webPlatform',{}).get(key) is not True]
@@ -69,7 +70,7 @@ try:
     target.mkdir(exist_ok=True)
     (target/('blocking.json' if blocking_only else 'engine.json')).write_text(json.dumps(result, indent=2)+'\n')
     print(json.dumps(result, indent=2))
-    print('FAIL: '+', '.join(failures) if failures else f'PASS: {len(required) + (0 if blocking_only else 13)} bundled Chromium checks')
+    print('FAIL: '+', '.join(failures) if failures else f'PASS: {len(required) + (0 if blocking_only else len(login_checks) + 7)} bundled Chromium checks')
     raise SystemExit(bool(failures))
 finally:
     if tls_server:

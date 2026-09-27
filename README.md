@@ -29,9 +29,10 @@ launched process. The Codex Run action uses the same script.
 - Local, validated SQLite transactions for organization and restoration metadata.
 - Website icons cached across launches and prefetched for unopened bookmarks;
   bookmark folders start collapsed at every launch.
-- Manual save, fill, update, and deletion of website logins using macOS Keychain,
-  available from the Library menu. Filling also offers accessible existing Keychain
-  website passwords, restricted to the exact HTTPS host and port.
+- Save/update prompts for submitted website logins, plus Library commands to save,
+  fill, and delete accounts. All Lite logins share one authenticated encrypted vault
+  per profile, with its key held separately in macOS Keychain. Filling also offers
+  accessible existing Keychain website passwords for the exact HTTPS host and port.
 - GitHub Live Folders with account/repository/draft filters, periodic refresh, and
   optional API tokens kept in Keychain for access to private repositories.
 - Browser Task Manager with live Chromium resource measurements, sorting, and
@@ -56,7 +57,7 @@ launched process. The Codex Run action uses the same script.
 ## Release boundaries
 
 This initial CEF embedding does **not** yet provide Chrome Web Store extensions,
-Google password sync, automatic login-saving prompts, licensed Widevine/proprietary codecs, PWA installation,
+Google password sync, licensed Widevine/proprietary codecs, PWA installation,
 or a signed automatic engine updater. Full browsing-session history/form/scroll
 restoration after a renderer is discarded is not implemented; edited forms are
 protected from automatic discard, and URL/title/pinned metadata survive.

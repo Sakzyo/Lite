@@ -47,6 +47,7 @@ static BOOL CanUseLogin(LTPage *page, NSString *origin) {
 }
 @implementation LTPasswords {
     LTLoginStore *_store;
+    NSTimeInterval _lastOffer;
 }
 - (instancetype)initWithStore:(LTLoginStore *)store {
     if ((self = [super init]))
@@ -65,57 +66,67 @@ static BOOL CanUseLogin(LTPage *page, NSString *origin) {
     if (![self checkPage:page window:window])
         return;
     NSString *origin = LTLoginOrigin(page.url);
-    // Read only after the user explicitly chooses Save Login. No page script can access the
-    // Keychain.
+    // The manual command reads only the current secure page. No page script can
+    // access the vault or Keychain.
     [page evaluateJavaScript:LTLoginReadScript(origin)
                   completion:^(id value, BOOL success) {
                     if (!CanUseLogin(page, origin) || !window.visible)
                         return;
                     NSDictionary *fields =
                         success && [value isKindOfClass:NSDictionary.class] ? value : @{};
-                    NSAlert *alert = [NSAlert new];
-                    alert.messageText = @"Save login in Lite";
-                    alert.informativeText = [NSString
-                        stringWithFormat:@"%@\nStored securely in your Mac’s Keychain. Saving the "
-                                         @"same username updates its password.",
-                                         origin];
-                    NSTextField *username = [NSTextField new];
-                    username.placeholderString = @"Username or email";
-                    username.stringValue = [fields[@"username"] isKindOfClass:NSString.class]
-                                               ? fields[@"username"]
-                                               : @"";
-                    NSSecureTextField *password = [NSSecureTextField new];
-                    password.placeholderString = @"Password";
-                    password.stringValue = [fields[@"password"] isKindOfClass:NSString.class]
-                                               ? fields[@"password"]
-                                               : @"";
-                    NSStackView *form = LTStack(
-                        @[
-                            LTLabel(@"Username", 12, NSFontWeightMedium), username,
-                            LTLabel(@"Password", 12, NSFontWeightMedium), password
-                        ],
-                        NSUserInterfaceLayoutOrientationVertical, 6);
-                    form.frame = NSMakeRect(0, 0, 350, 112);
-                    [username.widthAnchor constraintEqualToConstant:350].active = YES;
-                    [password.widthAnchor constraintEqualToConstant:350].active = YES;
-                    alert.accessoryView = form;
-                    [alert addButtonWithTitle:@"Save"];
-                    [alert addButtonWithTitle:@"Cancel"];
-                    [alert beginSheetModalForWindow:window
-                                  completionHandler:^(NSModalResponse result) {
-                                    if (result == NSAlertFirstButtonReturn) {
-                                        NSError *error;
-                                        if (![self->_store saveUsername:username.stringValue
-                                                               password:password.stringValue
-                                                                 origin:origin
-                                                                  error:&error])
-                                            LTAlert(window, @"Login was not saved",
-                                                    error.localizedDescription);
-                                    }
-                                    password.stringValue = @"";
-                                  }];
-                    [alert.window makeFirstResponder:username];
+                    [self showSaveFields:fields origin:origin window:window];
                   }];
+}
+- (void)offerLogin:(NSDictionary *)login window:(NSWindow *)window {
+    // Navigation may complete before the sheet closes. Keep the verified submit
+    // origin, never reassign this login to the destination of a redirect.
+    if (!window.visible || window.attachedSheet || NSDate.timeIntervalSinceReferenceDate - _lastOffer < 10) return;
+    _lastOffer = NSDate.timeIntervalSinceReferenceDate;
+    [self showSaveFields:login origin:login[@"origin"] window:window];
+}
+- (void)showSaveFields:(NSDictionary *)fields origin:(NSString *)origin window:(NSWindow *)window {
+    NSAlert *alert = [NSAlert new];
+    alert.messageText = @"Save login in Lite";
+    alert.informativeText = [NSString
+        stringWithFormat:@"%@\nStored in Lite’s encrypted vault. Saving the "
+                         @"same username updates its password.",
+                         origin];
+    NSTextField *username = [NSTextField new];
+    username.placeholderString = @"Username or email";
+    username.stringValue = [fields[@"username"] isKindOfClass:NSString.class]
+                               ? fields[@"username"]
+                               : @"";
+    NSSecureTextField *password = [NSSecureTextField new];
+    password.placeholderString = @"Password";
+    password.stringValue = [fields[@"password"] isKindOfClass:NSString.class]
+                               ? fields[@"password"]
+                               : @"";
+    NSStackView *form = LTStack(
+        @[
+            LTLabel(@"Username", 12, NSFontWeightMedium), username,
+            LTLabel(@"Password", 12, NSFontWeightMedium), password
+        ],
+        NSUserInterfaceLayoutOrientationVertical, 6);
+    form.frame = NSMakeRect(0, 0, 350, 112);
+    [username.widthAnchor constraintEqualToConstant:350].active = YES;
+    [password.widthAnchor constraintEqualToConstant:350].active = YES;
+    alert.accessoryView = form;
+    [alert addButtonWithTitle:@"Save"];
+    [alert addButtonWithTitle:@"Cancel"];
+    [alert beginSheetModalForWindow:window
+                  completionHandler:^(NSModalResponse result) {
+                    if (result == NSAlertFirstButtonReturn) {
+                        NSError *error;
+                        if (![self->_store saveUsername:username.stringValue
+                                               password:password.stringValue
+                                                 origin:origin
+                                                  error:&error])
+                            LTAlert(window, @"Login was not saved",
+                                    error.localizedDescription);
+                    }
+                    password.stringValue = @"";
+                  }];
+    [alert.window makeFirstResponder:username];
 }
 - (void)fillForPage:(LTPage *)page window:(NSWindow *)window {
     if (![self checkPage:page window:window])
@@ -135,9 +146,9 @@ static BOOL CanUseLogin(LTPage *page, NSString *origin) {
         return;
     }
     NSAlert *alert = [NSAlert new];
-    alert.messageText = @"Fill from Apple Keychain";
+    alert.messageText = @"Fill Saved Login";
     alert.informativeText = [NSString
-        stringWithFormat:@"%@\nChoose an account. macOS may ask you to unlock its Keychain entry. Lite fills the form without submitting it.%@", origin,
+        stringWithFormat:@"%@\nChoose an account. macOS may ask you to unlock Keychain. Lite fills the form without submitting it.%@", origin,
         keychainError ? @" Some Keychain entries could not be accessed." : @""];
     NSPopUpButton *accounts = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(0, 0, 350, 28)];
     for (NSDictionary *entry in entries) {
@@ -183,14 +194,14 @@ static BOOL CanUseLogin(LTPage *page, NSString *origin) {
     if (!entries.count) {
         LTAlert(window, error ? @"Could not read saved logins" : @"No saved logins",
                 error.localizedDescription
-                    ?: @"Use Library → Save Login for This Site to add one. Logins stay in this "
-                       @"Mac’s Keychain; Google account sync is not available.");
+                    ?: @"Use Library → Save Login for This Site to add one. Logins stay in Lite’s "
+                       @"encrypted vault; Google account sync is not available.");
         return;
     }
     NSAlert *alert = [NSAlert new];
     alert.messageText = @"Saved logins";
     alert.informativeText =
-        @"Logins are stored in this Mac’s Keychain. To update a password, save the same username "
+        @"Logins are stored together in Lite’s encrypted vault, protected by macOS Keychain. To update a password, save the same username "
         @"again on its website. Google account sync is not available.";
     NSPopUpButton *accounts = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(0, 0, 430, 28)];
     for (NSDictionary *entry in entries)

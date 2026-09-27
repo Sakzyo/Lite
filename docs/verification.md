@@ -194,3 +194,34 @@ qualification work. See [release status](release-status.md) and
 - Scope, skipped-rule categories, pinned versions, and licensing are documented
   in [content blocking](content-blocking.md). Filter resources add about 8.2 MiB
   to the bundle, including the compressed upstream input sources.
+## Encrypted login vault verification — 2026-09-27
+
+- `script/build_and_run.sh --build`: Release build, all three CTest suites, both
+  package tests, and ad-hoc bundle signature verification passed.
+- `LiteVaultTests` uses test-only injected random keys and verifies encrypted
+  round-trips, encrypted origin/username/password metadata, fresh IVs, 0600/0700
+  permissions, updates from independent stores, concurrent writes, canceled
+  transactions, deletion, tampering with each envelope component, truncation,
+  wrong/missing keys, duplicate identities, and symlink/hard-link rejection.
+- `LiteTests lite/tests/fixtures --check-keychain`: **122 passed, 0 failed**, using
+  only synthetic Keychain entries and disposable profiles. Includes actual vault
+  key creation, save/read/update/delete, legacy migration, restart persistence,
+  interrupted migration cleanup, preserving damaged data and missing-key failure.
+  These tests need access to macOS Keychain outside the command sandbox.
+- `script/test_browser.py`: **48 bundled Chromium checks passed**. New checks
+  exercise the actual renderer-to-browser submission bridge, hidden bridge API,
+  rejection of cross-site actions (including submit-button overrides), hidden and
+  new-password fields, untrusted synthetic submit events, and private-window
+  exclusion. Existing fill/origin and browser regressions also passed.
+- Native UI in a disposable profile: a user click on a synthetic loopback login
+  showed the Save sheet; Cancel created no vault. Save produced exactly one
+  encrypted credential file, mode 0600 in a mode 0700 directory, with no plaintext
+  test site, username or password. After quitting/relaunching, Fill Saved Login
+  restored the username and masked password without submitting the form. The
+  synthetic key and profile were removed afterward.
+
+No personal passwords were inspected. Automatic prompts cover standard main-frame
+login submissions; custom, embedded and multi-step flows retain the manual Save
+command. This remains an ad-hoc signed local build, not a notarized release or an
+independent security audit. Storage design and recovery boundaries are documented
+in [architecture.md](architecture.md).

@@ -1,5 +1,6 @@
 #import "LTEngine.h"
 #import "LTContentBlocker.h"
+#import "../model/LTLoginStore.h"
 #include "LTYouTubeFilter.h"
 #include "include/cef_app.h"
 #include "include/cef_browser.h"
@@ -85,11 +86,13 @@ static void UpdateYouTubeGuard(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame
   @public
     CefRefPtr<CefRequestContext> _context;
     LTBlockingPolicy *_blocking;
+    BOOL _privateMode;
 }
 @end
 @implementation LTBrowserContext
 - (instancetype)initPrivate:(BOOL)privateMode {
     if ((self = [super init])) {
+        _privateMode = privateMode;
         [LTContentBlocker shared]; // Compile once on the UI thread, before requests begin.
         _blocking = [LTBlockingPolicy new];
         if (privateMode) {
@@ -572,6 +575,25 @@ class Client : public CefClient,
             InjectCosmetics(browser, frame);
             return true;
         }
+        if (source == PID_RENDERER && message->GetName() == "LiteLoginSubmitted") {
+            LTPage *p = page_;
+            auto args = message->GetArgumentList();
+            if (!p || p->_context->_privateMode || !frame->IsMain() || args->GetSize() != 4) return true;
+            for (size_t i = 0; i < 4; i++) if (args->GetType(i) != VTYPE_STRING) return true;
+            NSString *origin = LTLoginOrigin(N(frame->GetURL()));
+            NSString *username = N(args->GetString(1)), *password = N(args->GetString(2));
+            auto entry = browser->GetHost()->GetVisibleNavigationEntry();
+            auto ssl = entry ? entry->GetSSLStatus() : nullptr;
+            BOOL secure = ssl && ssl->IsSecureConnection() && ssl->GetCertStatus() == 0;
+            if (!origin || ![origin isEqual:N(args->GetString(0))] ||
+                ![origin isEqual:N(args->GetString(3))] ||
+                ![origin isEqual:LTLoginOrigin(p.url)] ||
+                (!secure && ![origin hasPrefix:@"http://"]) ||
+                !password.length || password.length > 16384 || username.length > 1024) return true;
+            if ([p.delegate respondsToSelector:@selector(page:submittedLogin:)])
+                [p.delegate page:p submittedLogin:@{@"origin": origin, @"username": username, @"password": password}];
+            return true;
+        }
         if (source != PID_RENDERER || message->GetName() != "LiteLifecycle")
             return false;
         auto args = message->GetArgumentList();
@@ -636,8 +658,10 @@ class Client : public CefClient,
     window.runtime_style = CEF_RUNTIME_STYLE_ALLOY;
     CefBrowserSettings settings;
     settings.background_color = CefColorSetARGB(255, 250, 250, 250);
+    auto extra = CefDictionaryValue::Create();
+    extra->SetBool("liteSaveLogins", !_context->_privateMode);
     _browser = CefBrowserHost::CreateBrowserSync(window, new Client(self), C(_url), settings,
-                                                 nullptr, _context->_context);
+                                                 extra, _context->_context);
     if (_browser) {
         NSView *view = (__bridge NSView *)_browser->GetHost()->GetWindowHandle();
         view.frame = _container.bounds;

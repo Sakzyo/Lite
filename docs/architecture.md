@@ -11,7 +11,7 @@ AppKit windows, sidebar, dialogs, native menus
 ```
 
 `lite/model` owns the data model, SQLite transactions, history queries, and local
-command ranking, plus the profile-scoped Keychain login store. `lite/migration` owns schema adapters and import previews.
+command ranking, plus the profile-scoped encrypted login vault. `lite/migration` owns schema adapters and import previews.
 `lite/browser` owns CEF clients, request contexts, helper startup, native page
 views, downloads, permissions, media requests, and lifecycle callbacks.
 `lite/macos` owns native view composition and user commands.
@@ -71,15 +71,51 @@ Lite.sqlite                # organization, window metadata, Lite history
 Lite.sqlite-wal / -shm     # SQLite WAL files while running
 Chromium/Default/          # normal Chromium profile/storage
 Favicons/                  # bounded PNG favicon cache, shared by site origin
+Credentials/Logins.vault    # authenticated encrypted website accounts/passwords
 ```
 
-`LTLoginStore` keeps password values in macOS Keychain generic-password items,
-scoped by the profile path. SQLite never receives login passwords. Native Library
-commands explicitly save/fill/manage entries. Page scripts cannot call the store;
-the native UI reads or fills a form only after a user action. Both the browser's
-current URL and the page script check the exact origin before filling. HTTPS with
-a valid certificate is required, except for HTTP loopback development pages.
-Private windows have no persistent favicon cache or login-store connection.
+`LTLoginStore` keeps website accounts and passwords in one `LTLoginVault` file.
+The entire JSON payload (including origins and usernames) is AES-256-CBC encrypted
+with a fresh random IV. Encrypt-then-MAC HMAC-SHA-256 authenticates the version,
+IV and ciphertext with an independent 256-bit key; the tag is compared without an
+early exit before decryption. Security.framework generates the 64 bytes of key
+material and stores them only in a profile-scoped, non-synchronizing login Keychain
+item using macOS's default application access controls. The key is fetched for
+each operation rather than cached by the store. This local ad-hoc build uses the
+login Keychain, not the entitlement-based Data Protection Keychain; it does not
+claim a separate Touch ID or screen-lock policy. See [Apple's Keychain implementations](https://developer.apple.com/documentation/technotes/tn3137-on-mac-keychains).
+
+The credential directory is mode 0700 and the vault is 0600, with inherited ACLs
+removed. Descriptor-relative I/O rejects symlinks, non-owner files and hard-linked
+vault files. Directory locking serializes read/modify/write across stores and
+processes. Updates write only ciphertext into an exclusive 0600 temporary file,
+flush it, atomically rename it, then flush the directory. There are no plaintext
+credential files or SQLite password fields. Interrupted writes can leave encrypted
+temporary files. A missing key, failed authentication, or invalid data fails closed
+without resetting the vault. Older Lite Keychain logins migrate on first access;
+their originals are deleted only after a successful vault commit, under the same
+lock. Retry preserves any newer vault entry. Other apps' passwords and GitHub API
+tokens are not migrated.
+
+In regular main frames, a renderer listener captures a user-activated, trusted
+submission of a visible same-origin form containing one current-password field.
+It keeps its callback in a closure; there is no page API to read or write the vault.
+The browser validates the actual frame origin and certificate independently before
+offering a native Save sheet. The submitted values remain in memory until the user
+chooses Save; Cancel does not persist them. A redirect never changes their recorded
+origin. Submission is not proof that the server accepted the login. Multi-step,
+custom JavaScript, password-creation and embedded forms may need the manual Save
+command. Private windows install no capture callback and have no login-store
+connection. Fill remains explicit and checks the exact scheme, host and port both
+natively and in the page. HTTPS with a valid certificate is required, except for
+HTTP loopback development pages. Private windows also have no persistent favicon cache.
+
+The default file is `~/Library/Application Support/Lite/Credentials/Logins.vault`.
+Copying it alone to another Mac does not make the credentials readable: its original
+Keychain key is required. Encryption protects stored data, not an already compromised
+macOS session or values while being entered/filled on a website. Local ad-hoc builds
+can prompt for Keychain access after rebuilds; stable release signing remains a
+distribution requirement.
 
 The window sidebar uses `NSOutlineView` view reuse. Page title updates refresh the
 affected row. Organization mutations rebuild visible tree metadata; expansion

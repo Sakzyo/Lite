@@ -599,6 +599,10 @@
         if ([LTFaviconOrigin(node.url) isEqual:notification.userInfo[@"origin"]])
             [_sidebar updateItem:node.identifier];
 }
+- (void)page:(LTPage *)page submittedLogin:(NSDictionary *)login {
+    if (_passwords && page == [self activePage] && !page.closing)
+        [_passwords offerLogin:login window:self.window];
+}
 - (void)pageChanged:(LTPage *)page {
     if (page.favicon)
         [_icons storeImage:page.favicon forURL:page.url];

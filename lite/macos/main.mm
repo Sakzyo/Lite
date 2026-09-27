@@ -306,7 +306,7 @@ static BOOL smokeTest = NO;
         @[
             @"Library", @[ @"History", @"history", @"y" ], @[ @"Downloads", @"downloads", @"j" ],
             @[ @"-" ], @[ @"Save Login for This Site…", @"saveLogin", @"" ],
-            @[ @"Fill from Apple Keychain…", @"fillLogin", @"" ],
+            @[ @"Fill Saved Login…", @"fillLogin", @"" ],
             @[ @"Open Apple Passwords", @"applePasswords", @"" ],
             @[ @"Manage Saved Logins…", @"passwords", @"" ],
             @[ @"Open Google Password Manager", @"googlePasswords", @"" ], @[ @"-" ],

@@ -63,6 +63,8 @@ static BOOL YouTubeGuardPassed(NSDictionary *result, BOOL enabled) {
 @property NSMutableArray<LTPage *> *benchmarkPages;
 @property double settledAt;
 @property NSUInteger browsersBeforeDevTools;
+@property NSUInteger loginSubmissions;
+@property BOOL capturedExpectedLogin;
 - (void)begin;
 @end
 static LTSmoke *running;
@@ -277,6 +279,8 @@ static LTSmoke *running;
             }
         }];
     } else if (_stage == 27 && !_privatePage.loading && [_privatePage.title isEqual:@"Lite content blocking test"]) {
+        if (![NSProcessInfo.processInfo.arguments containsObject:@"--lite-blocking-smoke"])
+            [self checkPrivateLoginCapture];
         _stage = 28;
         [_privatePage evaluateForTesting:@"window.blockingResult || null" completion:^(id value, BOOL success) {
             if (!success || ![value isKindOfClass:NSDictionary.class]) { self.stage = 27; return; }
@@ -377,8 +381,41 @@ static LTSmoke *running;
                      completion:^(id value, BOOL success) {
                        if (success && [value isKindOfClass:NSDictionary.class])
                            [self.results addEntriesFromDictionary:value];
-                       [self performSelector:@selector(checkTaskManager) withObject:nil afterDelay:2.5];
+                       [self checkLoginCapture];
                      }];
+}
+- (void)page:(LTPage *)page submittedLogin:(NSDictionary *)login {
+    _loginSubmissions++;
+    _capturedExpectedLogin = page == _normal &&
+        [login[@"origin"] isEqual:LTLoginOrigin(_normal.url)] &&
+        [login[@"username"] isEqual:@"synthetic-capture"] &&
+        [login[@"password"] isEqual:@"Synthetic-capture-only!"];
+}
+- (void)checkLoginCapture {
+    // Runtime.evaluate supplies a browser user gesture; requestSubmit generates
+    // the trusted submit event used by real clicks. No submitted value is logged.
+    [_normal evaluateJavaScript:@"(()=>{const f=document.querySelector('form'),p=f.querySelector('[type=password]'),b=f.querySelector('button');f.querySelector('[name=username]').value='synthetic-capture';p.value='Synthetic-capture-only!';f.action='https://other.lite.invalid/';f.requestSubmit(b);f.action='/login';p.autocomplete='new-password';f.requestSubmit(b);p.autocomplete='current-password';p.style.display='none';f.requestSubmit(b);p.style.display='';b.setAttribute('formaction','https://other.lite.invalid/');f.requestSubmit(b);b.removeAttribute('formaction');f.dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}));return typeof window.__liteLoginSubmitted==='undefined';})()"
+        completion:^(id value, BOOL success) {
+            self.results[@"loginBridgeHidden"] = @(success && [value isEqual:@YES]);
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 300 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
+                self.results[@"loginSubmissionUnsafeRejected"] = @(self.loginSubmissions == 0);
+                [self.normal evaluateJavaScript:@"document.querySelector('form').requestSubmit(document.querySelector('button'));true"
+                    completion:^(id value, BOOL success) {
+                        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 300 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
+                            self.results[@"loginSubmissionCaptured"] = @(success && self.loginSubmissions == 1 && self.capturedExpectedLogin);
+                            [self performSelector:@selector(checkTaskManager) withObject:nil afterDelay:2.5];
+                        });
+                    }];
+            });
+        }];
+}
+- (void)checkPrivateLoginCapture {
+    [_privatePage evaluateJavaScript:@"(()=>{document.body.innerHTML='<form><input name=username autocomplete=username value=synthetic-private><input type=password value=Synthetic-private-only><button>Sign in</button></form>';const f=document.querySelector('form');f.addEventListener('submit',e=>e.preventDefault());f.requestSubmit(f.querySelector('button'));return typeof window.__liteLoginSubmitted==='undefined';})()"
+        completion:^(id value, BOOL success) {
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 300 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
+                self.results[@"loginSubmissionPrivateRejected"] = @(success && [value isEqual:@YES] && self.loginSubmissions == 1);
+            });
+        }];
 }
 - (void)checkTaskManager {
     NSArray *tasks = LTBrowserTasks();

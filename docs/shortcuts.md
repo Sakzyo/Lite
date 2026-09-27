@@ -53,10 +53,11 @@ Bookmark folders, including nested folders, start closed on every launch. Cached
 website icons appear immediately; missing icons are fetched in the background
 without opening tabs. Sites without an accessible icon retain the globe fallback.
 
-To save a login, enter it on an HTTPS website, then choose **Library → Save Login
-for This Site…**. Review the username and password and choose Save. Saving the
-same username on that site updates its password. Use **Library → Fill from Apple
-Keychain…** on a later visit; Lite fills the form after confirmation and does not
+Lite offers to save a login when you submit a supported HTTPS login form. Review
+the site and username, then choose Save; Cancel leaves it unsaved. You can also use
+**Library → Save Login for This Site…** for custom or multi-step forms. Saving the
+same username on that site updates its password. Use **Library → Fill Saved Login…**
+on a later visit; Lite fills the form after confirmation and does not
 submit it. **Manage Saved Logins…** lists and deletes saved entries.
 
 The fill picker also offers existing macOS Internet-password entries for the exact
@@ -65,11 +66,16 @@ Fill; macOS can require authorization. Apple Passwords/iCloud vault entries are 
 all exposed through this API. **Library → Open Apple Passwords** opens Apple's app
 for entries unavailable to Lite; it does not import or synchronize the vault.
 
-Passwords are stored in this Mac's Keychain, separately from the browser database.
+All saved Lite website accounts share an encrypted file at
+`~/Library/Application Support/Lite/Credentials/Logins.vault`. Its encryption key
+is stored separately in macOS Keychain. Existing Lite logins migrate automatically
+when the store is accessed. Keep the original Keychain key: a copy of the file alone
+cannot restore your passwords on another Mac.
 Filling matches the exact website origin (scheme, host, and port), uses the main
 page's visible login form, and skips cross-site forms and new-password fields.
 Private windows do not access this store. Localhost HTTP is supported for testing.
-There are no automatic save prompts, cross-frame filling, passkeys, or cloud sync.
+Automatic prompts cover visible, same-origin, main-page login forms; custom forms
+may require manual Save. There is no cross-frame filling, passkey storage, or cloud sync.
 **Open Google Password Manager** opens Google's website; it does not connect or
 sync accounts with Lite. Google restricts Chrome Sync access in third-party
 Chromium browsers ([Chromium announcement](https://blog.chromium.org/2021/01/limiting-private-api-availability-in.html)).

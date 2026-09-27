@@ -6,6 +6,7 @@ FOUNDATION_EXPORT NSString *LTLoginFillScript(NSDictionary *entry, NSString *pas
 @interface LTPasswords : NSObject
 - (instancetype)initWithStore:(LTLoginStore *)store;
 - (void)saveForPage:(LTPage *)page window:(NSWindow *)window;
+- (void)offerLogin:(NSDictionary *)login window:(NSWindow *)window;
 - (void)fillForPage:(LTPage *)page window:(NSWindow *)window;
 - (void)manageForWindow:(NSWindow *)window;
 @end
