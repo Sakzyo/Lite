@@ -3,6 +3,7 @@
 #import "../migration/LTImporter.h"
 #import "../model/LTGitHub.h"
 #import "LTCommandPanel.h"
+#import "LTDownloadHistory.h"
 #import "LTFaviconCache.h"
 #import "LTLibraryPanel.h"
 #import "LTPasswords.h"
@@ -94,7 +95,9 @@
     LTFaviconCache *_icons;
     LTPasswords *_passwords;
     NSMutableArray<NSDictionary *> *_closed;
-    NSMutableDictionary *_downloadRows;
+    LTDownloadHistory *_downloadHistory;
+    NSMutableDictionary *_sessions;
+    BOOL _deferPages, _confirmingClose, _closedWindow;
     NSMutableDictionary *_visitKeys;
     BOOL _metadataChange, _closingWindow, _restoring, _splitPending, _addressMode;
     BOOL _verticalSplit;
@@ -130,16 +133,19 @@
             !store.privateMode && logins ? [[LTPasswords alloc] initWithStore:logins] : nil;
         _mini = mini;
         _context = [[LTBrowserContext alloc] initPrivate:store.privateMode];
+        if (store.privateMode) [self setDownloadHistory:[[LTDownloadHistory alloc] initWithPath:nil contextIdentifier:_context.contextIdentifier]];
         [_context updateBlockingPreferences:store.profile.settings[@"contentBlocking"]];
         _pageMap = [NSMutableDictionary new];
         _closed = [NSMutableArray new];
-        _downloadRows = [NSMutableDictionary new];
+        _sessions = [state[@"sessions"] mutableCopy] ?: [NSMutableDictionary new];
+        _deferPages = [state[@"deferPages"] boolValue];
         _splitRatio = 0.5;
         _verticalSplit = YES;
         _spaceID =
             [store.profile space:state[@"space"]] ? state[@"space"] : store.profile.activeSpaceID;
         _activeID = state[@"active"] ?: [store.profile space:_spaceID].selectedID;
         _secondaryID = state[@"secondary"] ?: @"";
+        if (_deferPages) { _activeID = @""; _secondaryID = @""; }
         _verticalSplit = state[@"vertical"] ? [state[@"vertical"] boolValue] : YES;
         _splitRatio = state[@"ratio"] ? [state[@"ratio"] doubleValue] : 0.5;
         _sidebarCollapsed = mini || [state[@"sidebarCollapsed"] boolValue];
@@ -179,10 +185,7 @@
           LTWindow *owner = weak;
           if (!owner)
               return;
-          if ([a isEqual:@"forget"])
-              [owner->_downloadRows removeObjectForKey:d[@"id"]];
-          else
-              [owner->_pageMap[d[@"page"]] downloadAction:a identifier:[d[@"id"] integerValue]];
+          [owner->_downloadHistory performAction:a download:d];
         };
         [w makeKeyAndOrderFront:nil];
         [w.contentView layoutSubtreeIfNeeded];
@@ -200,6 +203,15 @@
 }
 - (NSArray<LTPage *> *)pages {
     return _pageMap.allValues;
+}
+- (void)setDownloadHistory:(LTDownloadHistory *)history {
+    if (_downloadHistory) [NSNotificationCenter.defaultCenter removeObserver:self name:LTDownloadHistoryChanged object:_downloadHistory];
+    _downloadHistory = history;
+    [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(downloadHistoryChanged:)
+        name:LTDownloadHistoryChanged object:history];
+}
+- (void)downloadHistoryChanged:(NSNotification *)note {
+    [_library updateDownloads:_downloadHistory.rows];
 }
 - (void)buildUI {
     LTWindowSurface *root = [LTWindowSurface new];
@@ -427,14 +439,16 @@
         LTAlert(self.window, @"Could not save", e.localizedDescription);
 }
 - (void)storeChanged:(NSNotification *)note {
+    if (_closedWindow) return;
     [_context updateBlockingPreferences:_store.profile.settings[@"contentBlocking"]];
     if (!_metadataChange)
         [self refresh];
 }
 - (void)refresh {
+    if (_closedWindow) return;
     if (![_store.profile space:_spaceID])
         _spaceID = _store.profile.activeSpaceID;
-    if (!_mini && ![_store.profile node:_activeID])
+    if (!_mini && !_deferPages && ![_store.profile node:_activeID])
         _activeID = [_store.profile space:_spaceID].selectedID;
     if (!_mini && ![_store.profile node:_secondaryID])
         _secondaryID = @"";
@@ -453,6 +467,7 @@
     p = [[LTPage alloc] initWithID:identifier url:n.url context:_context];
     p.title = n.displayTitle;
     p.delegate = self;
+    p.sessionState = _sessions[identifier];
     _pageMap[identifier] = p;
     return p;
 }
@@ -503,6 +518,10 @@
     LTNode *n = [_store.profile node:identifier];
     if (!n)
         return;
+    LTPage *previous = [self activePage];
+    if (previous && ![previous.identifier isEqual:identifier])
+        [previous captureSessionState:^{ [self scheduleSave]; }];
+    _deferPages = NO;
     if (_splitPending) {
         _splitPending = NO;
         [self splitWith:identifier vertical:_verticalSplit];
@@ -604,6 +623,7 @@
         [_passwords offerLogin:login window:self.window];
 }
 - (void)pageChanged:(LTPage *)page {
+    if (_closedWindow) return;
     if (page.favicon)
         [_icons storeImage:page.favicon forURL:page.url];
     if (!_mini) {
@@ -646,13 +666,13 @@
 - (void)pageCloseCanceled:(LTPage *)page {
     [_pendingClose removeObject:page.identifier];
     _closingWindow = NO;
+    [self displayPages];
 }
 - (void)page:(LTPage *)page openURL:(NSString *)url {
     [self openURL:url];
 }
 - (void)page:(LTPage *)page downloadChanged:(NSDictionary *)download {
-    _downloadRows[download[@"id"]] = download;
-    [_library updateDownloads:_downloadRows.allValues];
+    // Shared history receives the engine notification, including popup downloads.
 }
 - (void)pageFocused:(NSNotification *)n {
     LTPage *p = n.object;
@@ -849,7 +869,8 @@
             [self scheduleSave];
         }
     } else if ([command isEqual:@"focusSplit"]) {
-        [[_pageMap objectForKey:_secondaryID] focus];
+        NSString *target = [[self activePage].identifier isEqual:_secondaryID] ? _activeID : _secondaryID;
+        [_pageMap[target] focus];
     } else if ([command isEqual:@"nextSpace"] || [command isEqual:@"previousSpace"]) {
         NSInteger i = [_store.profile.spaces indexOfObject:[_store.profile space:_spaceID]],
                   count = _store.profile.spaces.count;
@@ -874,9 +895,11 @@
     } else if ([command isEqual:@"toggleSidebar"])
         [self toggleSidebar:nil];
     else if ([command isEqual:@"downloads"] || [command isEqual:@"history"] ||
-             [command isEqual:@"settings"])
-        [_library showMode:command owner:self.window downloads:_downloadRows.allValues];
-    else if ([command isEqual:@"importArc"])
+             [command isEqual:@"settings"]) {
+        [_library showMode:command owner:self.window downloads:_downloadHistory.rows];
+        if ([command isEqual:@"downloads"] && _downloadHistory.saveError.length)
+            LTAlert(_library.window, @"Download history could not be saved", _downloadHistory.saveError);
+    } else if ([command isEqual:@"importArc"])
         [self importArc];
     else if ([command isEqual:@"importBookmarks"])
         [self importBookmarks];
@@ -894,13 +917,16 @@
     } else if ([command isEqual:@"googlePasswords"])
         [self openURL:@"https://passwords.google.com/"];
     else if ([command isEqual:@"clearData"]) {
-        LTConfirm(self.window, @"Clear cookies, cache, and history?",
-                  @"You will be signed out of websites. Sidebar organization will be kept. Site "
-                  @"storage such as IndexedDB can be cleared in Developer Tools.",
-                  @"Clear Data", ^{
-                    [self->_context clearData];
-                    [self->_store clearHistorySince:0];
-                  });
+        if (_store.privateMode) {
+            LTConfirm(self.window, @"Clear this private window’s website data?", @"This closes every page and popup using this private context, ends downloads and capture, and discards unsaved website work. A fresh private window opens with separate, empty storage. Regular windows and other private windows are unchanged.", @"Clear Private Data", ^{
+                self->_closingWindow = YES;
+                [self->_context closeAllBrowsersConfirmed];
+                BOOL alive = NO;
+                for (LTPage *page in self.pages) alive |= page.alive;
+                if (!alive) [self.window close];
+                [NSNotificationCenter.defaultCenter postNotificationName:@"LTAppCommand" object:@"newPrivate"];
+            });
+        } else [NSNotificationCenter.defaultCenter postNotificationName:@"LTClearAllWebsiteData" object:self];
     } else if ([command isEqual:@"extensions"]) {
         LTAlert(self.window, @"Chromium compatibility",
                 @"Lite uses Chromium 154 with native embedded pages. Chrome Web Store extensions "
@@ -1034,7 +1060,7 @@
         return;
     LTPage *page = _pageMap[identifier];
     if (page.dirty) {
-        LTConfirm(self.window, @"Close this edited page?", @"Unsaved form changes may be lost.",
+        LTConfirm(self.window, @"Close this page?", @"This page may contain unsaved work that will be lost.",
                   @"Close Tab", ^{
                     page.dirty = NO;
                     [self closeTabID:identifier];
@@ -1225,6 +1251,12 @@
               }];
 }
 - (NSDictionary *)restorationState {
+    for (LTPage *page in self.pages) {
+        if (page.sessionState && (_sessions[page.identifier] || _sessions.count < 128)) _sessions[page.identifier] = page.sessionState;
+        else if (!page.sessionState) [_sessions removeObjectForKey:page.identifier];
+    }
+    for (NSString *identifier in [_sessions.allKeys copy])
+        if (![_store.profile node:identifier]) [_sessions removeObjectForKey:identifier];
     return @{
         @"space" : _spaceID ?: @"",
         @"active" : _activeID ?: @"",
@@ -1233,8 +1265,15 @@
         @"ratio" : @(_splitRatio),
         @"sidebarCollapsed" : @(_sidebarCollapsed),
         @"sidebarWidth" : @(_sidebarWidth),
-        @"frame" : NSStringFromRect(self.window.frame)
+        @"frame" : NSStringFromRect(self.window.frame),
+        @"sessions" : [_sessions copy]
     };
+}
+- (void)captureSessionStates:(void (^)(void))completion {
+    NSArray<LTPage *> *pages = self.pages;
+    if (!pages.count) { completion(); return; }
+    __block NSUInteger remaining = pages.count;
+    for (LTPage *page in pages) [page captureSessionState:^{ if (--remaining == 0) completion(); }];
 }
 - (void)scheduleSave {
     if (_mini || _store.privateMode)
@@ -1250,11 +1289,29 @@
                                                    }];
 }
 - (BOOL)windowShouldClose:(NSWindow *)sender {
-    BOOL alive = NO;
+    NSUInteger alive = 0;
     for (LTPage *p in self.pages)
-        alive |= p.alive;
+        alive += p.alive;
     if (!alive)
         return YES;
+    if (_closingWindow || _confirmingClose) return NO;
+    if (alive > 1 || [self.pages filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(LTPage *page, NSDictionary *bindings) { return page.downloading || page.capturing; }]].count) {
+        _confirmingClose = YES;
+        NSAlert *alert = [NSAlert new];
+        alert.messageText = @"Close every page in this window?";
+        alert.informativeText = [NSString stringWithFormat:@"This closes %lu loaded pages and ends their downloads, media and capture. Unsaved page work will be lost. Cancel keeps every page open.", (unsigned long)alive];
+        [alert addButtonWithTitle:@"Cancel"];
+        [alert addButtonWithTitle:@"Close All Pages"];
+        [alert beginSheetModalForWindow:sender completionHandler:^(NSModalResponse result) {
+            self->_confirmingClose = NO;
+            if (result != NSAlertSecondButtonReturn) return;
+            [self captureSessionStates:^{
+                self->_closingWindow = YES;
+                for (LTPage *page in self.pages) [page closeConfirmed];
+            }];
+        }];
+        return NO;
+    }
     _closingWindow = YES;
     for (LTPage *p in self.pages) {
         p.visible = NO;
@@ -1263,6 +1320,9 @@
     return NO;
 }
 - (void)windowWillClose:(NSNotification *)n {
+    _closedWindow = YES;
+    [NSNotificationCenter.defaultCenter removeObserver:self];
+    [_downloadHistory flush];
     [_command close];
     [_library close];
     [_saveTimer invalidate];
@@ -1458,15 +1518,38 @@
     LTPage *p = [self activePage];
     if (!p)
         return;
-    LTAlert(self.window,
-            p.secure ? @"Connection is encrypted" : @"Connection is not verified as secure",
-            [NSString stringWithFormat:
-                          @"%@\n\n%@\nPermissions are requested when a site needs access. Lite "
-                          @"never overrides certificate errors.",
-                          [NSURL URLWithString:p.url].host ?: p.url,
-                          p.capturing
-                              ? @"Camera or microphone access is active. Close this tab to end it."
-                              : @"No camera or microphone access is active."]);
+    NSString *pageURL = [p.url copy];
+    NSURLComponents *parts = [NSURLComponents componentsWithString:p.url];
+    parts.user = nil; parts.password = nil; parts.path = @""; parts.query = nil; parts.fragment = nil;
+    NSString *origin = parts.host.length ? parts.string : p.url;
+    NSMutableString *details = [NSMutableString stringWithFormat:@"%@%@\n\nSaved site permissions apply until revoked. Camera and microphone grants apply to the capture request. macOS privacy controls still apply.\n", origin, _store.privateMode ? @"\nPrivate window" : @""];
+    for (NSDictionary *grant in p.permissionGrants)
+        [details appendFormat:@"\n%@: %@", grant[@"origin"], [grant[@"capabilities"] componentsJoinedByString:@", "]];
+    if (!p.permissionGrants.count) [details appendString:@"\nNo active grants."];
+    NSAlert *alert = [NSAlert new];
+    alert.messageText = p.secure ? @"Connection is encrypted" : @"Connection is not verified as secure";
+    alert.informativeText = details;
+    [alert addButtonWithTitle:@"Done"];
+    [alert addButtonWithTitle:@"Revoke Permissions"];
+    [alert addButtonWithTitle:@"Clear This Site’s Data…"];
+    [alert beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse result) {
+        if ((result == NSAlertSecondButtonReturn || result == NSAlertThirdButtonReturn) && ![p.url isEqual:pageURL]) {
+            LTAlert(self.window, @"The page changed", @"Open Site Information again for the current page. No permissions or website data were changed.");
+            return;
+        }
+        if (result == NSAlertSecondButtonReturn) [p revokePermissions];
+        if (result == NSAlertThirdButtonReturn) {
+            LTConfirm(self.window, @"Clear this origin’s website data?", [NSString stringWithFormat:@"%@\nThis removes cookies, local storage, IndexedDB, service workers and Cache Storage for this origin, and resets its grants. Shared HTTP cache is also cleared. Reload open pages afterward to drop in-memory data. Saved passwords and bookmarks are kept.", origin], @"Clear Site Data", ^{
+                if (![p.url isEqual:pageURL]) {
+                    LTAlert(self.window, @"The page changed", @"No website data was changed. Open Site Information again for the current page.");
+                    return;
+                }
+                [p clearSiteDataWithCompletion:^(BOOL success, NSString *message) {
+                    LTAlert(self.window, success ? @"Website data cleared" : @"Could not finish clearing website data", message);
+                }];
+            });
+        }
+    }];
 }
 - (void)contentBlocking:(id)sender {
     LTContentBlocker *blocker = [LTContentBlocker shared];

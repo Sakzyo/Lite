@@ -7,7 +7,7 @@ FOUNDATION_EXPORT BOOL LTValidURL(NSString *url);
 FOUNDATION_EXPORT NSString *LTURLFromInput(NSString *input, NSString *provider);
 FOUNDATION_EXPORT NSString *LTSearchURL(NSString *query, NSString *provider);
 
-@interface LTNode : NSObject
+@interface LTNode : NSObject <NSCopying>
 @property (nonatomic, copy) NSString *identifier;
 @property (nonatomic, copy) NSString *kind; // folder, pinned, temporary, favorite
 @property (nonatomic, copy) NSString *spaceID;
@@ -25,7 +25,7 @@ FOUNDATION_EXPORT NSString *LTSearchURL(NSString *query, NSString *provider);
 - (NSDictionary *)JSON;
 @end
 
-@interface LTSpace : NSObject
+@interface LTSpace : NSObject <NSCopying>
 @property (nonatomic, copy) NSString *identifier;
 @property (nonatomic, copy) NSString *name;
 @property (nonatomic, copy) NSString *selectedID;
@@ -42,6 +42,7 @@ FOUNDATION_EXPORT NSString *LTSearchURL(NSString *query, NSString *provider);
 + (instancetype)fresh;
 + (nullable instancetype)fromJSON:(NSDictionary *)json error:(NSError **)error;
 - (NSDictionary *)JSON;
+- (LTProfile *)transactionCopy;
 - (nullable LTNode *)node:(NSString *)identifier;
 - (nullable LTSpace *)space:(NSString *)identifier;
 - (NSArray<LTNode *> *)children:(NSString *)parent

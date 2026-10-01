@@ -23,6 +23,7 @@ if [[ "$MODE" != --build ]]; then
 fi
 export CLANG_MODULE_CACHE_PATH="$ROOT_DIR/.build/ModuleCache"
 python3 script/fetch_cef.py
+python3 script/fetch_sparkle.py
 cmake -S . -B .build -DCMAKE_BUILD_TYPE=Release -DPROJECT_ARCH="$(uname -m)"
 cmake --build .build -j 8
 ctest --test-dir .build --output-on-failure

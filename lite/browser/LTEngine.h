@@ -11,9 +11,13 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)page:(LTPage *)page submittedLogin:(NSDictionary *)login;
 @end
 @interface LTBrowserContext : NSObject
+@property (nonatomic, readonly) NSString *contextIdentifier;
 - (instancetype)initPrivate:(BOOL)privateMode;
 - (void)updateBlockingPreferences:(nullable NSDictionary *)preferences;
 - (void)clearData;
+- (void)clearCookiesAndCacheWithCompletion:(void (^)(BOOL success, NSString *message))completion;
+- (BOOL)configureFixtureProxyForTesting;
+- (void)closeAllBrowsersConfirmed;
 @end
 @interface LTPage : NSObject
 @property (nonatomic, weak) id<LTPageDelegate> delegate;
@@ -39,6 +43,13 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic) double lastVisible;
 @property (nonatomic, readonly) BOOL alive;
 @property (nonatomic, readonly) NSUInteger blockedRequests;
+@property (nonatomic, readonly) BOOL privateMode;
+@property (nonatomic, readonly) NSString *contextIdentifier;
+@property (nonatomic, readonly) NSArray<NSDictionary *> *permissionGrants;
+@property (nonatomic, copy, nullable) NSDictionary *sessionState;
+- (void)revokePermissions;
+- (void)clearSiteDataWithCompletion:(void (^)(BOOL success, NSString *message))completion;
+- (void)captureSessionState:(void (^)(void))completion;
 - (instancetype)initWithID:(NSString *)identifier
                        url:(NSString *)url
                    context:(nullable LTBrowserContext *)context;
@@ -50,6 +61,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)stop;
 - (void)focus;
 - (void)close;
+- (void)closeConfirmed;
 - (void)discard;
 - (void)freeze:(BOOL)freeze;
 - (void)find:(NSString *)text forward:(BOOL)forward next:(BOOL)next;
@@ -72,6 +84,7 @@ NS_ASSUME_NONNULL_BEGIN
 @end
 NSUInteger LTLivingBrowserCount(void);
 void LTCloseAllBrowsers(void);
+void LTCloseAllBrowsersConfirmed(void);
 void LTQuitWhenBrowsersClose(void);
 FOUNDATION_EXPORT NSArray<NSDictionary *> *LTBrowserTasks(void);
 FOUNDATION_EXPORT BOOL LTEndBrowserTask(NSNumber *identifier);

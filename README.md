@@ -10,7 +10,7 @@ files are patched. The browser UI is native; only website content uses Chromium.
 
 ## Run
 
-Requirements: macOS 14+, Xcode command-line tools, CMake 3.21+, Python 3.11+.
+Requirements: macOS 14+, Xcode command-line tools, CMake 3.21+, Python 3.12+.
 Apple Silicon is tested. The fetch script also selects the Intel SDK on Intel Macs.
 
 ```sh
@@ -56,17 +56,25 @@ launched process. The Codex Run action uses the same script.
 
 ## Release boundaries
 
-This initial CEF embedding does **not** yet provide Chrome Web Store extensions,
-Google password sync, licensed Widevine/proprietary codecs, PWA installation,
-or a signed automatic engine updater. Full browsing-session history/form/scroll
-restoration after a renderer is discarded is not implemented; edited forms are
-protected from automatic discard, and URL/title/pinned metadata survive.
+This CEF embedding does **not** provide Chrome Web Store extensions, Google
+password sync, licensed Widevine/proprietary codecs, or PWA installation.
+Sparkle update delivery is implemented but disabled in local builds: production
+requires the publisher's verification key, signed feed and notarized complete
+application bundles. The current CEF API cannot serialize and restore complete
+navigation stacks. Tabs with navigation history, POST entries, session storage,
+edited forms or active work are protected from automatic discard; eligible
+single-entry pages save bounded scroll coordinates without sensitive form data.
 
 It must not be advertised as a secure, maintained replacement for a current
 production browser until engine update distribution, release signing/notarization,
 security review, site compatibility, accessibility, and endurance testing have
 been completed. CEF's sandbox and certificate validation remain enabled, but this
 is not evidence of a security audit. See [release status](docs/release-status.md).
+
+Run `./script/verify_release.sh` for the local release gate, including separate
+Chromium and actual native-window tests. See the
+[1 October readiness record](docs/readiness-2026-10-01.md) for acceptance criteria,
+measured results and remaining qualification work.
 
 ## Documentation
 

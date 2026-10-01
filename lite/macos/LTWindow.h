@@ -1,7 +1,7 @@
 #import "../browser/LTEngine.h"
 #import "../model/LTStore.h"
 #import <Cocoa/Cocoa.h>
-@class LTFaviconCache, LTLoginStore, LTGitHub;
+@class LTFaviconCache, LTLoginStore, LTGitHub, LTDownloadHistory;
 @interface LTWindow : NSWindowController <LTPageDelegate>
 @property (nonatomic, readonly) LTStore *store;
 @property (nonatomic, readonly) BOOL mini;
@@ -14,6 +14,8 @@
                       restore:(NSDictionary *)state
                         icons:(LTFaviconCache *)icons
                        logins:(LTLoginStore *)logins;
+- (void)setDownloadHistory:(LTDownloadHistory *)history;
+- (void)captureSessionStates:(void (^)(void))completion;
 - (void)openURL:(NSString *)url;
 - (void)performCommand:(NSString *)command;
 - (NSDictionary *)restorationState;

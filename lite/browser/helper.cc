@@ -52,6 +52,15 @@ class RenderApp : public CefApp, public CefRenderProcessHandler {
     void OnBrowserDestroyed(CefRefPtr<CefBrowser> browser) override {
         loginBrowsers_.erase(browser->GetIdentifier());
     }
+    void OnContextReleased(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame,
+                           CefRefPtr<CefV8Context>) override {
+        for (int flag : {2, 3}) {
+            auto message = CefProcessMessage::Create("LiteLifecycle");
+            message->GetArgumentList()->SetInt(0, flag);
+            message->GetArgumentList()->SetBool(1, false);
+            frame->SendProcessMessage(PID_BROWSER, message);
+        }
+    }
     void OnContextCreated(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame,
                           CefRefPtr<CefV8Context> context) override {
         if (frame->IsMain() && loginBrowsers_.count(browser->GetIdentifier())) {
@@ -67,8 +76,15 @@ class RenderApp : public CefApp, public CefRenderProcessHandler {
                                                     V8_PROPERTY_ATTRIBUTE_DONTENUM |
                                                     V8_PROPERTY_ATTRIBUTE_DONTDELETE));
         frame->ExecuteJavaScript(R"JS((()=>{const send=window.__liteLifecycle;
-      addEventListener('input',()=>send(1,true),{capture:true,once:true});
-      const media=()=>send(2,[...document.querySelectorAll('audio,video')].some(v=>!v.paused&&!v.ended));
+      for(const event of ['input','change','pointerdown','keydown'])
+        addEventListener(event,()=>send(1,true),{capture:true,once:true});
+      const audioContexts=new Set();
+      const media=()=>{let playing=false;for(const reference of audioContexts){const context=reference.deref();
+        if(!context||context.state==='closed')audioContexts.delete(reference);else playing ||= context.state==='running';}
+        send(2,playing||[...document.querySelectorAll('audio,video')].some(v=>!v.paused&&!v.ended));};
+      for(const name of ['AudioContext','webkitAudioContext']){const Native=window[name];if(!Native)continue;
+        window[name]=new Proxy(Native,{construct(target,args,newTarget){const context=Reflect.construct(target,args,newTarget);
+          audioContexts.add(new WeakRef(context));context.addEventListener('statechange',media);media();return context}});}
       for(const e of ['play','pause','ended'])addEventListener(e,media,true);
       addEventListener('enterpictureinpicture',()=>send(3,true),true);
       addEventListener('leavepictureinpicture',()=>send(3,false),true);

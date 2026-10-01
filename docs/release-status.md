@@ -1,48 +1,73 @@
-# Release status
+# Release status — 1 October 2026
 
-Lite 0.1 is a native, runnable Chromium browser development build. It is not yet
-the production-quality browser described by every item in the product brief.
+Lite remains a **development build, not a production-qualified browser**. The
+[readiness matrix](readiness-2026-10-01.md) gives acceptance criteria, implementation,
+actual test evidence and remaining gates for every requested production area.
 
-## Required before a production release
+## Implemented release infrastructure
 
-- A maintained, signed Chromium/CEF security-update pipeline.
-- Developer ID signing, CEF hardened-runtime entitlement review, notarization,
-  stapling, and Intel/macOS-version coverage. Local bundle relocation has passed
-  the same 19 engine checks as the workspace build.
-- Stable Keychain authorization across upgrades and a dedicated Lite encryption
-  namespace. Ad-hoc rebuilds can trigger macOS authorization for Chromium Safe
-  Storage; unresolved authorization can stall cookie initialization/page loads.
-- Security review of permission UX, download handling, popups, private-context
-  lifetime, malformed imports, disk exhaustion, and crash recovery.
-- Extensive website/login/media testing, VoiceOver/Full Keyboard Access review,
-  long-running memory tests, battery measurements, and baseline-browser comparison.
-- Broader renderer/session restoration: navigation entries, scroll offsets,
-  crash recovery prompts, and carefully scoped form-state preservation.
-- Broader large-profile sidebar performance and favicon compatibility testing.
-- Full source-visible release criteria and regression coverage for remaining UI
-  interactions, including trackpad Space gestures and every drag/drop edge case.
+- Exact-version/architecture CEF validation, archive integrity, staged SDK
+  replacement, rollback and interrupted-operation recovery.
+- Pinned Sparkle updates with signed feeds and pre-extraction archive verification,
+  complete-bundle delivery, increasing build numbers and profile/CPU compatibility.
+  Local builds have no configured feed/key and cannot install updates.
+- Separate ad-hoc development and Developer ID/notarization/stapling packaging
+  paths, explicit entitlements, final extracted-artifact checks, local verification
+  entry point and checked-in CI workflow.
+- Validated persisted data, bounded durable recovery backups, explicit native
+  Restore Backup UI and preservation of damaged originals. Profile writes retain
+  SQLite FULL durability with less serialization work.
+- Native authentication and permission request handling, per-origin storage reset,
+  full storage-partition reset on restart, bounded download history, quarantine
+  verification, safe discard guards and bounded nonsensitive scroll metadata.
+- Actual native-window regression harness alongside the separate Chromium suite.
+  See the readiness record for which checks passed; infrastructure alone is not
+  proof that every release scenario is qualified.
 
-## Deliberate architecture limitations in this build
+## Blocking release gates
 
-- No Chrome Web Store extension loading. Login saving/filling is manual through
-  Library, backed by the Mac's Keychain; automatic save prompts, cross-frame
-  filling, passkeys, and Google/iCloud password synchronization are not implemented.
-  Existing macOS Internet-password items can be selected when Keychain permits
-  access. This does not grant access to every Apple Passwords/iCloud vault entry.
-- GitHub Live Folders support github.com only. Private-repository results require
-  an authorized GitHub token; live private-account access has not been verified.
-  GitHub's 1,000-result search cap requires narrowing large queries.
-- No licensed Widevine or proprietary-codec redistribution, and no promise of
-  streaming-service DRM support.
-- No PWA installation or Chromium account/sync services.
-- Clear Browsing Data currently clears Lite history, cookies, HTTP cache,
-  authentication cache, and certificate exceptions. It is not a comprehensive
-  storage-partition eraser; IndexedDB/local storage can be inspected in DevTools.
-- HTML Save writes source HTML; it does not archive linked assets offline.
-- Split persistence is window/session based, rather than named reusable split groups.
-- Temporary Mini Lite pages are promoted by URL; their live back/forward stack is
-  not transferred into the destination window.
+1. **Publisher setup:** configured Developer ID Application identity and private
+   key, an Apple Developer/notarytool credential profile, Ed25519 publisher keys,
+   and hosted HTTPS signed feeds for each architecture. None are invented or
+   weakened for local builds. Follow [updates and distribution](updates-and-distribution.md).
+2. **Distribution qualification:** run the real signed update installer with valid
+   and invalid releases, interrupted installation, recovery and an existing
+   synthetic profile. Local Sparkle signature tests do not prove complete signed
+   installation recovery.
+3. **Keychain continuity:** test synthetic vault and encrypted cookies across at
+   least two production-signed upgrades. Stock CEF still uses Chromium Safe
+   Storage; this bundled SDK exposes no supported Lite-specific namespace setting.
+   Authorization and cookie encryption remain enabled.
+4. **Session capability:** CEF exposes navigation entries but cannot import a
+   serialized stack into a new browser. Multi-entry/POST, history.state,
+   sessionStorage, observed interaction and media protect tabs from automatic
+   discard; arbitrary unobserved JavaScript state cannot be detected. Full history after application restart is
+   still unsupported; no requests are replayed to manufacture it.
+5. **Broader qualification:** real Intel hardware and macOS 14/15 hosts, sandbox
+   login/OAuth/payment accounts, actual capture/TCC workflows, spoken VoiceOver,
+   Full Keyboard Access, scaling/contrast/drag-drop, sleep/wake, network/disk
+   pressure, extended mixed-site endurance and independent security review.
 
-No unsupported feature is represented by a working-looking mock. Settings states
-the extension/DRM boundaries; saved-login dialogs explain the local-only store. There is no AI, theme editor, analytics SDK,
-account requirement, proprietary branding, or cloud service.
+Available local hardware is Apple Silicon on macOS 26.5.2. Other matrix entries
+and hosted CI are **unrun**, not passed. No battery improvement is claimed.
+
+## Deliberate capability boundaries
+
+- No extension loading or Chrome Web Store UI, sync service, PWA installation or
+  licensed Widevine/proprietary-codec integration was added.
+- Supported login submissions already offer native Save/Update prompts. Lite's
+  profile-scoped encrypted vault keeps key material separately in macOS Keychain;
+  private windows install no capture bridge and have no login-store connection.
+  Custom, embedded or multi-step forms may need explicit Library actions.
+  This is not full Apple Passwords/iCloud access or Google password synchronization.
+- GitHub Live Folders support github.com; private repositories require a user's
+  authorized token. Account-bound results and platform search limits still apply.
+- HTML Save writes source HTML, not an offline archive of linked resources.
+- Mini Lite promotion transfers a URL rather than the live navigation stack.
+- Full website-data reset closes all windows and restarts the engine. Organization
+  and saved passwords remain. Preserved damaged-profile originals remain untouched
+  and may contain old history; routine recovery backups have deleted history removed.
+- Permission revocation resets grants and requests a reload to end existing
+  capture. Canceling a site's before-unload prompt can keep its current stream
+  alive; closing that tab ends it. Unconditional termination during revocation
+  remains unqualified.

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Loopback-only, deterministic browser verification pages. No external services."""
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-import argparse, gzip, json, ssl, struct, zlib
+import argparse, base64, gzip, hashlib, hmac, json, ssl, struct, time, zlib
+from urllib.request import parse_http_list, parse_keqv_list
 from urllib.parse import urlsplit, parse_qs
 from pathlib import Path
 
@@ -23,7 +24,57 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urlsplit(self.path)
         phase = parse_qs(parsed.query).get('phase', ['enabled'])[0]
         compressed = False
-        if parsed.path == '/watch':
+        if parsed.path in ('/auth-basic', '/auth-digest', '/auth-proxy'):
+            proxy = parsed.path == '/auth-proxy'
+            header = self.headers.get('Proxy-Authorization' if proxy else 'Authorization', '')
+            expected = 'Basic ' + base64.b64encode(b'synthetic-http:synthetic-only-password').decode()
+            valid = hmac.compare_digest(header, expected)
+            challenge = 'Basic realm="Lite synthetic challenge"'
+            if parsed.path == '/auth-digest':
+                challenge = 'Digest realm="Lite synthetic challenge", nonce="lite-fixed-test-nonce", algorithm=MD5, qop="auth"'
+                valid = False
+                if header.startswith('Digest '):
+                    fields = parse_keqv_list(parse_http_list(header[7:]))
+                    md5 = lambda text: hashlib.md5(text.encode()).hexdigest()
+                    ha1 = md5('synthetic-http:Lite synthetic challenge:synthetic-only-password')
+                    ha2 = md5(self.command + ':' + fields.get('uri', ''))
+                    response = md5(':'.join([ha1, 'lite-fixed-test-nonce', fields.get('nc', ''), fields.get('cnonce', ''), 'auth', ha2]))
+                    valid = fields.get('username') == 'synthetic-http' and hmac.compare_digest(fields.get('response', ''), response)
+            if not valid:
+                self.send_response(407 if proxy else 401)
+                self.send_header('Proxy-Authenticate' if proxy else 'WWW-Authenticate', challenge)
+                self.send_header('Content-Length', '0')
+                self.end_headers()
+                return
+            body, content = ('<title>Authenticated '+parsed.path[6:]+'</title><h1>Authenticated</h1>').encode(), 'text/html'
+        elif parsed.path == '/storage':
+            body, content = b'<title>Lite storage test</title><h1>Storage fixture</h1>', 'text/html'
+        elif parsed.path in ('/download-slow', '/download-interrupted'):
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/octet-stream')
+            self.send_header('Content-Disposition', 'attachment; filename="lite-streamed.txt"')
+            self.send_header('Content-Length', str(128 * 8192))
+            self.send_header('ETag', '"lite-fixture-stable"')
+            self.end_headers()
+            try:
+                for _ in range(4 if parsed.path == '/download-interrupted' else 128):
+                    self.wfile.write(b'x' * 8192)
+                    self.wfile.flush()
+                    time.sleep(.02)
+            except (BrokenPipeError, ConnectionResetError):
+                pass  # Intentional cancel/closure coverage in this disposable fixture.
+            self.close_connection = True
+            return
+        elif parsed.path == '/download-fixture':
+            body = b'lite-download-integrity\n' * 4096
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/octet-stream')
+            self.send_header('Content-Disposition', 'attachment; filename="lite-fixture.txt"')
+            self.send_header('Content-Length', str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        elif parsed.path == '/watch':
             body = '''<!doctype html><meta charset="utf-8"><title>Lite YouTube filtering test</title>
 <h1>YouTube player response fixture</h1>
 <script nonce="lite-test">
@@ -132,6 +183,8 @@ self.addEventListener('message',e=>e.waitUntil((async()=>{
         else:
             body = b'''<!doctype html><title>Lite Test Page</title><meta charset="utf-8"><style>body{font:18px system-ui;background:#f4f6f3;color:#24372d;padding:48px}h1{font-size:36px}input,button{font:inherit;padding:10px;margin:8px}a{color:#287850}</style><h1>Lite browser test</h1><p>Chromium rendering, storage, navigation, and form protection.</p><input placeholder="Form protection"><a href="/second">Next page</a><button onclick="window.open('/second','login','width=600,height=500')">Open popup</button><a download="lite-test.txt" href="/echo">Download test file</a>'''
             content = 'text/html'
+        if parsed.path == '/scroll':
+            body += b'<style>body{min-height:5000px}</style>'
         self.send_response(200)
         if parsed.path in ('/content-blocking', '/watch'):
             self.send_header('Content-Security-Policy', "default-src 'self'; script-src 'self' 'nonce-lite-test'; style-src 'none'")

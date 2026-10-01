@@ -1,3 +1,11 @@
+# Current verification
+
+See the [1 October 2026 readiness record](readiness-2026-10-01.md),
+[profile recovery evidence](profile-recovery.md), and
+[update/distribution procedure](updates-and-distribution.md). Earlier entries below
+are historical snapshots; their check counts and capability descriptions do not
+supersede the current acceptance matrix.
+
 # Verification record — 22 September 2026
 
 ## Developer Tools crash and YouTube follow-up — 27 September 2026

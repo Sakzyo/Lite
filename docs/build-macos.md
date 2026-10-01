@@ -4,7 +4,7 @@
 
 - macOS 14 or newer; Apple Silicon first.
 - Xcode 16+ with the macOS SDK selected by `xcode-select`.
-- CMake 3.21+ and Python 3.11+.
+- CMake 3.21+ and Python 3.12+.
 - About 1.5 GB for the SDK, build objects, and application. The first download is
   roughly 132 MB for arm64 or 138 MB for Intel, before extraction.
 
@@ -30,9 +30,10 @@ the app. Other installations of Lite are not targeted.
 each architecture. HTTPS verifies transport; the digest detects archive damage.
 The archive is obtained from the CEF project's linked Spotify CDN. Archive paths
 and symlinks are checked before extraction. Updating the engine requires updating
-the version/digests and rebuilding/testing the complete bundle. There is currently
-no automatic update delivery, and upstream CEF security updates must be tracked
-before any public production release.
+the version/digests and rebuilding/testing the complete bundle. Installed SDK
+identity, Mach-O architecture and file hashes are validated, with staged extraction
+and recoverable replacement. See [updates and distribution](updates-and-distribution.md)
+for the Sparkle feed, routine engine-update process and emergency releases.
 
 The SDK and generated bundles are ignored by Git. Do not commit user profiles,
 Chromium caches, real Arc exports, or downloaded SDK archives.
@@ -78,12 +79,13 @@ tracked in its [settings definition](https://github.com/chromiumembedded/cef/blo
 
 ## Signing and distribution
 
-The produced app is **ad-hoc signed for local development**, not Developer ID
-signed or notarized. A successful `codesign --verify --deep --strict` checks local
-bundle integrity; it does not establish trust or notarization. Release work needs
-the owner's Apple Developer identity, validated hardened-runtime entitlements for
-CEF/helpers, notarization, stapling, and a tested engine-update distribution path.
-No signing identity or account was assumed, created, or changed.
+The default produced app is **ad-hoc signed for local development**, not Developer
+ID signed or notarized. `python3 script/package.py --production` requires an
+existing Developer ID identity, notarytool credential profile, HTTPS feed and
+Ed25519 public key. It signs nested code first, notarizes, staples and verifies
+the extracted final distribution archive. A successful local `codesign --verify
+--deep --strict` alone does not establish trust or notarization. See
+[the exact configuration and prerequisites](updates-and-distribution.md).
 
 Do not disable Gatekeeper or the Chromium sandbox to distribute this build.
 Intel builds are selected on Intel hosts but have not been tested on hardware.

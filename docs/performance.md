@@ -23,14 +23,18 @@ visible:
 | Efficient (default) | 2 minutes | 10 minutes |
 | Maximum Saving | 30 seconds | 3 minutes |
 
-Visible split panes, loading pages, edited forms, playing media, camera/microphone
+Visible split panes, loading pages, pages with possible unsaved work, playing media, camera/microphone
 capture, downloads, PiP, closing pages, and Keep Awake tabs are protected. Memory
-pressure can discard other pages immediately. A website's before-unload objection
+pressure can discard only otherwise eligible pages immediately. A website's before-unload objection
 cancels an automatic discard and protects the page. Freeze uses Chromium's page
 lifecycle API; discard closes the actual Chromium browser instance. Selecting a
 discarded tab creates it again using its saved URL and normal cookie context.
-Back/forward entries and scroll/form state are not currently serialized across
-discard, so unsaved forms are guarded rather than reconstructed.
+The engine has no navigation-stack import API. Multi-entry and POST tabs, pages
+with history state or session storage, and pages with user interactions that may
+change application state remain protected. Eligible
+single-entry pages preserve bounded scroll coordinates; arbitrary form contents
+are never serialized. Actual timer freeze/resume and resource release are checked
+by the current integration suite, rather than only inspecting local flags.
 
 ## Measured on 22 September 2026
 
@@ -81,3 +85,9 @@ optional background switches are not a guarantee of zero engine background work.
 Remaining qualification includes long idle runs, mixed-site workloads, multiple
 Spaces, media/capture, pressure testing, cold launch, energy use, and equivalent
 baseline browsers on the same hardware.
+
+## Current readiness measurements
+
+The [1 October 2026 record](readiness-2026-10-01.md) contains the current baseline,
+provisional regression budgets, before/after persistence measurements and limitations.
+The figures above are historical results, not current-release guarantees.

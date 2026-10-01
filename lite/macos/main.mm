@@ -2,11 +2,15 @@
 #import "../model/LTGitHub.h"
 #import "../performance/LTPerformance.h"
 #import "../tests/LTSmoke.h"
+#import "../tests/LTNativeSmoke.h"
 #import "LTFaviconCache.h"
 #import "LTUI.h"
 #import "LTWindow.h"
 #import "LTShortcuts.h"
 #import "LTTaskManager.h"
+#import "LTUpdater.h"
+#import "LTDownloadHistory.h"
+#import "../model/LTWebsiteData.h"
 #include "include/cef_app.h"
 #include "include/cef_application_mac.h"
 #include "include/cef_command_line.h"
@@ -14,8 +18,11 @@
 #include "include/wrapper/cef_library_loader.h"
 #import <Cocoa/Cocoa.h>
 #import <os/log.h>
+#include <sys/file.h>
+#include <fcntl.h>
 static NSString *profileRoot;
 static BOOL smokeTest = NO;
+static BOOL testProfile = NO, websiteDataCleared = NO, relaunchAfterClear = NO;
 
 @interface LTAppDelegate : NSObject <NSApplicationDelegate>
 @property LTStore *store;
@@ -28,6 +35,9 @@ static BOOL smokeTest = NO;
 @property LTTaskManager *taskManager;
 @property id keyMonitor;
 @property BOOL quitting;
+@property BOOL confirmingQuit;
+@property LTUpdater *updater;
+@property LTDownloadHistory *downloads;
 - (void)start;
 - (void)quit;
 @end
@@ -61,6 +71,22 @@ static BOOL smokeTest = NO;
     _store = [[LTStore alloc] initWithPath:[base stringByAppendingPathComponent:@"Lite.sqlite"]
                                      error:&e];
     if (!_store) {
+        NSString *path = [base stringByAppendingPathComponent:@"Lite.sqlite"];
+        if ([LTStore recoveryAvailableAtPath:path]) {
+            NSAlert *alert = [NSAlert new];
+            alert.messageText = @"Lite found a damaged profile";
+            alert.informativeText = [NSString stringWithFormat:@"%@\n\nRestore the last known-good local backup? The damaged database and its transaction files will be preserved beside the profile. Recent changes after that backup may be missing.", e.localizedDescription];
+            [alert addButtonWithTitle:@"Quit"];
+            [alert addButtonWithTitle:@"Restore Backup"];
+            if ([alert runModal] == NSAlertSecondButtonReturn) {
+                NSString *preserved = nil;
+                if ([LTStore recoverProfileAtPath:path preservedPath:&preserved error:&e])
+                    _store = [[LTStore alloc] initWithPath:path error:&e];
+                if (_store) LTAlert(nil, @"Profile restored", [@"Damaged originals were preserved at:\n" stringByAppendingString:preserved]);
+            }
+        }
+    }
+    if (!_store) {
         LTAlert(nil, @"Lite could not open your profile",
                 e.localizedDescription
                     ?: @"The database was preserved. Restore a backup or choose a different "
@@ -68,6 +94,11 @@ static BOOL smokeTest = NO;
         CefQuitMessageLoop();
         return;
     }
+    NSError *historyClearError = nil;
+    if (websiteDataCleared) [_store clearHistorySince:0 error:&historyClearError];
+    _updater = [LTUpdater new];
+    if (!testProfile) [_updater start];
+    _downloads = [[LTDownloadHistory alloc] initWithPath:[base stringByAppendingPathComponent:@"Downloads.json"] contextIdentifier:nil];
     _icons = [[LTFaviconCache alloc]
         initWithDirectory:[base stringByAppendingPathComponent:@"Favicons"]];
     _logins = [[LTLoginStore alloc] initWithProfilePath:base];
@@ -91,6 +122,10 @@ static BOOL smokeTest = NO;
                                            selector:@selector(cancelQuit)
                                                name:@"LTQuitCanceled"
                                              object:nil];
+    [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(clearAllWebsiteData:)
+        name:@"LTClearAllWebsiteData" object:nil];
+    [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(backupFailed:)
+        name:LTStoreBackupFailed object:_store];
     NSArray *restore = [_store.profile.windows copy];
     if (!restore.count)
         [self newWindow:NO mini:NO state:nil];
@@ -130,10 +165,14 @@ static BOOL smokeTest = NO;
             return event;
         }];
     [_windows.firstObject showOnboarding];
+    if (_store.backupError) [self backupFailed:nil];
+    if (websiteDataCleared) LTAlert(_windows.firstObject.window, historyClearError ? @"Website storage cleared; history deletion needs attention" : @"Website data cleared", historyClearError.localizedDescription ?: @"Cookies, HTTP cache, local storage, IndexedDB, service workers, Cache Storage, engine permissions and other Chromium profile storage were removed before the browser engine started. Bookmarks, organization and saved passwords were kept. Preserved damaged-profile copies remain untouched. Select a tab to load it again.");
     os_log_info(OS_LOG_DEFAULT, "Lite native browser started");
     NSString *start = NSProcessInfo.processInfo.environment[@"LITE_START_URL"];
     if (start.length)
         [_windows.firstObject openURL:start];
+    if (testProfile && [NSProcessInfo.processInfo.arguments containsObject:@"--lite-native-smoke"])
+        LTRunNativeSmoke(_windows.firstObject, [profileRoot stringByAppendingPathComponent:@"native-results.json"], ^{ [self finishQuit:YES]; });
 }
 - (void)warmIcons {
     [_icons prefetchNodes:_store.profile.nodes];
@@ -141,11 +180,17 @@ static BOOL smokeTest = NO;
 - (LTWindow *)newWindow:(BOOL)privateMode mini:(BOOL)mini state:(NSDictionary *)state {
     NSError *e = nil;
     LTStore *store = privateMode ? [[LTStore alloc] initWithPath:nil error:&e] : _store;
+    if (websiteDataCleared && !privateMode) {
+        NSMutableDictionary *deferred = [state mutableCopy] ?: [NSMutableDictionary new];
+        deferred[@"deferPages"] = @YES;
+        state = deferred;
+    }
     LTWindow *w = [[LTWindow alloc] initWithStore:store
                                              mini:mini
                                           restore:state ?: @{}
                                             icons:_icons
                                            logins:_logins];
+    if (!privateMode) [w setDownloadHistory:_downloads];
     w.github = privateMode ? nil : _github;
     [_windows addObject:w];
     __weak typeof(self) weak = self;
@@ -185,7 +230,9 @@ static BOOL smokeTest = NO;
 }
 - (void)action:(NSMenuItem *)item {
     NSString *c = item.representedObject;
-    if ([c isEqual:@"newWindow"])
+    if ([c isEqual:@"checkUpdates"])
+        [_updater checkForUpdates:item];
+    else if ([c isEqual:@"newWindow"])
         [self newWindow:NO mini:NO state:nil];
     else if ([c isEqual:@"newPrivate"])
         [self newWindow:YES mini:NO state:nil];
@@ -206,9 +253,9 @@ static BOOL smokeTest = NO;
     else
         [self newWindow:NO mini:NO state:nil];
 }
-- (void)saveWindows {
+- (BOOL)saveWindows {
     if (!_store || _quitting)
-        return;
+        return YES;
     NSMutableArray *states = [NSMutableArray new];
     for (LTWindow *w in _windows)
         if (!w.mini && !w.store.privateMode)
@@ -218,20 +265,80 @@ static BOOL smokeTest = NO;
             commit:^(LTProfile *p) {
               p.windows = states;
             }
-             error:&e])
+             error:&e]) {
         os_log_error(OS_LOG_DEFAULT, "Lite could not save window restoration metadata");
+        return NO;
+    }
+    return YES;
 }
 - (void)quit {
-    if (_quitting)
+    if (_quitting || _confirmingQuit)
         return;
-    [self saveWindows];
-    _quitting = YES;
-    [_performance stop];
-    [_github stop];
-    LTCloseAllBrowsers();
-    LTQuitWhenBrowsersClose();
+    if (testProfile && [NSProcessInfo.processInfo.arguments containsObject:@"--lite-native-measure"]) {
+        [self finishQuit:YES];
+        return;
+    }
+    if (LTLivingBrowserCount() > 1) {
+        _confirmingQuit = YES;
+        NSAlert *alert = [NSAlert new];
+        alert.messageText = @"Close all pages and quit Lite?";
+        alert.informativeText = @"All windows, including popups and private windows, will close. Active downloads and capture will end, and unsaved website work will be lost. Cancel keeps every browsing session open. Tab addresses and supported scroll positions are saved; this engine cannot restore complete back/forward history after quit.";
+        [alert addButtonWithTitle:@"Cancel"];
+        [alert addButtonWithTitle:@"Close All and Quit"];
+        if ([alert runModal] != NSAlertSecondButtonReturn) { _confirmingQuit = NO; return; }
+        _confirmingQuit = NO;
+        [self finishQuit:YES];
+    } else [self finishQuit:NO];
+}
+- (void)finishQuit:(BOOL)confirmed {
+    if (_quitting) return;
+    _confirmingQuit = YES;
+    NSArray<LTWindow *> *windows = [_windows copy];
+    __block NSUInteger remaining = windows.count;
+    void (^finish)(void) = ^{
+        if (![self saveWindows]) {
+            self.confirmingQuit = NO;
+            relaunchAfterClear = NO;
+            LTAlert([self current].window, @"Lite could not save this session", @"Every page remains open. Check available disk space and profile permissions, then try again.");
+            return;
+        }
+        if (relaunchAfterClear) {
+            NSError *error = nil;
+            if (!LTRequestWebsiteDataClear(profileRoot, &error)) {
+                self.confirmingQuit = NO;
+                relaunchAfterClear = NO;
+                LTAlert([self current].window, @"Could not schedule website-data deletion", error.localizedDescription);
+                return;
+            }
+        }
+        [self.downloads flush];
+        self.confirmingQuit = NO;
+        self.quitting = YES;
+        [self.performance stop];
+        [self.github stop];
+        if (confirmed) LTCloseAllBrowsersConfirmed();
+        else LTCloseAllBrowsers();
+        LTQuitWhenBrowsersClose();
+    };
+    if (!remaining) { finish(); return; }
+    for (LTWindow *window in windows) [window captureSessionStates:^{ if (--remaining == 0) finish(); }];
+}
+- (void)backupFailed:(NSNotification *)notification {
+    if (_store.backupError) LTAlert([self current].window, @"The recovery backup could not be refreshed", _store.backupError.localizedDescription);
+}
+- (void)clearAllWebsiteData:(NSNotification *)notification {
+    if (_quitting || _confirmingQuit) return;
+    NSAlert *alert = [NSAlert new];
+    alert.messageText = @"Clear all website data and restart?";
+    alert.informativeText = @"Lite must close every window to remove all Chromium website storage, including inactive sites, cookies, cache, local storage, IndexedDB, service workers, Cache Storage, permissions and HTTP credentials. History is cleared too. Downloads and capture will end; save any website work first. Bookmarks, organization and saved passwords are kept. Cancel leaves all sessions open.";
+    [alert addButtonWithTitle:@"Cancel"];
+    [alert addButtonWithTitle:@"Clear and Restart"];
+    if ([alert runModal] != NSAlertSecondButtonReturn) return;
+    relaunchAfterClear = YES;
+    [self finishQuit:YES];
 }
 - (void)cancelQuit {
+    _confirmingQuit = NO;
     if (_quitting) {
         _quitting = NO;
         [_performance start];
@@ -266,7 +373,7 @@ static BOOL smokeTest = NO;
     NSApp.mainMenu = main;
     NSArray *menus = @[
         @[
-            @"Lite", @[ @"About Lite", @"about", @"" ], @[ @"Settings…", @"settings", @"," ],
+            @"Lite", @[ @"About Lite", @"about", @"" ], @[ @"Check for Updates…", @"checkUpdates", @"" ], @[ @"Settings…", @"settings", @"," ],
             @[ @"-" ], @[ @"Hide Lite", @"hide", @"h" ], @[ @"Quit Lite", @"quit", @"q" ]
         ],
         @[
@@ -381,6 +488,8 @@ class BrowserApp : public CefApp, public CefBrowserProcessHandler {
             line->AppendSwitch("disable-component-update");
             line->AppendSwitch("disable-default-apps");
             line->AppendSwitch("no-first-run");
+            // Route HTTP/proxy challenges to Lite's CEF callback and native sheet.
+            line->AppendSwitch("disable-chrome-login-prompt");
         }
     }
 
@@ -399,12 +508,29 @@ int main(int argc, char **argv) {
                        stringByAppendingPathComponent:@"Library/Application Support/Lite"];
         for (int i = 1; i < argc; i++) {
             NSString *arg = @(argv[i]);
-            if ([arg hasPrefix:@"--lite-test-profile="])
+            if ([arg hasPrefix:@"--lite-test-profile="]) {
                 base = [arg substringFromIndex:20];
+                testProfile = YES;
+            }
             if ([arg isEqual:@"--lite-smoke"])
                 smokeTest = YES;
         }
         profileRoot = base;
+        NSError *directoryError = nil;
+        if (![NSFileManager.defaultManager createDirectoryAtPath:base withIntermediateDirectories:YES
+            attributes:@{NSFilePosixPermissions:@0700} error:&directoryError]) return 1;
+        int profileLock = open([base stringByAppendingPathComponent:@".Lite.profile.lock"].fileSystemRepresentation,
+            O_RDWR | O_CREAT | O_NOFOLLOW, 0600);
+        if (profileLock < 0 || flock(profileLock, LOCK_EX | LOCK_NB) != 0) {
+            if (profileLock >= 0) close(profileLock);
+            LTAlert(nil, @"This Lite profile is already open", @"Use the existing Lite window or choose a separate profile. No website data was changed.");
+            return 1;
+        }
+        NSError *clearError = nil;
+        if (!LTPerformPendingWebsiteDataClear(base, &websiteDataCleared, &clearError)) {
+            LTAlert(nil, @"Website-data deletion could not finish", clearError.localizedDescription ?: @"The pending reset was preserved. Resolve the file error and reopen Lite to retry. Chromium was not started.");
+            return 1;
+        }
         CefSettings settings;
         CefString(&settings.root_cache_path) =
             [base stringByAppendingPathComponent:@"Chromium"].UTF8String;
@@ -432,6 +558,15 @@ int main(int argc, char **argv) {
         delegate = nil;
         LTStopBrowserTaskMonitoring();
         CefShutdown();
+        close(profileLock);
+        if (relaunchAfterClear) {
+            NSMutableArray *arguments = [NSMutableArray arrayWithObjects:@"-n", NSBundle.mainBundle.bundlePath, nil];
+            if (testProfile) {
+                [arguments addObjectsFromArray:@[@"--args", [@"--lite-test-profile=" stringByAppendingString:profileRoot]]];
+                if ([NSProcessInfo.processInfo.arguments containsObject:@"--use-mock-keychain"]) [arguments addObject:@"--use-mock-keychain"];
+            }
+            [NSTask launchedTaskWithLaunchPath:@"/usr/bin/open" arguments:arguments];
+        }
         return 0;
     }
 }

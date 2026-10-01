@@ -19,6 +19,8 @@
 #include <set>
 #include <atomic>
 #include <memory>
+#include <cmath>
+#import <CoreServices/CoreServices.h>
 
 static NSString *N(const CefString &s) {
     return [NSString stringWithUTF8String:s.ToString().c_str()] ?: @"";
@@ -26,7 +28,25 @@ static NSString *N(const CefString &s) {
 static CefString C(NSString *s) {
     return CefString(s.UTF8String ?: "");
 }
+static NSString *WebOrigin(NSString *url) {
+    NSURLComponents *components = [NSURLComponents componentsWithString:url];
+    if (!components.host.length || ![@[@"http", @"https"] containsObject:components.scheme.lowercaseString]) return nil;
+    components.user = nil; components.password = nil; components.path = @"";
+    components.query = nil; components.fragment = nil;
+    return components.URL.absoluteString;
+}
+static NSString *DownloadPath(NSString *directory, NSString *suggested) {
+    NSString *name = suggested.lastPathComponent.length ? suggested.lastPathComponent : @"Download";
+    NSString *path = [directory stringByAppendingPathComponent:name];
+    for (NSUInteger index = 1; [NSFileManager.defaultManager fileExistsAtPath:path] && index <= 1000; ++index) {
+        NSString *stem = [name stringByDeletingPathExtension], *extension = name.pathExtension;
+        NSString *unique = [NSString stringWithFormat:@"%@ (%lu)%@%@", stem, (unsigned long)index, extension.length ? @"." : @"", extension];
+        path = [directory stringByAppendingPathComponent:unique];
+    }
+    return [NSFileManager.defaultManager fileExistsAtPath:path] ? nil : path;
+}
 static std::map<int, CefRefPtr<CefBrowser>> browsers;
+static void CancelBrowserRequests(CefRefPtr<CefBrowser> browser);
 static bool quitting = false;
 static CefRefPtr<CefTaskManager> taskManager;
 static CefRefPtr<CefTaskManager> TaskManager() {
@@ -65,12 +85,35 @@ void LTCloseAllBrowsers(void) {
     for (auto &pair : copy)
         pair.second->GetHost()->CloseBrowser(false);
 }
+void LTCloseAllBrowsersConfirmed(void) {
+    auto copy = browsers;
+    for (auto &pair : copy) {
+        CancelBrowserRequests(pair.second);
+        pair.second->GetHost()->CloseBrowser(true);
+    }
+}
 void LTQuitWhenBrowsersClose(void) {
     quitting = true;
     if (browsers.empty())
         CefQuitMessageLoop();
 }
 
+class Completion : public CefCompletionCallback {
+  public:
+    explicit Completion(void (^done)(void)) : done_(done) {}
+    void OnComplete() override { done_(); }
+  private:
+    void (^done_)(void);
+    IMPLEMENT_REFCOUNTING(Completion);
+};
+class CookiesDeleted : public CefDeleteCookiesCallback {
+  public:
+    explicit CookiesDeleted(void (^done)(BOOL)) : done_(done) {}
+    void OnComplete(int count) override { done_(count >= 0); }
+  private:
+    void (^done_)(BOOL);
+    IMPLEMENT_REFCOUNTING(CookiesDeleted);
+};
 static CefRefPtr<CefRequestContextHandler> BlockingContext(LTBlockingPolicy *policy);
 static void UpdateYouTubeGuard(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame,
                               LTBlockingPolicy *policy) {
@@ -87,12 +130,14 @@ static void UpdateYouTubeGuard(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame
     CefRefPtr<CefRequestContext> _context;
     LTBlockingPolicy *_blocking;
     BOOL _privateMode;
+    NSString *_identifier;
 }
 @end
 @implementation LTBrowserContext
 - (instancetype)initPrivate:(BOOL)privateMode {
     if ((self = [super init])) {
         _privateMode = privateMode;
+        _identifier = privateMode ? NSUUID.UUID.UUIDString : @"regular";
         [LTContentBlocker shared]; // Compile once on the UI thread, before requests begin.
         _blocking = [LTBlockingPolicy new];
         if (privateMode) {
@@ -102,6 +147,25 @@ static void UpdateYouTubeGuard(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame
             _context = CefRequestContext::CreateContext(CefRequestContext::GetGlobalContext(), BlockingContext(_blocking));
     }
     return self;
+}
+- (NSString *)contextIdentifier { return _identifier; }
+- (void)closeAllBrowsersConfirmed {
+    auto copy = browsers;
+    for (auto &entry : copy) if (entry.second->GetHost()->GetRequestContext()->IsSame(_context)) {
+        CancelBrowserRequests(entry.second);
+        entry.second->GetHost()->CloseBrowser(true);
+    }
+}
+- (BOOL)configureFixtureProxyForTesting {
+    if (!_privateMode || ![NSProcessInfo.processInfo.arguments containsObject:@"--lite-smoke"]) return NO;
+    auto value = CefValue::Create();
+    auto proxy = CefDictionaryValue::Create();
+    proxy->SetString("mode", "fixed_servers");
+    proxy->SetString("server", "http://127.0.0.1:18743");
+    proxy->SetString("bypass_list", "<-loopback>");
+    value->SetDictionary(proxy);
+    CefString error;
+    return _context->SetPreference("proxy", value, error);
 }
 - (void)updateBlockingPreferences:(NSDictionary *)preferences {
     [_blocking updatePreferences:preferences];
@@ -115,10 +179,19 @@ static void UpdateYouTubeGuard(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame
     }
 }
 - (void)clearData {
-    _context->GetCookieManager(nullptr)->DeleteCookies("", "", nullptr);
-    _context->ClearHttpCache(nullptr);
-    _context->ClearCertificateExceptions(nullptr);
-    _context->ClearHttpAuthCredentials(nullptr);
+    [self clearCookiesAndCacheWithCompletion:^(BOOL success, NSString *message) {}];
+}
+- (void)clearCookiesAndCacheWithCompletion:(void (^)(BOOL, NSString *))completion {
+    __block NSInteger pending = 4;
+    __block BOOL success = YES;
+    void (^done)(BOOL) = ^(BOOL ok) {
+        success &= ok;
+        if (--pending == 0) completion(success, success ? @"Cookies, HTTP cache, certificate exceptions and HTTP authentication credentials cleared." : @"Cookie deletion failed. Other selected data was cleared.");
+    };
+    if (!_context->GetCookieManager(nullptr)->DeleteCookies("", "", new CookiesDeleted(done))) done(NO);
+    _context->ClearHttpCache(new Completion(^{ done(YES); }));
+    _context->ClearCertificateExceptions(new Completion(^{ done(YES); }));
+    _context->ClearHttpAuthCredentials(new Completion(^{ done(YES); }));
 }
 @end
 
@@ -131,10 +204,15 @@ struct BlockingState {
     CefRefPtr<CefBrowser> _browser;
     LTBrowserContext *_context;
     std::map<uint32_t, CefRefPtr<CefDownloadItemCallback>> _downloads;
+    NSMutableDictionary<NSNumber *, NSDictionary *> *_downloadRecords;
     BOOL _discarding;
+    BOOL _capturingSession;
+    NSMutableArray<NSDictionary *> *_permissionGrants;
+    NSMutableSet<NSString *> *_permissionOrigins;
     std::shared_ptr<BlockingState> _blockingState;
 }
 - (void)didClose;
+- (void)restoreScroll;
 @end
 static bool CreatePopup(CefWindowInfo &info, CefRefPtr<CefClient> &client, LTBrowserContext *context);
 
@@ -223,28 +301,78 @@ class SaveSource : public CefStringVisitor {
     NSURL *__strong url_;
     IMPLEMENT_REFCOUNTING(SaveSource);
 };
+static int NextDevToolsID() { static int sequence = 20000; return ++sequence; }
 class Evaluation : public CefDevToolsMessageObserver {
   public:
-    explicit Evaluation(void (^completion)(id, BOOL)) : completion_(completion) {}
+    explicit Evaluation(void (^completion)(id, BOOL), bool javascript = true)
+        : completion_(completion), javascript_(javascript) {}
     CefRefPtr<CefRegistration> registration;
     int message_id = 0;
+    void Complete(id value, BOOL success) {
+        if (finished_) return;
+        finished_ = true;
+        CefRefPtr<Evaluation> hold(this);
+        auto completion = completion_;
+        completion_ = nil;
+        registration = nullptr;
+        completion(value, success);
+    }
     void OnDevToolsMethodResult(CefRefPtr<CefBrowser>, int id, bool success, const void *result,
                                 size_t length) override {
-        if (id != message_id)
-            return;
-        CefRefPtr<Evaluation> hold(this);
-        NSDictionary *j = [NSJSONSerialization JSONObjectWithData:[NSData dataWithBytes:result
-                                                                                 length:length]
-                                                          options:0
-                                                            error:nil];
-        completion_(j[@"result"][@"value"], success && !j[@"exceptionDetails"]);
-        registration = nullptr;
+        if (id != message_id) return;
+        NSDictionary *j = [NSJSONSerialization JSONObjectWithData:[NSData dataWithBytes:result length:length] options:0 error:nil];
+        Complete(javascript_ ? j[@"result"][@"value"] : j, success && !j[@"exceptionDetails"]);
     }
-
+    void OnDevToolsAgentDetached(CefRefPtr<CefBrowser>) override { Complete(nil, NO); }
   private:
     void (^completion_)(id, BOOL);
+    bool javascript_, finished_ = false;
     IMPLEMENT_REFCOUNTING(Evaluation);
 };
+static void DevTools(CefRefPtr<CefBrowser> browser, NSString *method,
+                     CefRefPtr<CefDictionaryValue> params, void (^completion)(id, BOOL), bool javascript = false) {
+    if (!browser) { completion(nil, NO); return; }
+    CefRefPtr<Evaluation> observer = new Evaluation(completion, javascript);
+    observer->message_id = NextDevToolsID();
+    observer->registration = browser->GetHost()->AddDevToolsMessageObserver(observer);
+    // CEF may replace a requested ID after an auto-numbered method; observe
+    // the actual assigned ID rather than losing the response to that method.
+    observer->message_id = browser->GetHost()->ExecuteDevToolsMethod(observer->message_id, C(method), params);
+    if (!observer->message_id) observer->Complete(nil, NO);
+    else dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 15 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+        observer->Complete(nil, NO);
+    });
+}
+@interface LTRequestPrompt : NSObject
+@property NSAlert *alert;
+@property (copy) void (^cancel)(void);
+@property BOOL resolved;
+@property BOOL unload;
+@end
+@implementation LTRequestPrompt
+@end
+static NSArray<NSString *> *PermissionNames(uint32_t bits, BOOL media) {
+    NSArray *names = media ? @[@"microphone", @"camera", @"screen audio", @"screen video"] :
+        @[@"augmented reality", @"camera pan, tilt and zoom", @"camera", @"captured surface control",
+          @"clipboard", @"top-level storage access", @"disk quota", @"local fonts", @"location",
+          @"hand tracking", @"identity provider", @"idle detection", @"microphone", @"MIDI system-exclusive messages",
+          @"multiple downloads", @"notifications", @"keyboard lock", @"pointer lock", @"protected media identifier",
+          @"protocol handler registration", @"storage access", @"virtual reality", @"web app installation",
+          @"window management", @"file system access", @"local network access", @"local network", @"loopback network", @"sensors"];
+    NSMutableArray *result = [NSMutableArray new];
+    for (unsigned i = 0; i < 32; ++i) if (bits & (1u << i))
+        [result addObject:i < names.count ? names[i] : [NSString stringWithFormat:@"unsupported capability 0x%08x", 1u << i]];
+    return result;
+}
+static void ResetOriginPermissions(LTBrowserContext *context, NSString *origin) {
+    // Only settings corresponding to capabilities Lite can grant are touched.
+    for (auto type : {CEF_CONTENT_SETTING_TYPE_GEOLOCATION, CEF_CONTENT_SETTING_TYPE_NOTIFICATIONS,
+        CEF_CONTENT_SETTING_TYPE_MEDIASTREAM_MIC, CEF_CONTENT_SETTING_TYPE_MEDIASTREAM_CAMERA,
+        CEF_CONTENT_SETTING_TYPE_CLIPBOARD_READ_WRITE, CEF_CONTENT_SETTING_TYPE_MIDI_SYSEX,
+        CEF_CONTENT_SETTING_TYPE_AUTOMATIC_DOWNLOADS, CEF_CONTENT_SETTING_TYPE_SENSORS,
+        CEF_CONTENT_SETTING_TYPE_STORAGE_ACCESS})
+        context->_context->SetContentSetting(C(origin), C(origin), type, CEF_CONTENT_SETTING_VALUE_DEFAULT);
+}
 class IconCallback : public CefDownloadImageCallback {
   public:
     explicit IconCallback(LTPage *page) : page_(page), url_(page.url) {}
@@ -315,6 +443,7 @@ class Client : public CefClient,
     }
     bool OnBeforeBrowse(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame,
                         CefRefPtr<CefRequest>, bool, bool) override {
+        CancelRequests(frame->IsMain());
         if (frame->IsMain()) { ++blockingState_->generation; blockingState_->count = 0; }
         return false;
     }
@@ -327,6 +456,7 @@ class Client : public CefClient,
     }
     void OnLoadEnd(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame, int) override {
         InjectCosmetics(browser, frame);
+        if (frame->IsMain()) [page_ restoreScroll];
     }
     CefRefPtr<CefPermissionHandler> GetPermissionHandler() override {
         return this;
@@ -351,30 +481,45 @@ class Client : public CefClient,
             [p.delegate pageCloseCanceled:p];
             return true;
         }
-        NSAlert *alert = [NSAlert new];
-        alert.messageText = @"Leave this page?";
-        alert.informativeText = @"This website reports unsaved changes. Leaving may discard them.";
-        [alert addButtonWithTitle:@"Stay"];
-        [alert addButtonWithTitle:@"Leave"];
-        if (!p.container.window) {
-            callback->Continue(false, "");
-            return true;
+        if (!p || !p.container.window || p.container.window.attachedSheet) {
+            if (p) { p.closing = NO; [p.delegate pageCloseCanceled:p]; }
+            callback->Continue(false, ""); return true;
         }
-        [alert beginSheetModalForWindow:p.container.window
-                      completionHandler:^(NSModalResponse result) {
-                        BOOL leave = result == NSAlertSecondButtonReturn;
-                        if (!leave) {
-                            p.closing = NO;
-                            quitting = false;
-                            [p.delegate pageCloseCanceled:p];
-                            [NSNotificationCenter.defaultCenter
-                                postNotificationName:@"LTQuitCanceled"
-                                              object:nil];
-                        }
-                        callback->Continue(leave, "");
-                      }];
+        uint64_t identifier = ++requestSequence_;
+        LTRequestPrompt *prompt = [LTRequestPrompt new];
+        prompt.alert = [NSAlert new];
+        prompt.unload = YES;
+        prompt.alert.messageText = @"Leave this page?";
+        prompt.alert.informativeText = @"This website reports unsaved changes. Leaving may discard them.";
+        [prompt.alert addButtonWithTitle:@"Stay"]; [prompt.alert addButtonWithTitle:@"Leave"];
+        prompt.cancel = ^{ p.closing = NO; callback->Continue(false, ""); [p.delegate pageCloseCanceled:p]; };
+        prompts_[identifier] = prompt;
+        CefRefPtr<Client> hold(this);
+        [prompt.alert beginSheetModalForWindow:p.container.window completionHandler:^(NSModalResponse result) {
+            if (prompt.resolved) return;
+            prompt.resolved = YES; prompt.cancel = nil; hold->prompts_.erase(identifier);
+            BOOL leave = result == NSAlertSecondButtonReturn;
+            if (!leave) {
+                p.closing = NO; quitting = false;
+                [p.delegate pageCloseCanceled:p];
+                [NSNotificationCenter.defaultCenter postNotificationName:@"LTQuitCanceled" object:nil];
+            }
+            callback->Continue(leave, "");
+        }];
         return true;
     }
+    void OnResetDialogState(CefRefPtr<CefBrowser>) override {
+        auto pending = prompts_;
+        for (auto &entry : pending) {
+            LTRequestPrompt *prompt = entry.second;
+            if (!prompt.unload || prompt.resolved) continue;
+            prompts_.erase(entry.first); prompt.resolved = YES;
+            if (prompt.cancel) prompt.cancel(); prompt.cancel = nil;
+            if (prompt.alert.window.sheetParent)
+                [prompt.alert.window.sheetParent endSheet:prompt.alert.window returnCode:NSAlertFirstButtonReturn];
+        }
+    }
+
     void OnAfterCreated(CefRefPtr<CefBrowser> b) override {
         browsers[b->GetIdentifier()] = b;
         LTPage *p = page_;
@@ -391,6 +536,7 @@ class Client : public CefClient,
         return true;
     }
     void OnBeforeClose(CefRefPtr<CefBrowser> b) override {
+        CancelRequests();
         browsers.erase(b->GetIdentifier());
         LTPage *p = page_;
         if (p && p->_browser && p->_browser->IsSame(b))
@@ -475,6 +621,7 @@ class Client : public CefClient,
     }
     void OnRenderProcessTerminated(CefRefPtr<CefBrowser>, TerminationStatus, int,
                                    const CefString &) override {
+        CancelRequests();
         LTPage *p = page_;
         p.errorText = @"This tab stopped responding. Reload to restore it.";
         [p.delegate pageChanged:p];
@@ -483,90 +630,217 @@ class Client : public CefClient,
         LTPage *p = page_;
         [NSNotificationCenter.defaultCenter postNotificationName:@"LTPageFocused" object:p];
     }
+    void CancelRequests(bool resetGrants = true) {
+        ++requestGeneration_;
+        auto pending = prompts_;
+        prompts_.clear();
+        for (auto &entry : pending) {
+            LTRequestPrompt *prompt = entry.second;
+            if (prompt.resolved) continue;
+            prompt.resolved = YES;
+            if (prompt.cancel) prompt.cancel();
+            prompt.cancel = nil;
+            if (prompt.alert.window.sheetParent)
+                [prompt.alert.window.sheetParent endSheet:prompt.alert.window returnCode:NSAlertFirstButtonReturn];
+        }
+        LTPage *p = page_;
+        if (p && resetGrants) {
+            [p->_permissionGrants removeAllObjects];
+            [p->_permissionOrigins removeAllObjects];
+        }
+    }
+    void PermissionPrompt(uint64_t identifier, NSString *origin, uint32_t permissions, BOOL media,
+                          BOOL supported, void (^answer)(BOOL)) {
+        LTPage *p = page_;
+        if (!p || p.closing || !p.container.window || p.container.window.attachedSheet ||
+            p->_permissionOrigins.count >= 64 || p->_permissionGrants.count >= 64) { answer(NO); return; }
+        NSArray *names = PermissionNames(permissions, media);
+        [p->_permissionOrigins addObject:origin];
+        LTRequestPrompt *prompt = [LTRequestPrompt new];
+        prompt.alert = [NSAlert new];
+        prompt.alert.messageText = supported ? @"Website permission" : @"Website request denied";
+        prompt.alert.informativeText = [NSString stringWithFormat:@"%@\n\nRequested: %@.\n\n%@", origin,
+            [names componentsJoinedByString:@", "], supported ?
+            (media ? @"Allow this capture request. macOS may require separate permission. Revoke in Site Information; reload stops active capture." :
+            @"Saved for this exact origin until revoked in Site Information. Same-origin tabs share this permission. Private permissions end with the private browsing context.") :
+            @"Lite cannot safely provide every requested capability. The entire request is denied."];
+        [prompt.alert addButtonWithTitle:supported ? @"Deny" : @"OK"];
+        if (supported) [prompt.alert addButtonWithTitle:media ? @"Allow for this request" : @"Allow for this site"];
+        prompt.cancel = ^{ answer(NO); };
+        prompts_[identifier] = prompt;
+        CefRefPtr<Client> hold(this);
+        [prompt.alert beginSheetModalForWindow:p.container.window completionHandler:^(NSModalResponse result) {
+            if (prompt.resolved) return;
+            prompt.resolved = YES;
+            prompt.cancel = nil;
+            hold->prompts_.erase(identifier);
+            BOOL allowed = supported && result == NSAlertSecondButtonReturn && p.alive && !p.closing;
+            if (allowed && media) {
+                NSIndexSet *duplicates = [p->_permissionGrants indexesOfObjectsPassingTest:^BOOL(NSDictionary *grant, NSUInteger index, BOOL *stop) {
+                    return [grant[@"origin"] isEqual:origin] && [grant[@"capabilities"] isEqual:names];
+                }];
+                [p->_permissionGrants removeObjectsAtIndexes:duplicates];
+                if (p->_permissionGrants.count < 64) [p->_permissionGrants addObject:@{@"origin": origin, @"capabilities": names,
+                    @"lifetime": @"This capture session; reload to stop capture"}];
+            }
+            answer(allowed);
+        }];
+    }
     bool OnRequestMediaAccessPermission(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>,
                                         const CefString &origin, uint32_t permissions,
                                         CefRefPtr<CefMediaAccessCallback> callback) override {
-        LTPage *p = page_;
-        NSAlert *a = [NSAlert new];
-        a.messageText = @"Allow camera or microphone access?";
-        a.informativeText =
-            [NSString stringWithFormat:@"%@ requests access to %@%@.", N(origin),
-                                       (permissions & CEF_MEDIA_PERMISSION_DEVICE_VIDEO_CAPTURE)
-                                           ? @"your camera "
-                                           : @"",
-                                       (permissions & CEF_MEDIA_PERMISSION_DEVICE_AUDIO_CAPTURE)
-                                           ? @"your microphone"
-                                           : @"screen capture"];
-        [a addButtonWithTitle:@"Deny"];
-        [a addButtonWithTitle:@"Allow for this request"];
-        if (!p.container.window) {
-            callback->Cancel();
-            return true;
-        }
-        [a beginSheetModalForWindow:p.container.window
-                  completionHandler:^(NSModalResponse r) {
-                    callback->Continue(r == NSAlertSecondButtonReturn ? permissions : 0);
-                  }];
+        // Screen capture needs a source chooser, which Alloy does not provide here.
+        uint32_t supported = CEF_MEDIA_PERMISSION_DEVICE_VIDEO_CAPTURE | CEF_MEDIA_PERMISSION_DEVICE_AUDIO_CAPTURE;
+        PermissionPrompt(++requestSequence_, N(origin), permissions, YES,
+            permissions && !(permissions & ~supported), ^(BOOL allow) {
+                if (allow) callback->Continue(permissions); else callback->Cancel();
+            });
         return true;
     }
-    bool OnShowPermissionPrompt(CefRefPtr<CefBrowser>, uint64_t, const CefString &origin,
-                                uint32_t permissions,
-                                CefRefPtr<CefPermissionPromptCallback> callback) override {
-        LTPage *p = page_;
-        NSAlert *a = [NSAlert new];
-        a.messageText = @"Website permission";
-        a.informativeText = [NSString
-            stringWithFormat:@"%@ requests %@. Allow only if you trust this site.", N(origin),
-                             permissions == CEF_PERMISSION_TYPE_GEOLOCATION ? @"your location"
-                             : permissions == CEF_PERMISSION_TYPE_NOTIFICATIONS
-                                 ? @"notifications"
-                                 : @"an additional browser capability"];
-        [a addButtonWithTitle:@"Deny"];
-        [a addButtonWithTitle:@"Allow once"];
-        if (!p.container.window) {
-            callback->Continue(CEF_PERMISSION_RESULT_DENY);
-            return true;
-        }
-        [a beginSheetModalForWindow:p.container.window
-                  completionHandler:^(NSModalResponse r) {
-                    callback->Continue(r == NSAlertSecondButtonReturn ? CEF_PERMISSION_RESULT_ACCEPT
-                                                                      : CEF_PERMISSION_RESULT_DENY);
-                  }];
+    bool OnShowPermissionPrompt(CefRefPtr<CefBrowser>, uint64_t identifier, const CefString &origin,
+                                uint32_t permissions, CefRefPtr<CefPermissionPromptCallback> callback) override {
+        uint32_t supported = CEF_PERMISSION_TYPE_CAMERA_STREAM | CEF_PERMISSION_TYPE_MIC_STREAM |
+            CEF_PERMISSION_TYPE_CLIPBOARD | CEF_PERMISSION_TYPE_GEOLOCATION | CEF_PERMISSION_TYPE_MIDI_SYSEX |
+            CEF_PERMISSION_TYPE_MULTIPLE_DOWNLOADS | CEF_PERMISSION_TYPE_NOTIFICATIONS |
+            CEF_PERMISSION_TYPE_STORAGE_ACCESS | CEF_PERMISSION_TYPE_SENSORS;
+        PermissionPrompt(identifier, N(origin), permissions, NO, permissions && !(permissions & ~supported),
+            ^(BOOL allow) { callback->Continue(allow ? CEF_PERMISSION_RESULT_ACCEPT : CEF_PERMISSION_RESULT_DENY); });
+        return true;
+    }
+    void OnDismissPermissionPrompt(CefRefPtr<CefBrowser>, uint64_t identifier,
+                                    cef_permission_request_result_t) override {
+        auto found = prompts_.find(identifier);
+        if (found == prompts_.end()) return;
+        LTRequestPrompt *prompt = found->second;
+        prompts_.erase(found);
+        prompt.resolved = YES;
+        prompt.cancel = nil; // CEF already canceled this request; never call its callback again.
+        if (prompt.alert.window.sheetParent)
+            [prompt.alert.window.sheetParent endSheet:prompt.alert.window returnCode:NSAlertFirstButtonReturn];
+    }
+    bool GetAuthCredentials(CefRefPtr<CefBrowser>, const CefString &origin, bool proxy,
+                            const CefString &host, int port, const CefString &realm,
+                            const CefString &scheme, CefRefPtr<CefAuthCallback> callback) override {
+        NSString *method = N(scheme).lowercaseString;
+        if (![@[@"basic", @"digest"] containsObject:method]) return false;
+        unsigned generation = requestGeneration_.load();
+        NSString *requestOrigin = WebOrigin(N(origin)) ?: @"", *server = N(host), *challenge = N(realm);
+        CefRefPtr<Client> hold(this);
+        dispatch_async(dispatch_get_main_queue(), ^{
+            LTPage *p = hold->page_;
+            if (!p || !p.alive || p.closing || generation != hold->requestGeneration_.load() ||
+                !p.container.window || p.container.window.attachedSheet) { callback->Cancel(); return; }
+            uint64_t identifier = ++hold->requestSequence_;
+            LTRequestPrompt *prompt = [LTRequestPrompt new];
+            prompt.alert = [NSAlert new];
+            prompt.alert.messageText = proxy ? @"Proxy authentication" : @"Website authentication";
+            prompt.alert.informativeText = [NSString stringWithFormat:@"%@:%d\n%@\nRealm: %@\n%@ authentication. Credentials are used only for this challenge and Chromium's session cache.",
+                server, port, requestOrigin, challenge, method.uppercaseString];
+            NSTextField *username = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 42, 340, 24)];
+            username.placeholderString = @"Username"; username.accessibilityLabel = @"Authentication username";
+            NSSecureTextField *password = [[NSSecureTextField alloc] initWithFrame:NSMakeRect(0, 6, 340, 24)];
+            password.placeholderString = @"Password"; password.accessibilityLabel = @"Authentication password";
+            NSView *form = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 340, 72)];
+            [form addSubview:username]; [form addSubview:password];
+            prompt.alert.accessoryView = form;
+            [prompt.alert addButtonWithTitle:@"Cancel"]; [prompt.alert addButtonWithTitle:@"Sign In"];
+            prompt.cancel = ^{ password.stringValue = @""; callback->Cancel(); };
+            hold->prompts_[identifier] = prompt;
+            [prompt.alert beginSheetModalForWindow:p.container.window completionHandler:^(NSModalResponse result) {
+                if (prompt.resolved) return;
+                prompt.resolved = YES; prompt.cancel = nil;
+                hold->prompts_.erase(identifier);
+                NSString *secret = password.stringValue; password.stringValue = @"";
+                if (result == NSAlertSecondButtonReturn && p.alive && !p.closing &&
+                    generation == hold->requestGeneration_.load()) callback->Continue(C(username.stringValue), C(secret));
+                else callback->Cancel();
+            }];
+            [prompt.alert.window makeFirstResponder:username];
+        });
         return true;
     }
     bool OnBeforeDownload(CefRefPtr<CefBrowser>, CefRefPtr<CefDownloadItem>,
                           const CefString &suggested,
                           CefRefPtr<CefBeforeDownloadCallback> cb) override {
-        cb->Continue(
-            C([NSHomeDirectory()
-                stringByAppendingPathComponent:
-                    [@"Downloads" stringByAppendingPathComponent:N(suggested).lastPathComponent]]),
-            true);
+        if ([NSProcessInfo.processInfo.arguments containsObject:@"--lite-smoke"]) {
+            for (NSString *argument in NSProcessInfo.processInfo.arguments) {
+                if (![argument hasPrefix:@"--lite-test-profile="]) continue;
+                NSString *directory = [[argument substringFromIndex:20] stringByAppendingPathComponent:@"Downloads"];
+                [NSFileManager.defaultManager createDirectoryAtPath:directory withIntermediateDirectories:YES attributes:nil error:nil];
+                NSString *path = DownloadPath(directory, N(suggested));
+                if (path) cb->Continue(C(path), false);
+                return true;
+            }
+        }
+        NSString *path = DownloadPath([NSHomeDirectory() stringByAppendingPathComponent:@"Downloads"], N(suggested));
+        if (path) cb->Continue(C(path), true);
         return true;
     }
     void OnDownloadUpdated(CefRefPtr<CefBrowser>, CefRefPtr<CefDownloadItem> d,
                            CefRefPtr<CefDownloadItemCallback> cb) override {
         LTPage *p = page_;
-        if (!p)
-            return;
-        p->_downloads[d->GetId()] = cb;
-        if (d->IsInProgress())
-            download_ids_.insert(d->GetId());
-        else
-            download_ids_.erase(d->GetId());
+        if (!p || !d->IsValid()) return;
+        if (d->IsInProgress() || d->IsInterrupted()) p->_downloads[d->GetId()] = cb;
+        else p->_downloads.erase(d->GetId());
+        if (d->IsInProgress()) download_ids_.insert(d->GetId());
+        else download_ids_.erase(d->GetId());
         p.downloading = !download_ids_.empty();
-        [p.delegate page:p
-            downloadChanged:@{
-                @"id" : @(d->GetId()),
-                @"page" : p.identifier,
-                @"name" : N(d->GetSuggestedFileName()),
-                @"path" : N(d->GetFullPath()),
-                @"percent" : @(d->GetPercentComplete()),
-                @"complete" : @(d->IsComplete()),
-                @"active" : @(d->IsInProgress()),
-                @"paused" : @(d->IsPaused()),
-                @"canceled" : @(d->IsCanceled())
-            }];
+        auto reason = d->GetInterruptReason();
+        NSString *failure = @"";
+        switch (reason) {
+            case CEF_DOWNLOAD_INTERRUPT_REASON_NONE: break;
+            case CEF_DOWNLOAD_INTERRUPT_REASON_FILE_NO_SPACE: failure = @"The disk is full."; break;
+            case CEF_DOWNLOAD_INTERRUPT_REASON_FILE_ACCESS_DENIED: failure = @"The destination is not writable."; break;
+            case CEF_DOWNLOAD_INTERRUPT_REASON_NETWORK_DISCONNECTED: failure = @"The network connection was lost."; break;
+            case CEF_DOWNLOAD_INTERRUPT_REASON_NETWORK_TIMEOUT: failure = @"The connection timed out."; break;
+            case CEF_DOWNLOAD_INTERRUPT_REASON_SERVER_CERT_PROBLEM: failure = @"The server certificate could not be verified."; break;
+            case CEF_DOWNLOAD_INTERRUPT_REASON_USER_CANCELED: failure = @"Canceled."; break;
+            case CEF_DOWNLOAD_INTERRUPT_REASON_USER_SHUTDOWN: failure = @"Interrupted when the browser closed."; break;
+            default: failure = [NSString stringWithFormat:@"Chromium interrupted the download (reason %d).", reason]; break;
+        }
+        BOOL quarantine = NO;
+        NSString *securityError = @"";
+        if (d->IsComplete() && !d->GetFullPath().empty()) {
+            NSURL *file = [NSURL fileURLWithPath:N(d->GetFullPath())];
+            NSDictionary *existing = nil;
+            [file getResourceValue:&existing forKey:NSURLQuarantinePropertiesKey error:nil];
+            if (existing.count) quarantine = YES;
+            else {
+                NSError *error = nil;
+                NSDictionary *metadata = @{(__bridge NSString *)kLSQuarantineAgentNameKey: @"Lite",
+                    (__bridge NSString *)kLSQuarantineTypeKey: (__bridge NSString *)kLSQuarantineTypeWebDownload,
+                    (__bridge NSString *)kLSQuarantineDataURLKey: N(d->GetURL()),
+                    (__bridge NSString *)kLSQuarantineOriginURLKey: p.url};
+                [file setResourceValue:metadata forKey:NSURLQuarantinePropertiesKey error:&error];
+                existing = nil;
+                [file getResourceValue:&existing forKey:NSURLQuarantinePropertiesKey error:nil];
+                quarantine = existing.count > 0;
+                if (!quarantine) securityError = error.localizedDescription ?: @"Download quarantine metadata could not be verified.";
+            }
+        }
+        BOOL resume = d->IsInterrupted() && (reason == CEF_DOWNLOAD_INTERRUPT_REASON_NETWORK_FAILED ||
+            reason == CEF_DOWNLOAD_INTERRUPT_REASON_NETWORK_TIMEOUT || reason == CEF_DOWNLOAD_INTERRUPT_REASON_NETWORK_DISCONNECTED ||
+            reason == CEF_DOWNLOAD_INTERRUPT_REASON_NETWORK_SERVER_DOWN || reason == CEF_DOWNLOAD_INTERRUPT_REASON_FILE_NO_SPACE);
+        NSString *status = d->IsComplete() ? @"complete" : d->IsCanceled() ? @"canceled" :
+            d->IsInterrupted() ? @"interrupted" : d->IsPaused() ? @"paused" : @"active";
+        NSDictionary *record = @{@"id": @(d->GetId()), @"page": p.identifier,
+            @"name": N(d->GetSuggestedFileName()), @"path": N(d->GetFullPath()), @"url": N(d->GetURL()),
+            @"percent": @(d->GetPercentComplete()), @"received": @(d->GetReceivedBytes()), @"total": @(d->GetTotalBytes()),
+            @"complete": @(d->IsComplete()), @"active": @(d->IsInProgress()), @"paused": @(d->IsPaused()),
+            @"canceled": @(d->IsCanceled()), @"interrupted": @(d->IsInterrupted()), @"canResume": @(resume),
+            @"status": status, @"reason": failure, @"reasonCode": @(reason), @"time": @(NSDate.date.timeIntervalSince1970),
+            @"quarantined": @(quarantine), @"securityError": securityError};
+        if (d->IsInProgress() || resume) p->_downloadRecords[@(d->GetId())] = record;
+        else { [p->_downloadRecords removeObjectForKey:@(d->GetId())]; p->_downloads.erase(d->GetId()); }
+        // Interrupted retries are bounded independently of active transfers.
+        if (p->_downloadRecords.count > 100) for (NSNumber *identifier in [p->_downloadRecords.allKeys copy]) {
+            if (p->_downloadRecords.count <= 100) break;
+            if ([p->_downloadRecords[identifier][@"active"] boolValue]) continue;
+            p->_downloads.erase(identifier.unsignedIntValue);
+            [p->_downloadRecords removeObjectForKey:identifier];
+        }
+        [NSNotificationCenter.defaultCenter postNotificationName:@"LTDownloadChanged" object:p userInfo:record];
+        [p.delegate page:p downloadChanged:record];
     }
     bool OnProcessMessageReceived(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame,
                                   CefProcessId source,
@@ -598,6 +872,7 @@ class Client : public CefClient,
             return false;
         auto args = message->GetArgumentList();
         LTPage *p = page_;
+        if (args->GetSize() != 2 || args->GetType(0) != VTYPE_INT || args->GetType(1) != VTYPE_BOOL) return true;
         int flag = args->GetInt(0);
         if (flag == 1)
             p.dirty = YES;
@@ -625,14 +900,23 @@ class Client : public CefClient,
     std::shared_ptr<BlockingState> blockingState_;
     std::set<CefString> audio_frames_, pip_frames_;
     std::set<uint32_t> download_ids_;
+    std::map<uint64_t, LTRequestPrompt *__strong> prompts_;
+    uint64_t requestSequence_ = 1ull << 63;
+    std::atomic<unsigned> requestGeneration_{0};
     IMPLEMENT_REFCOUNTING(Client);
 };
+static void CancelBrowserRequests(CefRefPtr<CefBrowser> browser) {
+    if (auto client = dynamic_cast<Client *>(browser->GetHost()->GetClient().get())) client->CancelRequests();
+}
 @implementation LTPage
 - (instancetype)initWithID:(NSString *)identifier
                        url:(NSString *)url
                    context:(LTBrowserContext *)context {
     if ((self = [super init])) {
         _blockingState = std::make_shared<BlockingState>();
+        _permissionGrants = [NSMutableArray new];
+        _permissionOrigins = [NSMutableSet new];
+        _downloadRecords = [NSMutableDictionary new];
         _identifier = identifier;
         _url = url;
         _title = @"New Tab";
@@ -648,6 +932,89 @@ class Client : public CefClient,
     return _browser != nullptr;
 }
 - (NSUInteger)blockedRequests { return _blockingState->count.load(); }
+- (BOOL)privateMode { return _context->_privateMode; }
+- (NSString *)contextIdentifier { return _context->_identifier; }
+- (NSArray<NSDictionary *> *)permissionGrants {
+    NSMutableArray *grants = [_permissionGrants mutableCopy];
+    NSMutableSet *origins = [NSMutableSet new];
+    for (NSString *origin in _permissionOrigins) [origins addObject:WebOrigin(origin) ?: origin];
+    NSString *current = WebOrigin(_url);
+    if (current) [origins addObject:current];
+    struct { cef_content_setting_types_t type; NSString *name; } settings[] = {
+        {CEF_CONTENT_SETTING_TYPE_GEOLOCATION, @"location"}, {CEF_CONTENT_SETTING_TYPE_NOTIFICATIONS, @"notifications"},
+        {CEF_CONTENT_SETTING_TYPE_MEDIASTREAM_MIC, @"microphone"}, {CEF_CONTENT_SETTING_TYPE_MEDIASTREAM_CAMERA, @"camera"},
+        {CEF_CONTENT_SETTING_TYPE_CLIPBOARD_READ_WRITE, @"clipboard"}, {CEF_CONTENT_SETTING_TYPE_MIDI_SYSEX, @"MIDI system-exclusive messages"},
+        {CEF_CONTENT_SETTING_TYPE_AUTOMATIC_DOWNLOADS, @"multiple downloads"}, {CEF_CONTENT_SETTING_TYPE_SENSORS, @"sensors"},
+        {CEF_CONTENT_SETTING_TYPE_STORAGE_ACCESS, @"storage access"}};
+    for (NSString *origin in origins) for (auto setting : settings)
+        if (_context->_context->GetContentSetting(C(origin), C(origin), setting.type) == CEF_CONTENT_SETTING_VALUE_ALLOW &&
+            _context->_context->GetContentSetting("", "", setting.type) != CEF_CONTENT_SETTING_VALUE_ALLOW)
+            [grants addObject:@{@"origin": origin, @"capabilities": @[setting.name],
+                @"lifetime": self.privateMode ? @"Until revoked or this private context closes" : @"Until revoked; shared across same-origin tabs"}];
+    return grants;
+}
+- (void)revokePermissions {
+    NSMutableSet *origins = [NSMutableSet new];
+    for (NSString *origin in _permissionOrigins) [origins addObject:WebOrigin(origin) ?: origin];
+    NSString *current = WebOrigin(_url);
+    if (current) [origins addObject:current];
+    for (NSDictionary *grant in _permissionGrants) [origins addObject:grant[@"origin"]];
+    for (NSString *origin in origins) ResetOriginPermissions(_context, origin);
+    if (_browser) static_cast<Client *>(_browser->GetHost()->GetClient().get())->CancelRequests();
+    // Reload releases existing capture streams and geolocation watchers as well as grants.
+    if (_browser) [self reload];
+}
+- (void)clearSiteDataWithCompletion:(void (^)(BOOL, NSString *))completion {
+    NSString *origin = WebOrigin(_url);
+    if (!_browser || !origin) { completion(NO, @"Open an HTTP or HTTPS page before clearing its website data."); return; }
+    auto browser = _browser;
+    auto parameters = CefDictionaryValue::Create();
+    parameters->SetString("origin", C(origin));
+    parameters->SetString("storageTypes", "all");
+    ResetOriginPermissions(_context, origin);
+    static_cast<Client *>(browser->GetHost()->GetClient().get())->CancelRequests();
+    // CDP removes engine-managed IndexedDB, local storage, service workers,
+    // Cache Storage, cookies, file systems and storage buckets for this origin.
+    DevTools(browser, @"Storage.clearDataForOrigin", parameters, ^(id result, BOOL success) {
+        if (!success) { completion(NO, @"Chromium could not finish clearing this origin. Keep the page open and try again."); return; }
+        auto storage = CefDictionaryValue::Create(), identifier = CefDictionaryValue::Create();
+        identifier->SetString("securityOrigin", C(origin));
+        identifier->SetBool("isLocalStorage", false);
+        storage->SetDictionary("storageId", identifier);
+        DevTools(browser, @"DOMStorage.clear", storage, ^(id result, BOOL cleared) {
+            if (!cleared) { completion(NO, @"Persistent storage was cleared, but Chromium could not clear this page's session storage. Close this site's pages and try again."); return; }
+            self->_context->_context->ClearHttpCache(new Completion(^{
+                completion(YES, @"Website storage and cookies for this origin were cleared. The shared HTTP cache was cleared. Reload open pages to drop any in-memory data.");
+            }));
+        });
+    });
+}
+- (void)captureSessionState:(void (^)(void))completion {
+    if (!_browser || _loading) { self.sessionState = nil; completion(); return; }
+    auto entry = _browser->GetHost()->GetVisibleNavigationEntry();
+    if (!entry || entry->HasPostData()) { self.sessionState = nil; completion(); return; }
+    NSString *url = [_url copy];
+    auto browser = _browser;
+    // Layout metrics come from the engine rather than page-overridable JS globals.
+    DevTools(browser, @"Page.getLayoutMetrics", nullptr, ^(id value, BOOL success) {
+        NSDictionary *viewport = [value isKindOfClass:NSDictionary.class] ? value[@"cssLayoutViewport"] : nil;
+        double x = [viewport[@"pageX"] doubleValue], y = [viewport[@"pageY"] doubleValue];
+        if (success && self->_browser && self->_browser->IsSame(browser) && [self.url isEqual:url] &&
+            std::isfinite(x) && std::isfinite(y) && x >= 0 && y >= 0 && x <= 1e7 && y <= 1e7)
+            self.sessionState = @{@"url": url, @"scrollX": @(x), @"scrollY": @(y)};
+        completion();
+    });
+}
+- (void)restoreScroll {
+    NSDictionary *state = _sessionState;
+    if (!_browser || ![state[@"url"] isEqual:_url]) return;
+    id x = state[@"scrollX"], y = state[@"scrollY"];
+    if (![x isKindOfClass:NSNumber.class] || ![y isKindOfClass:NSNumber.class] ||
+        !std::isfinite([x doubleValue]) || !std::isfinite([y doubleValue]) ||
+        [x doubleValue] < 0 || [y doubleValue] < 0 || [x doubleValue] > 1e7 || [y doubleValue] > 1e7) return;
+    _sessionState = nil;
+    [self evaluateJavaScript:[NSString stringWithFormat:@"window.scrollTo(%f,%f);true", [x doubleValue], [y doubleValue]] completion:^(id value, BOOL success) {}];
+}
 - (void)loadIfNeeded {
     if (_browser || _closing)
         return;
@@ -672,6 +1039,7 @@ class Client : public CefClient,
     }
 }
 - (void)navigate:(NSString *)url {
+    self.sessionState = nil;
     self.url = url;
     [self freeze:NO];
     [self loadIfNeeded];
@@ -702,16 +1070,60 @@ class Client : public CefClient,
 }
 - (void)close {
     if (_browser) {
+        static_cast<Client *>(_browser->GetHost()->GetClient().get())->CancelRequests();
         _closing = YES;
         _browser->GetHost()->CloseBrowser(false);
     }
 }
+- (void)closeConfirmed {
+    if (_browser) {
+        static_cast<Client *>(_browser->GetHost()->GetClient().get())->CancelRequests();
+        _closing = YES;
+        _browser->GetHost()->CloseBrowser(true);
+    }
+}
 - (void)discard {
-    _discarding = YES;
-    [self close];
+    if (!_browser || _capturingSession || _closing || _visible || _loading || _dirty || _audible ||
+        _capturing || _downloading || _pictureInPicture || _keepAwake) return;
+    auto entry = _browser->GetHost()->GetVisibleNavigationEntry();
+    // CEF exposes history enumeration but no import/serialization mechanism.
+    // Keep navigable and POST sessions intact; never replay requests to fake a stack.
+    if (_browser->CanGoBack() || _browser->CanGoForward() || !entry || entry->HasPostData()) {
+        [self freeze:YES];
+        return;
+    }
+    _capturingSession = YES;
+    NSString *url = [_url copy];
+    [self evaluateJavaScript:@"history.length === 1 && history.state === null && sessionStorage.length === 0"
+        completion:^(id value, BOOL success) {
+            if (!success || ![value isEqual:@YES] || ![self.url isEqual:url]) { self->_capturingSession = NO; return; }
+            [self captureSessionState:^{
+                self->_capturingSession = NO;
+                if (!self->_browser || ![self.url isEqual:url] || self.visible || self.loading || self.dirty ||
+                    self.audible || self.capturing || self.downloading || self.pictureInPicture || self.keepAwake ||
+                    ![self.sessionState[@"url"] isEqual:url]) return;
+                auto current = self->_browser->GetHost()->GetVisibleNavigationEntry();
+                if (!current || current->HasPostData() || self->_browser->CanGoBack() || self->_browser->CanGoForward()) return;
+                self->_discarding = YES;
+                [self close];
+            }];
+        }];
 }
 - (void)didClose {
     _browser = nullptr;
+    _downloads.clear();
+    for (NSDictionary *record in _downloadRecords.allValues) {
+        NSMutableDictionary *interrupted = [record mutableCopy];
+        interrupted[@"active"] = @NO; interrupted[@"paused"] = @NO; interrupted[@"canResume"] = @NO;
+        interrupted[@"interrupted"] = @YES; interrupted[@"status"] = @"interrupted";
+        interrupted[@"reasonCode"] = @(CEF_DOWNLOAD_INTERRUPT_REASON_USER_SHUTDOWN);
+        interrupted[@"reason"] = @"The owning page closed. Start the download again from its website.";
+        [NSNotificationCenter.defaultCenter postNotificationName:@"LTDownloadChanged" object:self userInfo:interrupted];
+        [_delegate page:self downloadChanged:interrupted];
+    }
+    [_downloadRecords removeAllObjects];
+    _downloading = NO;
+    _capturingSession = NO;
     _closing = NO;
     _discarding = NO;
     _frozen = NO;
@@ -733,7 +1145,7 @@ class Client : public CefClient,
         return;
     auto params = CefDictionaryValue::Create();
     params->SetString("state", freeze ? "frozen" : "active");
-    _browser->GetHost()->ExecuteDevToolsMethod(0, "Page.setWebLifecycleState", params);
+    _browser->GetHost()->ExecuteDevToolsMethod(NextDevToolsID(), "Page.setWebLifecycleState", params);
     _frozen = freeze;
 }
 - (void)find:(NSString *)text forward:(BOOL)forward next:(BOOL)next {
@@ -791,7 +1203,7 @@ class Client : public CefClient,
     auto p = CefDictionaryValue::Create();
     p->SetString("expression", C(script));
     p->SetBool("userGesture", true);
-    _browser->GetHost()->ExecuteDevToolsMethod(0, "Runtime.evaluate", p);
+    _browser->GetHost()->ExecuteDevToolsMethod(NextDevToolsID(), "Runtime.evaluate", p);
 }
 - (void)togglePlayback {
     [self script:@"(()=>{const m=[...document.querySelectorAll('video,audio')];const "
@@ -823,16 +1235,12 @@ class Client : public CefClient,
         completion(nil, NO);
         return;
     }
-    static int sequence = 20000;
-    CefRefPtr<Evaluation> observer = new Evaluation(completion);
-    observer->message_id = ++sequence;
-    observer->registration = _browser->GetHost()->AddDevToolsMessageObserver(observer);
     auto params = CefDictionaryValue::Create();
     params->SetString("expression", C(expression));
     params->SetBool("returnByValue", true);
     params->SetBool("awaitPromise", true);
     params->SetBool("userGesture", true);
-    _browser->GetHost()->ExecuteDevToolsMethod(observer->message_id, "Runtime.evaluate", params);
+    DevTools(_browser, @"Runtime.evaluate", params, completion, true);
 }
 @end
 
@@ -844,8 +1252,10 @@ class Client : public CefClient,
 static NSMutableArray<LTPopup *> *popups;
 @implementation LTPopup
 - (void)pageChanged:(LTPage *)page {
-    self.window.title =
-        [NSString stringWithFormat:@"Lite — %@", [NSURL URLWithString:page.url].host ?: @"Popup"];
+    NSString *origin = WebOrigin(page.url) ?: [NSURL URLWithString:page.url].scheme ?: @"Popup";
+    self.window.title = [NSString stringWithFormat:@"Lite%@ — %@ — %@", page.privateMode ? @" Private" : @"",
+        origin, page.secure ? @"Secure connection" : @"Not secure"];
+    self.window.accessibilityLabel = self.window.title;
 }
 - (void)pageClosed:(LTPage *)page {
     [self.window close];

@@ -1,0 +1,835 @@
+{
+  "date": "2026-10-01",
+  "hardware": "Mac16,12, 32 GiB RAM",
+  "macOS": "26.5.2",
+  "architecture": "arm64",
+  "build": "Release, ad hoc signed",
+  "CEF": "154.0.23",
+  "Chromium": "154.0.8037.17",
+  "baselineSourceCommit": "b2a9f26674e9f81fc743cc9bc37e8b26895917be",
+  "updatedExecutableSHA256": "306155e098c48004cc024e9775121be7d2615bb7d8f76866f1f8297e3e1b2877",
+  "singlePage": {
+    "before": {
+      "workload": "native-2000-pin-single-loopback-page",
+      "nodes": 2000,
+      "architecture": "arm64",
+      "os": "26.5.2",
+      "launchToDOMReadySeconds": 2.899512665986549,
+      "before": {
+        "processes": 6,
+        "rssMiB": 728.734,
+        "footprintMiB": 270.023,
+        "cpuSeconds": 2.027005,
+        "interruptWakeups": 563,
+        "diskReadBytes": 2359296,
+        "diskWriteBytes": 4636672
+      },
+      "after": {
+        "processes": 6,
+        "rssMiB": 728.766,
+        "footprintMiB": 264.194,
+        "cpuSeconds": 2.157849,
+        "interruptWakeups": 1367,
+        "diskReadBytes": 2379776,
+        "diskWriteBytes": 4870144
+      },
+      "sampleSeconds": 15.012736290984321,
+      "cpuPercentOneCore": 0.8715533095627386,
+      "interruptWakeupsPerSecond": 53.55452759686656,
+      "idleFixtureRequests": 0,
+      "networkScope": "fixture requests only; no system-wide traffic capture",
+      "fixtureRequests": 6,
+      "gracefulExit": true
+    },
+    "after": {
+      "workload": "native-2000-pin-single-loopback-page",
+      "nodes": 2000,
+      "architecture": "arm64",
+      "os": "26.5.2",
+      "launchToDOMReadySeconds": 3.2235298749874346,
+      "before": {
+        "processes": 6,
+        "rssMiB": 730.891,
+        "footprintMiB": 284.226,
+        "cpuSeconds": 1.987087,
+        "interruptWakeups": 767,
+        "diskReadBytes": 421888,
+        "diskWriteBytes": 5242880
+      },
+      "after": {
+        "processes": 6,
+        "rssMiB": 731.031,
+        "footprintMiB": 280.273,
+        "cpuSeconds": 2.219323,
+        "interruptWakeups": 2007,
+        "diskReadBytes": 421888,
+        "diskWriteBytes": 5472256
+      },
+      "sampleSeconds": 15.015362665988505,
+      "cpuPercentOneCore": 1.546655949416666,
+      "interruptWakeupsPerSecond": 82.58208793109874,
+      "idleFixtureRequests": 0,
+      "networkScope": "fixture requests only; no system-wide traffic capture",
+      "fixtureRequests": 6,
+      "gracefulExit": true
+    }
+  },
+  "threeOriginMixed": {
+    "before": {
+      "workload": "native-three-origin-document-canvas-storage",
+      "nodes": 30,
+      "architecture": "arm64",
+      "os": "26.5.2",
+      "launchToDOMReadySeconds": 3.1560632080072537,
+      "before": {
+        "processes": 8,
+        "rssMiB": 988.0,
+        "footprintMiB": 434.885,
+        "cpuSeconds": 2.350073,
+        "interruptWakeups": 1087,
+        "diskReadBytes": 129474560,
+        "diskWriteBytes": 4026368
+      },
+      "after": {
+        "processes": 8,
+        "rssMiB": 993.188,
+        "footprintMiB": 445.932,
+        "cpuSeconds": 2.948133,
+        "interruptWakeups": 2685,
+        "diskReadBytes": 131973120,
+        "diskWriteBytes": 4325376
+      },
+      "sampleSeconds": 15.016951000026893,
+      "cpuPercentOneCore": 3.9825661014604683,
+      "interruptWakeupsPerSecond": 106.41307945914842,
+      "idleFixtureRequests": 0,
+      "networkScope": "fixture requests only; no system-wide traffic capture",
+      "fixtureRequests": 18,
+      "gracefulExit": true
+    },
+    "after": {
+      "workload": "native-three-origin-document-canvas-storage",
+      "nodes": 30,
+      "architecture": "arm64",
+      "os": "26.5.2",
+      "launchToDOMReadySeconds": 2.5044196670060046,
+      "before": {
+        "processes": 8,
+        "rssMiB": 998.859,
+        "footprintMiB": 477.385,
+        "cpuSeconds": 2.422144,
+        "interruptWakeups": 1257,
+        "diskReadBytes": 196608,
+        "diskWriteBytes": 4063232
+      },
+      "after": {
+        "processes": 8,
+        "rssMiB": 999.266,
+        "footprintMiB": 470.869,
+        "cpuSeconds": 3.101397,
+        "interruptWakeups": 3571,
+        "diskReadBytes": 196608,
+        "diskWriteBytes": 4358144
+      },
+      "sampleSeconds": 15.017996707989369,
+      "cpuPercentOneCore": 4.522926813791661,
+      "interruptWakeupsPerSecond": 154.08180231981166,
+      "idleFixtureRequests": 0,
+      "networkScope": "fixture requests only; no system-wide traffic capture",
+      "fixtureRequests": 18,
+      "gracefulExit": true
+    }
+  },
+  "durableProfileEdits": {
+    "before": {
+      "results": [
+        {
+          "commit": {
+            "median_ms": 17.738895840011537,
+            "p95_ms": 18.737333361059427,
+            "samples_ms": [
+              23.978583340067416,
+              17.810458317399025,
+              17.33649999368936,
+              17.64566666679457,
+              17.72633334621787,
+              17.86229165736586,
+              17.333374998997897,
+              17.636541684623808,
+              17.691666667815298,
+              17.751458333805203,
+              18.38658330962062,
+              17.763041658326983,
+              18.301916657947004,
+              17.63925002887845,
+              18.737333361059427,
+              17.647041706368327,
+              17.58004166185856,
+              17.850999953225255,
+              17.840041662566364,
+              17.724999983329326
+            ]
+          },
+          "open": {
+            "median_ms": 10.820437484653667,
+            "p95_ms": 11.100250005256385,
+            "samples_ms": [
+              11.840666644275188,
+              10.818958340678364,
+              10.783708305098116,
+              10.95316669670865,
+              10.838583344593644,
+              10.605541639961302,
+              10.597874992527068,
+              10.761125013232231,
+              10.88079169858247,
+              10.511166707146913,
+              10.808666702359915,
+              11.100250005256385,
+              11.008750007022172,
+              10.82974998280406,
+              10.895833314862102,
+              10.739916644524783,
+              10.895500017795712,
+              10.7512500253506,
+              10.82191662862897,
+              10.66525001078844
+            ]
+          },
+          "nodes": 2000,
+          "sorted_serialization": {
+            "median_ms": 7.189374999143183,
+            "p95_ms": 7.470166659913957,
+            "samples_ms": [
+              8.174999966286123,
+              6.942583306226879,
+              7.1200833190232515,
+              6.988416716922075,
+              7.010541681665927,
+              7.271500013303012,
+              7.196874998044223,
+              7.085083343554288,
+              7.110458333045244,
+              7.072208332829177,
+              7.146625022869557,
+              7.249958289321512,
+              7.470166659913957,
+              7.133666658774018,
+              7.4596250196918845,
+              7.181875000242144,
+              7.242666673846543,
+              7.300666649825871,
+              7.390583341475576,
+              7.24424998043105
+            ]
+          }
+        },
+        {
+          "commit": {
+            "median_ms": 89.46879170252942,
+            "p95_ms": 91.5086250170134,
+            "samples_ms": [
+              104.32174999732524,
+              89.79275001911446,
+              89.33595835696906,
+              88.21124996757135,
+              87.48387498781085,
+              87.4280416755937,
+              88.15483329817653,
+              88.71008333517238,
+              87.37404167186469,
+              90.25491669308394,
+              91.5086250170134,
+              88.95237499382347,
+              89.99804162885994,
+              90.34679166506976,
+              89.88187497016042,
+              88.63695833133534,
+              90.90633335290477,
+              89.63825000682846,
+              89.60162504808977,
+              88.10420834925026
+            ]
+          },
+          "open": {
+            "median_ms": 52.960854169214144,
+            "p95_ms": 54.75733336061239,
+            "samples_ms": [
+              54.75733336061239,
+              52.97287501161918,
+              52.72741668159142,
+              52.43291665101424,
+              51.89375003101304,
+              52.13000002549961,
+              52.94883332680911,
+              52.376583334989846,
+              54.458583355881274,
+              52.3832916514948,
+              53.16237499937415,
+              53.4603749983944,
+              53.86391666252166,
+              54.503874969668686,
+              52.83133336342871,
+              55.263541638851166,
+              53.826541639864445,
+              52.91237495839596,
+              52.14466666802764,
+              53.957583324518055
+            ]
+          },
+          "nodes": 10000,
+          "sorted_serialization": {
+            "median_ms": 37.159770814469084,
+            "p95_ms": 38.1698333658278,
+            "samples_ms": [
+              37.964541639667004,
+              37.48858330072835,
+              36.52258333750069,
+              36.82441666023806,
+              36.78337502060458,
+              36.731750005856156,
+              36.70666669495404,
+              37.88116667419672,
+              36.636833334341645,
+              37.10725001292303,
+              37.96662500826642,
+              37.151458323933184,
+              37.33320831088349,
+              38.1698333658278,
+              36.20575001696125,
+              39.247999957297,
+              37.59745828574523,
+              37.168083305004984,
+              36.955124989617616,
+              37.38433338003233
+            ]
+          }
+        }
+      ],
+      "workload": "20 synchronous durable commits editing one title; fixed synthetic pinned nodes; Release -O3; current libLiteCore",
+      "statistics": "median averages the two middle samples; p95 is nearest rank (19th of 20); aggregates corrected without changing raw measurements"
+    },
+    "after": {
+      "results": [
+        {
+          "commit": {
+            "median_ms": 7.966395816765726,
+            "p95_ms": 8.537333342246711,
+            "samples_ms": [
+              10.663791676051915,
+              8.044750022236258,
+              7.845833315514028,
+              7.821125036571175,
+              7.74579169228673,
+              7.959374983329326,
+              7.945624995045364,
+              7.932375010568649,
+              7.742166693788022,
+              7.959250011481345,
+              8.537333342246711,
+              8.008625009097159,
+              7.992958300746977,
+              8.159124990925193,
+              7.8830833081156015,
+              8.042083354666829,
+              7.973416650202125,
+              7.92854162864387,
+              8.038541651330888,
+              8.037041639909148
+            ]
+          },
+          "open": {
+            "median_ms": 13.54533332050778,
+            "p95_ms": 13.754750019870698,
+            "samples_ms": [
+              15.559291699901223,
+              13.214208302088082,
+              13.551208307035267,
+              13.508624979294837,
+              13.754750019870698,
+              13.533291697967798,
+              13.437000045087188,
+              13.64529161946848,
+              13.666916638612747,
+              13.565666624344885,
+              13.743958377745003,
+              13.539458333980292,
+              13.521166634745896,
+              13.668416650034487,
+              13.584000000264496,
+              13.39916669530794,
+              13.67262500571087,
+              13.504666683729738,
+              13.377166644204408,
+              13.436666631605476
+            ]
+          },
+          "nodes": 2000,
+          "sorted_serialization": {
+            "median_ms": 7.235145865706727,
+            "p95_ms": 7.483958383090794,
+            "samples_ms": [
+              10.764583304990083,
+              6.948916707187891,
+              6.977249984629452,
+              7.091541716363281,
+              7.193291676230729,
+              7.173749967478216,
+              7.160708366427571,
+              7.108416699338704,
+              7.334708352573216,
+              7.359708310104907,
+              7.351833337452263,
+              7.168125011958182,
+              7.421749993227422,
+              7.483958383090794,
+              7.066166668664664,
+              7.401583308819681,
+              6.97937497170642,
+              7.277000055182725,
+              7.287000014912337,
+              7.362333300989121
+            ]
+          }
+        },
+        {
+          "commit": {
+            "median_ms": 40.91377084841952,
+            "p95_ms": 43.35587500827387,
+            "samples_ms": [
+              50.64774997299537,
+              41.189291689079255,
+              40.68766668206081,
+              41.02974996203557,
+              40.69487500237301,
+              40.502666670363396,
+              41.20133328251541,
+              41.53262497857213,
+              39.83654163312167,
+              41.63504170719534,
+              43.35587500827387,
+              40.76620831619948,
+              40.577166713774204,
+              40.91416666051373,
+              40.68083333550021,
+              41.229624999687076,
+              41.30099999019876,
+              40.30562500702217,
+              40.650416631251574,
+              40.913375036325306
+            ]
+          },
+          "open": {
+            "median_ms": 65.68170833634213,
+            "p95_ms": 66.16337498417124,
+            "samples_ms": [
+              65.77325001126155,
+              65.34804165130481,
+              64.95849997736514,
+              65.16866671154276,
+              64.9247916880995,
+              66.0002083168365,
+              65.90387504547834,
+              64.76954161189497,
+              65.98179164575413,
+              65.20766665926203,
+              65.74520835420117,
+              65.90354163199663,
+              65.68724999669939,
+              65.53095835261047,
+              65.4367083334364,
+              66.16337498417124,
+              66.25720835290849,
+              65.9285833244212,
+              65.65445836167783,
+              65.67616667598486
+            ]
+          },
+          "nodes": 10000,
+          "sorted_serialization": {
+            "median_ms": 36.87777082086541,
+            "p95_ms": 37.541499943472445,
+            "samples_ms": [
+              36.66237503057346,
+              36.67516668792814,
+              37.25679166382179,
+              36.304166656918824,
+              37.0953333331272,
+              37.451291689649224,
+              36.416458315216005,
+              37.00441669207066,
+              37.93975000735372,
+              36.50587500305846,
+              37.541499943472445,
+              36.63262497866526,
+              37.42233332013711,
+              36.9485417031683,
+              36.914041673298925,
+              36.57737502362579,
+              36.84149996843189,
+              36.617624980863184,
+              37.07933332771063,
+              36.83245833963156
+            ]
+          }
+        }
+      ],
+      "workload": "20 synchronous durable commits editing one title; fixed synthetic pinned nodes; Release -O3; current libLiteCore",
+      "statistics": "median averages the two middle samples; p95 is nearest rank (19th of 20); aggregates corrected without changing raw measurements"
+    }
+  },
+  "engineFinal": {
+    "afterDiscard": {
+      "cpuSeconds": 3.2767085833333334,
+      "footprintMiB": 304.35091400146484,
+      "processes": 6,
+      "rssMiB": 772.984375,
+      "time": 1790856090.9667978
+    },
+    "cycleCount": 3,
+    "cycleLivingBrowsers": 1,
+    "cycleSamples": [
+      {
+        "cpuSeconds": 9.256765416666665,
+        "footprintMiB": 354.18119049072266,
+        "processes": 8,
+        "rssMiB": 1016.78125,
+        "time": 1790856145.567646
+      },
+      {
+        "cpuSeconds": 9.534489583333334,
+        "footprintMiB": 371.69683837890625,
+        "processes": 8,
+        "rssMiB": 1021,
+        "time": 1790856147.16753
+      },
+      {
+        "cpuSeconds": 9.930278125,
+        "footprintMiB": 359.91554260253906,
+        "processes": 8,
+        "rssMiB": 1017,
+        "time": 1790856148.967411
+      }
+    ],
+    "idleCPUPercent": 1.3388137624019687,
+    "memory1": {
+      "cpuSeconds": 1.5158424166666666,
+      "footprintMiB": 262.2724914550781,
+      "processes": 6,
+      "rssMiB": 706.0625,
+      "time": 1790856083.566978
+    },
+    "memory10": {
+      "cpuSeconds": 2.661827875,
+      "footprintMiB": 740.3305130004883,
+      "processes": 15,
+      "rssMiB": 1819.546875,
+      "time": 1790856083.966615
+    },
+    "memory50": {
+      "cpuSeconds": 6.493649083333333,
+      "footprintMiB": 2357.208625793457,
+      "processes": 55,
+      "rssMiB": 6583.09375,
+      "time": 1790856084.767386
+    },
+    "totalVerificationSeconds": 79.47867704200326
+  },
+  "limitations": [
+    "Fresh-process launch with warm OS caches; not reboot-cold launch.",
+    "Native samples measure 15 seconds after six seconds settling; one baseline sample per workload.",
+    "Mixed workload has three loopback origins/native windows: document, 100 ms canvas animation, storage application. Startup reports first DOM-ready beacon; sampling waits for all three.",
+    "RSS double-counts shared mappings; summed physical footprint is not precise system-wide used memory.",
+    "Network counts include only controlled fixture requests; no battery or all-traffic claim.",
+    "Engine final workload includes extra verification phases; native fixtures supply the controlled before/after comparison."
+  ],
+  "endurance": {
+    "completed": true,
+    "cycles": 3,
+    "measuredExecutionSeconds": 349.79281149909366,
+    "appSHA256": "306155e098c48004cc024e9775121be7d2615bb7d8f76866f1f8297e3e1b2877",
+    "runnerSHA256": "73daf79ff67aa9b22f973844eda540f4a3fc0774eaeb95552f182b3d10ab0ad9",
+    "scope": "fresh synthetic profile per phase; engine/native/stable native metrics",
+    "phases": [
+      {
+        "key": "1-engine",
+        "returncode": 0,
+        "elapsedSeconds": 77.57771883305395,
+        "cleanup": {
+          "processIDs": [],
+          "forcedProcessIDs": [],
+          "gracefulExit": true
+        },
+        "checks": 95,
+        "engineCycles": {
+          "cycleCount": 3,
+          "cycleLivingBrowsers": 1,
+          "cycleSamples": [
+            {
+              "cpuSeconds": 9.117784583333334,
+              "footprintMiB": 354.77494049072266,
+              "processes": 8,
+              "rssMiB": 1017.265625,
+              "time": 1790857046.318465
+            },
+            {
+              "cpuSeconds": 9.393424666666666,
+              "footprintMiB": 372.33748626708984,
+              "processes": 8,
+              "rssMiB": 1021.5625,
+              "time": 1790857047.9190469
+            },
+            {
+              "cpuSeconds": 9.80861875,
+              "footprintMiB": 360.64996337890625,
+              "processes": 8,
+              "rssMiB": 1018.5,
+              "time": 1790857049.719304
+            }
+          ],
+          "repeatedBrowsingCycles": true
+        }
+      },
+      {
+        "key": "1-native",
+        "returncode": 0,
+        "elapsedSeconds": 14.19625212502433,
+        "cleanup": {
+          "processIDs": [],
+          "forcedProcessIDs": [],
+          "gracefulExit": true
+        },
+        "checks": 35,
+        "engineCycles": {}
+      },
+      {
+        "key": "1-metrics",
+        "returncode": 0,
+        "elapsedSeconds": 24.587740167044103,
+        "cleanup": {
+          "processIDs": [],
+          "forcedProcessIDs": [],
+          "gracefulExit": true
+        },
+        "measurement": {
+          "workload": "native-2000-pin-single-loopback-page",
+          "nodes": 2000,
+          "architecture": "arm64",
+          "os": "26.5.2",
+          "launchToDOMReadySeconds": 1.7684196250047535,
+          "before": {
+            "processes": 6,
+            "rssMiB": 729.562,
+            "footprintMiB": 285.523,
+            "cpuSeconds": 2.004186,
+            "interruptWakeups": 553,
+            "diskReadBytes": 274432,
+            "diskWriteBytes": 5242880
+          },
+          "after": {
+            "processes": 6,
+            "rssMiB": 729.656,
+            "footprintMiB": 281.46,
+            "cpuSeconds": 2.164988,
+            "interruptWakeups": 1348,
+            "diskReadBytes": 274432,
+            "diskWriteBytes": 5472256
+          },
+          "sampleSeconds": 15.019536792009603,
+          "cpuPercentOneCore": 1.070618902745037,
+          "interruptWakeupsPerSecond": 52.93105979293184,
+          "idleFixtureRequests": 0,
+          "networkScope": "fixture requests only; no system-wide traffic capture",
+          "fixtureRequests": 6,
+          "gracefulExit": true
+        }
+      },
+      {
+        "key": "2-engine",
+        "returncode": 0,
+        "elapsedSeconds": 78.08213066699682,
+        "cleanup": {
+          "processIDs": [],
+          "forcedProcessIDs": [],
+          "gracefulExit": true
+        },
+        "checks": 95,
+        "engineCycles": {
+          "cycleCount": 3,
+          "cycleLivingBrowsers": 1,
+          "cycleSamples": [
+            {
+              "cpuSeconds": 8.955648958333335,
+              "footprintMiB": 360.7594757080078,
+              "processes": 8,
+              "rssMiB": 1013.859375,
+              "time": 1790857162.486011
+            },
+            {
+              "cpuSeconds": 9.230572666666665,
+              "footprintMiB": 373.3844528198242,
+              "processes": 8,
+              "rssMiB": 1017.265625,
+              "time": 1790857164.08552
+            },
+            {
+              "cpuSeconds": 9.650575458333334,
+              "footprintMiB": 361.4157257080078,
+              "processes": 8,
+              "rssMiB": 1013.203125,
+              "time": 1790857165.886695
+            }
+          ],
+          "repeatedBrowsingCycles": true
+        }
+      },
+      {
+        "key": "2-native",
+        "returncode": 0,
+        "elapsedSeconds": 14.28617412497988,
+        "cleanup": {
+          "processIDs": [],
+          "forcedProcessIDs": [],
+          "gracefulExit": true
+        },
+        "checks": 35,
+        "engineCycles": {}
+      },
+      {
+        "key": "2-metrics",
+        "returncode": 0,
+        "elapsedSeconds": 24.574823291040957,
+        "cleanup": {
+          "processIDs": [],
+          "forcedProcessIDs": [],
+          "gracefulExit": true
+        },
+        "measurement": {
+          "workload": "native-2000-pin-single-loopback-page",
+          "nodes": 2000,
+          "architecture": "arm64",
+          "os": "26.5.2",
+          "launchToDOMReadySeconds": 1.7264128340175375,
+          "before": {
+            "processes": 6,
+            "rssMiB": 729.375,
+            "footprintMiB": 283.819,
+            "cpuSeconds": 2.025896,
+            "interruptWakeups": 756,
+            "diskReadBytes": 155648,
+            "diskWriteBytes": 5238784
+          },
+          "after": {
+            "processes": 6,
+            "rssMiB": 729.453,
+            "footprintMiB": 279.772,
+            "cpuSeconds": 2.257573,
+            "interruptWakeups": 1995,
+            "diskReadBytes": 155648,
+            "diskWriteBytes": 5468160
+          },
+          "sampleSeconds": 15.012495792005211,
+          "cpuPercentOneCore": 1.5432277431403358,
+          "interruptWakeupsPerSecond": 82.53124711347596,
+          "idleFixtureRequests": 0,
+          "networkScope": "fixture requests only; no system-wide traffic capture",
+          "fixtureRequests": 6,
+          "gracefulExit": true
+        }
+      },
+      {
+        "key": "3-engine",
+        "returncode": 0,
+        "elapsedSeconds": 77.97234641696559,
+        "cleanup": {
+          "processIDs": [],
+          "forcedProcessIDs": [],
+          "gracefulExit": true
+        },
+        "checks": 95,
+        "engineCycles": {
+          "cycleCount": 3,
+          "cycleLivingBrowsers": 1,
+          "cycleSamples": [
+            {
+              "cpuSeconds": 9.02152625,
+              "footprintMiB": 356.52494049072266,
+              "processes": 8,
+              "rssMiB": 1015.640625,
+              "time": 1790857279.664791
+            },
+            {
+              "cpuSeconds": 9.289118791666667,
+              "footprintMiB": 375.04051971435547,
+              "processes": 8,
+              "rssMiB": 1019,
+              "time": 1790857281.2661262
+            },
+            {
+              "cpuSeconds": 9.643426083333335,
+              "footprintMiB": 368.64991760253906,
+              "processes": 8,
+              "rssMiB": 1019.03125,
+              "time": 1790857282.865166
+            }
+          ],
+          "repeatedBrowsingCycles": true
+        }
+      },
+      {
+        "key": "3-native",
+        "returncode": 0,
+        "elapsedSeconds": 14.312438833003398,
+        "cleanup": {
+          "processIDs": [],
+          "forcedProcessIDs": [],
+          "gracefulExit": true
+        },
+        "checks": 35,
+        "engineCycles": {}
+      },
+      {
+        "key": "3-metrics",
+        "returncode": 0,
+        "elapsedSeconds": 24.20318704098463,
+        "cleanup": {
+          "processIDs": [],
+          "forcedProcessIDs": [],
+          "gracefulExit": true
+        },
+        "measurement": {
+          "workload": "native-2000-pin-single-loopback-page",
+          "nodes": 2000,
+          "architecture": "arm64",
+          "os": "26.5.2",
+          "launchToDOMReadySeconds": 1.4411570000229403,
+          "before": {
+            "processes": 6,
+            "rssMiB": 730.547,
+            "footprintMiB": 286.757,
+            "cpuSeconds": 1.914951,
+            "interruptWakeups": 545,
+            "diskReadBytes": 393216,
+            "diskWriteBytes": 5242880
+          },
+          "after": {
+            "processes": 6,
+            "rssMiB": 730.594,
+            "footprintMiB": 282.632,
+            "cpuSeconds": 2.0879,
+            "interruptWakeups": 1320,
+            "diskReadBytes": 393216,
+            "diskWriteBytes": 5541888
+          },
+          "sampleSeconds": 15.01560949999839,
+          "cpuPercentOneCore": 1.1517947373366253,
+          "interruptWakeupsPerSecond": 51.61295650370257,
+          "idleFixtureRequests": 0,
+          "networkScope": "fixture requests only; no system-wide traffic capture",
+          "fixtureRequests": 6,
+          "gracefulExit": true
+        }
+      }
+    ]
+  }
+}

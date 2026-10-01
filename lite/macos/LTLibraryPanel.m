@@ -40,6 +40,7 @@
         _search = [NSSearchField new];
         _search.placeholderString =
             [mode isEqual:@"history"] ? @"Search history" : @"Search downloads";
+        _search.accessibilityLabel = _search.placeholderString;
         _search.delegate = self;
         [_content addArrangedSubview:_search];
         [_search.widthAnchor constraintEqualToAnchor:_content.widthAnchor].active = YES;
@@ -53,6 +54,7 @@
         _table.target = self;
         _table.doubleAction = @selector(open:);
         _table.style = NSTableViewStyleFullWidth;
+        _table.accessibilityLabel = [mode isEqual:@"history"] ? @"Browsing history" : @"Downloads";
         NSScrollView *scroll = [NSScrollView new];
         scroll.documentView = _table;
         scroll.hasVerticalScroller = YES;
@@ -77,6 +79,7 @@
         [p addItemsWithTitles:[setting subarrayWithRange:NSMakeRange(2, setting.count - 2)]];
         [p selectItemWithTitle:_store.profile.settings[setting[1]]];
         p.identifier = setting[1];
+        p.accessibilityLabel = setting[0];
         p.target = self;
         p.action = @selector(setting:);
         [_content addArrangedSubview:LTStack(@[ LTLabel(setting[0], 13, NSFontWeightMedium), p ],
@@ -110,7 +113,9 @@
     privacy.textColor = NSColor.secondaryLabelColor;
     [_content addArrangedSubview:privacy];
     NSTextField *about =
-        LTLabel(@"Lite 0.1 · Chromium 154 · Native AppKit\nDevelopment build — not notarized", 11,
+        LTLabel([NSString stringWithFormat:@"Lite %@ · Chromium 154 · Native AppKit\n%@",
+                  [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"] ?: @"0.1",
+                  [[NSBundle.mainBundle objectForInfoDictionaryKey:@"LiteDistribution"] isEqual:@"DeveloperID"] ? @"Developer ID distribution build" : @"Local development build"], 11,
                 NSFontWeightRegular);
     about.maximumNumberOfLines = 0;
     about.textColor = NSColor.tertiaryLabelColor;
@@ -169,11 +174,14 @@
     NSDictionary *r = _rows[row];
     BOOL history = [_mode isEqual:@"history"];
     NSString *detail = history                      ? r[@"url"]
+                       : [r[@"securityError"] length] ? r[@"securityError"]
                        : [r[@"complete"] boolValue] ? @"Complete — double-click to open"
+                       : [r[@"interrupted"] boolValue] ? r[@"reason"] ?: @"Interrupted — download again from the website"
                        : [r[@"canceled"] boolValue] ? @"Canceled"
                        : [r[@"paused"] boolValue]
                            ? @"Paused"
-                           : [NSString stringWithFormat:@"Downloading · %@%%", r[@"percent"]];
+                           : [r[@"percent"] integerValue] >= 0 ? [NSString stringWithFormat:@"Downloading · %@%%", r[@"percent"]]
+                           : [NSString stringWithFormat:@"Downloading · %@", [NSByteCountFormatter stringFromByteCount:[r[@"received"] longLongValue] countStyle:NSByteCountFormatterCountStyleFile]];
     NSTextField *title = LTLabel(history ? r[@"title"] : r[@"name"], 13, NSFontWeightMedium),
                 *sub = LTLabel(detail, 11, NSFontWeightRegular);
     sub.textColor = NSColor.secondaryLabelColor;
@@ -195,13 +203,17 @@
     if ([_mode isEqual:@"history"]) {
         self.openURL(r[@"url"]);
         [self.window orderOut:nil];
-    } else if ([r[@"complete"] boolValue])
-        [NSWorkspace.sharedWorkspace openURL:[NSURL fileURLWithPath:r[@"path"]]];
+    } else if ([r[@"complete"] boolValue]) {
+        if (![r[@"quarantined"] boolValue])
+            LTAlert(self.window, @"Download security metadata is unavailable", @"Lite could not verify this file’s quarantine metadata. It will not open the file automatically. You can reveal it in Finder to inspect it.");
+        else [NSWorkspace.sharedWorkspace openURL:[NSURL fileURLWithPath:r[@"path"]]];
+    }
 }
 - (void)delete:(id)s {
     NSDictionary *r = [self selection];
     if (r) {
-        [_store deleteHistoryURL:r[@"url"]];
+        NSError *error = nil;
+        if (![_store deleteHistoryURL:r[@"url"] error:&error]) LTAlert(self.window, @"Could not finish deleting history", error.localizedDescription);
         [self refresh];
     }
 }
@@ -219,7 +231,9 @@
                     double delta = range.indexOfSelectedItem == 0   ? 3600
                                    : range.indexOfSelectedItem == 1 ? 86400
                                                                     : DBL_MAX;
-                    [self->_store clearHistorySince:NSDate.date.timeIntervalSince1970 - delta];
+                    NSError *error = nil;
+                    if (![self->_store clearHistorySince:NSDate.date.timeIntervalSince1970 - delta error:&error])
+                        LTAlert(self.window, @"Could not finish clearing history", error.localizedDescription);
                     [self refresh];
                 }
               }];
@@ -232,8 +246,9 @@
 }
 - (void)pause:(id)s {
     NSDictionary *r = [self selection];
-    if (r)
-        self.downloadAction(r, [r[@"paused"] boolValue] ? @"resume" : @"pause");
+    if ([r[@"paused"] boolValue] || [r[@"canResume"] boolValue]) self.downloadAction(r, @"resume");
+    else if ([r[@"active"] boolValue]) self.downloadAction(r, @"pause");
+    else if ([r[@"interrupted"] boolValue]) LTAlert(self.window, @"Download cannot be resumed", r[@"reason"] ?: @"Return to the original website and start the download again. Lite does not replay requests automatically.");
 }
 - (void)cancel:(id)s {
     NSDictionary *r = [self selection];
