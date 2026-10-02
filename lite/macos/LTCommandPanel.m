@@ -29,11 +29,12 @@
         panel.delegate = self;
         NSVisualEffectView *root = [NSVisualEffectView new];
         root.material = NSVisualEffectMaterialPopover;
+        root.blendingMode = NSVisualEffectBlendingModeBehindWindow;
         root.state = NSVisualEffectStateActive;
         panel.contentView = root;
         _field = [NSSearchField new];
         _field.placeholderString = @"Search tabs, enter a URL, or type a command";
-        _field.font = [NSFont systemFontOfSize:20 weight:NSFontWeightRegular];
+        _field.font = [NSFont systemFontOfSize:19 weight:NSFontWeightRegular];
         ((NSSearchFieldCell *)_field.cell).searchButtonCell = nil;
         _field.bordered = NO;
         _field.focusRingType = NSFocusRingTypeNone;
@@ -43,20 +44,23 @@
             [NSImageView imageViewWithImage:[NSImage imageWithSystemSymbolName:@"magnifyingglass"
                                                       accessibilityDescription:nil]];
         searchIcon.contentTintColor = NSColor.secondaryLabelColor;
+        searchIcon.symbolConfiguration =
+            [NSImageSymbolConfiguration configurationWithPointSize:18 weight:NSFontWeightRegular];
         [searchIcon.widthAnchor constraintEqualToConstant:22].active = YES;
         [searchIcon.heightAnchor constraintEqualToConstant:22].active = YES;
         NSStackView *searchRow =
             LTStack(@[ searchIcon, _field ], NSUserInterfaceLayoutOrientationHorizontal, 12);
+        searchRow.edgeInsets = NSEdgeInsetsMake(0, 6, 0, 6);
         [_field setContentCompressionResistancePriority:250
                                          forOrientation:NSLayoutConstraintOrientationHorizontal];
         _table = [NSTableView new];
         NSTableColumn *c = [[NSTableColumn alloc] initWithIdentifier:@"result"];
         [_table addTableColumn:c];
         _table.headerView = nil;
-        _table.rowHeight = 50;
-        _table.intercellSpacing = NSMakeSize(0, 2);
+        _table.rowHeight = 52;
+        _table.intercellSpacing = NSMakeSize(0, 4);
         _table.backgroundColor = NSColor.clearColor;
-        _table.style = NSTableViewStyleFullWidth;
+        _table.style = NSTableViewStyleInset;
         _table.delegate = self;
         _table.dataSource = self;
         _table.target = self;
@@ -65,16 +69,17 @@
         NSScrollView *scroll = [NSScrollView new];
         scroll.documentView = _table;
         scroll.hasVerticalScroller = YES;
+        scroll.autohidesScrollers = YES;
+        scroll.borderType = NSNoBorder;
         scroll.drawsBackground = NO;
         NSTextField *hint =
-            LTLabel(@"↑ ↓ to navigate     ↵ to open     esc to dismiss", 11, NSFontWeightRegular);
+            LTLabel(@"↑↓ Navigate     ↵ Open     Esc Close", 11, NSFontWeightRegular);
         hint.textColor = NSColor.secondaryLabelColor;
         NSStackView *stack =
-            LTStack(@[ searchRow, scroll, hint ], NSUserInterfaceLayoutOrientationVertical, 14);
-        stack.edgeInsets = NSEdgeInsetsMake(12, 12, 8, 12);
-        LTPin(stack, root, 14);
-        [searchRow.widthAnchor constraintEqualToAnchor:stack.widthAnchor constant:-24].active = YES;
-        [searchRow.heightAnchor constraintEqualToConstant:40].active = YES;
+            LTStack(@[ searchRow, scroll, hint ], NSUserInterfaceLayoutOrientationVertical, 12);
+        LTPin(stack, root, 16);
+        [searchRow.widthAnchor constraintEqualToAnchor:stack.widthAnchor].active = YES;
+        [searchRow.heightAnchor constraintEqualToConstant:44].active = YES;
         [_field.heightAnchor constraintEqualToConstant:28].active = YES;
         [scroll.widthAnchor constraintEqualToAnchor:searchRow.widthAnchor].active = YES;
     }
@@ -83,7 +88,15 @@
 - (void)presentForWindow:(NSWindow *)window initial:(NSString *)text {
     _owner = window;
     NSRect frame = window.frame;
-    [self.window setFrameOrigin:NSMakePoint(NSMidX(frame) - 325, NSMaxY(frame) - 520)];
+    NSScreen *screen = window.screen ?: NSScreen.mainScreen;
+    NSRect available = NSInsetRect(screen.visibleFrame, 16, 16);
+    NSSize size = NSMakeSize(MIN(650, MIN(NSWidth(frame) - 32, NSWidth(available))),
+                            MIN(430, MIN(NSHeight(frame) - 32, NSHeight(available))));
+    NSPoint origin = NSMakePoint(NSMidX(frame) - size.width / 2,
+                                MAX(NSMinY(frame) + 16, NSMaxY(frame) - 80 - size.height));
+    origin.x = MAX(NSMinX(available), MIN(origin.x, NSMaxX(available) - size.width));
+    origin.y = MAX(NSMinY(available), MIN(origin.y, NSMaxY(available) - size.height));
+    [self.window setFrame:NSMakeRect(origin.x, origin.y, size.width, size.height) display:NO];
     [window addChildWindow:self.window ordered:NSWindowAbove];
     _field.stringValue = text;
     [self refresh];
@@ -114,15 +127,19 @@
         [NSImageView imageViewWithImage:[NSImage imageWithSystemSymbolName:r[@"icon"]
                                                   accessibilityDescription:nil]];
     icon.contentTintColor = NSColor.secondaryLabelColor;
-    [icon.widthAnchor constraintEqualToConstant:24].active = YES;
+    icon.symbolConfiguration =
+        [NSImageSymbolConfiguration configurationWithPointSize:16 weight:NSFontWeightRegular];
+    [icon.widthAnchor constraintEqualToConstant:20].active = YES;
+    [icon.heightAnchor constraintEqualToConstant:20].active = YES;
     NSTextField *title = LTLabel(r[@"title"], 13, NSFontWeightMedium),
-                *detail = LTLabel(r[@"detail"], 11, NSFontWeightRegular);
+                *detail = LTLabel(r[@"detail"], 12, NSFontWeightRegular);
     detail.textColor = NSColor.secondaryLabelColor;
     NSStackView *text = LTStack(@[ title, detail ], NSUserInterfaceLayoutOrientationVertical, 3);
     NSStackView *v = LTStack(@[ icon, text ], NSUserInterfaceLayoutOrientationHorizontal, 12);
-    v.edgeInsets = NSEdgeInsetsMake(4, 10, 4, 10);
-    [title.widthAnchor constraintLessThanOrEqualToConstant:520].active = YES;
-    [detail.widthAnchor constraintLessThanOrEqualToConstant:520].active = YES;
+    v.edgeInsets = NSEdgeInsetsMake(6, 8, 6, 8);
+    [text.widthAnchor constraintEqualToAnchor:v.widthAnchor constant:-48].active = YES;
+    [title.widthAnchor constraintEqualToAnchor:text.widthAnchor].active = YES;
+    [detail.widthAnchor constraintEqualToAnchor:text.widthAnchor].active = YES;
     return v;
 }
 - (BOOL)control:(NSControl *)control textView:(NSTextView *)view doCommandBySelector:(SEL)selector {

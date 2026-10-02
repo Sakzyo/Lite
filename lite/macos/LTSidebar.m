@@ -24,7 +24,7 @@
         self.material = NSVisualEffectMaterialSidebar;
         self.blendingMode = NSVisualEffectBlendingModeBehindWindow;
         self.state = NSVisualEffectStateFollowsWindowActiveState;
-        _favorites = LTStack(@[], NSUserInterfaceLayoutOrientationVertical, 6);
+        _favorites = LTStack(@[], NSUserInterfaceLayoutOrientationVertical, 8);
         _spaceName = LTLabel(@"Personal", 13, NSFontWeightSemibold);
         NSButton *more = LTButton(@"ellipsis", @"Space actions", self, @selector(spaceMenu:));
         NSView *spacer = [NSView new];
@@ -67,14 +67,23 @@
         scroll.menu = backgroundMenu;
         scroll.documentView = _tree;
         scroll.hasVerticalScroller = YES;
+        scroll.autohidesScrollers = YES;
         scroll.drawsBackground = NO;
-        NSButton *newTab = [NSButton buttonWithTitle:@"＋  New Tab"
-                                              target:self
-                                              action:@selector(search:)];
-        newTab.bordered = NO;
+        NSButton *newTab = [NSButton buttonWithTitle:@"New Tab"
+                                             image:[NSImage imageWithSystemSymbolName:@"plus"
+                                                              accessibilityDescription:nil]
+                                            target:self
+                                            action:@selector(search:)];
+        newTab.bezelStyle = NSBezelStyleRecessed;
+        newTab.showsBorderOnlyWhileMouseInside = YES;
+        newTab.imagePosition = NSImageLeading;
+        newTab.symbolConfiguration = [NSImageSymbolConfiguration configurationWithPointSize:12
+                                                                                    weight:NSFontWeightMedium];
         newTab.alignment = NSTextAlignmentLeft;
-        newTab.font = [NSFont systemFontOfSize:12];
+        newTab.font = [NSFont systemFontOfSize:13];
         newTab.contentTintColor = NSColor.secondaryLabelColor;
+        newTab.accessibilityLabel = @"New Tab";
+        [newTab.heightAnchor constraintEqualToConstant:32].active = YES;
         _spaces = LTStack(@[], NSUserInterfaceLayoutOrientationHorizontal, 4);
         NSStackView *utilities = LTStack(
             @[
@@ -121,7 +130,7 @@
     for (NSUInteger i = 0; i < favorites.count; i++) {
         LTNode *n = favorites[i];
         if (i % 4 == 0) {
-            row = LTStack(@[], NSUserInterfaceLayoutOrientationHorizontal, 6);
+            row = LTStack(@[], NSUserInterfaceLayoutOrientationHorizontal, 8);
             [_favorites addArrangedSubview:row];
         }
         LTDropButton *b = [[LTDropButton alloc] initWithFrame:NSZeroRect];
@@ -130,7 +139,10 @@
                       ?: [NSImage imageWithSystemSymbolName:@"globe"
                                    accessibilityDescription:n.displayTitle];
         b.imageScaling = NSImageScaleProportionallyDown;
+        b.imagePosition = NSImageOnly;
         b.bezelStyle = NSBezelStyleTexturedRounded;
+        b.buttonType = NSButtonTypePushOnPushOff;
+        b.state = [n.identifier isEqual:selectedID] ? NSControlStateValueOn : NSControlStateValueOff;
         b.toolTip = n.displayTitle;
         b.accessibilityLabel = n.displayTitle;
         b.target = self;
@@ -165,8 +177,8 @@
     for (LTSpace *s in _store.profile.spaces) {
         LTDropButton *b = [[LTDropButton alloc] initWithFrame:NSZeroRect];
         b.title = [s.name substringToIndex:MIN((NSUInteger)2, s.name.length)];
-        b.font = [NSFont systemFontOfSize:11 weight:NSFontWeightSemibold];
-        b.bezelStyle = NSBezelStyleRecessed;
+        b.font = [NSFont systemFontOfSize:12 weight:NSFontWeightSemibold];
+        b.bezelStyle = NSBezelStyleTexturedRounded;
         b.buttonType = NSButtonTypePushOnPushOff;
         b.state = [s.identifier isEqual:spaceID] ? NSControlStateValueOn : NSControlStateValueOff;
         b.toolTip = s.name;
@@ -175,6 +187,7 @@
         b.target = self;
         b.action = @selector(switchSpace:);
         [b.widthAnchor constraintEqualToConstant:32].active = YES;
+        [b.heightAnchor constraintEqualToConstant:28].active = YES;
         __weak typeof(self) weak = self;
         b.drop = ^(NSString *identifier) {
           [weak commit:^(LTProfile *p) {
@@ -254,8 +267,8 @@
                    item:(id)item {
     if ([item isKindOfClass:NSString.class]) {
         NSTextField *t =
-            LTLabel([item isEqual:@"Pinned"] ? @"PINNED" : @"TABS", 10, NSFontWeightSemibold);
-        t.textColor = NSColor.tertiaryLabelColor;
+            LTLabel([item isEqual:@"Pinned"] ? @"Pinned" : @"Tabs", 11, NSFontWeightSemibold);
+        t.textColor = NSColor.secondaryLabelColor;
         return t;
     }
     LTNode *n = [_store.profile node:((LTNode *)item).identifier] ?: item;
@@ -271,7 +284,7 @@
         cell = [LTSidebarCell new];
         cell.identifier = @"row";
         NSImageView *icon = [NSImageView new];
-        NSTextField *title = LTLabel(@"", 12, NSFontWeightRegular);
+        NSTextField *title = LTLabel(@"", 13, NSFontWeightRegular);
         NSButton *close = [NSButton buttonWithImage:[NSImage imageWithSystemSymbolName:@"xmark"
                                                            accessibilityDescription:@"Close tab"]
                                            target:self action:@selector(closeTab:)];

@@ -38,6 +38,21 @@
 }
 @end
 
+@interface LTContentSurface : NSView
+@end
+@implementation LTContentSurface
+- (BOOL)wantsUpdateLayer {
+    return YES;
+}
+- (void)updateLayer {
+    self.layer.backgroundColor = NSColor.textBackgroundColor.CGColor;
+}
+- (void)viewDidChangeEffectiveAppearance {
+    [super viewDidChangeEffectiveAppearance];
+    self.needsDisplay = YES;
+}
+@end
+
 @interface LTWindowDragArea : NSView
 @end
 @implementation LTWindowDragArea
@@ -86,10 +101,10 @@
     NSView *_content;
     NSView *_landing;
     NSView *_parking;
-    NSButton *_address, *_back, *_forward, *_reload, *_media, *_shield;
+    NSButton *_address, *_back, *_forward, *_reload, *_media, *_shield, *_security;
     NSTextField *_error;
     NSSearchField *_find;
-    NSStackView *_findBar;
+    NSVisualEffectView *_findBar;
     LTCommandPanel *_command;
     LTLibraryPanel *_library;
     LTFaviconCache *_icons;
@@ -221,12 +236,12 @@
     _back = LTButton(@"chevron.left", @"Back", self, @selector(back:));
     _forward = LTButton(@"chevron.right", @"Forward", self, @selector(forward:));
     _reload = LTButton(@"arrow.clockwise", @"Reload", self, @selector(reload:));
-    _address = [NSButton buttonWithTitle:@"Search or enter URL"
+    _address = [NSButton buttonWithTitle:@"Search or enter address"
                                   target:self
                                   action:@selector(address:)];
     _address.bordered = NO;
-    _address.font = [NSFont systemFontOfSize:12];
-    _address.contentTintColor = NSColor.secondaryLabelColor;
+    _address.font = [NSFont systemFontOfSize:13];
+    _address.contentTintColor = NSColor.labelColor;
     _address.lineBreakMode = NSLineBreakByTruncatingMiddle;
     _address.alignment = NSTextAlignmentLeft;
     _address.accessibilityLabel = @"Address";
@@ -234,10 +249,13 @@
                                        forOrientation:NSLayoutConstraintOrientationHorizontal];
     _media = LTButton(@"play.rectangle", @"Media controls", self, @selector(media:));
     _shield = LTButton(@"shield.lefthalf.filled", @"Content blocking", self, @selector(contentBlocking:));
-    NSButton *security =
+    _security =
         LTButton(@"info.circle", @"Site information and permissions", self, @selector(siteInfo:));
+    NSView *navigationSpace = [NSView new];
+    [navigationSpace setContentHuggingPriority:1
+                               forOrientation:NSLayoutConstraintOrientationHorizontal];
     NSArray *controls = @[
-        _back, _forward, _reload, security, _shield, _media,
+        _back, _forward, _reload, navigationSpace, _media,
         LTButton(@"rectangle.split.2x1", @"Split View", self, @selector(split:)),
         LTButton(@"square.and.arrow.up", @"Share page", self, @selector(share:))
     ];
@@ -252,10 +270,22 @@
         [badge.centerYAnchor constraintEqualToAnchor:dragArea.centerYAnchor].active = YES;
     }
     NSStackView *navigation = LTStack(controls, NSUserInterfaceLayoutOrientationHorizontal, 2);
+    NSStackView *addressRow =
+        LTStack(@[ _security, _address, _shield ], NSUserInterfaceLayoutOrientationHorizontal, 2);
+    NSBox *addressWell = [NSBox new];
+    addressWell.boxType = NSBoxCustom;
+    addressWell.titlePosition = NSNoTitle;
+    addressWell.borderWidth = 0;
+    addressWell.fillColor = NSColor.controlBackgroundColor;
+    addressWell.cornerRadius = 9;
+    addressWell.contentViewMargins = NSZeroSize;
+    LTPin(addressRow, addressWell.contentView, 4);
     NSStackView *header =
-        LTStack(@[ dragArea, navigation, _address ], NSUserInterfaceLayoutOrientationVertical, 4);
+        LTStack(@[ dragArea, navigation, addressWell ], NSUserInterfaceLayoutOrientationVertical, 8);
     [dragArea.widthAnchor constraintEqualToAnchor:header.widthAnchor].active = YES;
-    [_address.widthAnchor constraintEqualToAnchor:header.widthAnchor].active = YES;
+    [navigation.widthAnchor constraintEqualToAnchor:header.widthAnchor].active = YES;
+    [addressWell.widthAnchor constraintEqualToAnchor:header.widthAnchor].active = YES;
+    [addressWell.heightAnchor constraintEqualToConstant:36].active = YES;
     [_address.heightAnchor constraintEqualToConstant:28].active = YES;
     _layout = [[NSSplitView alloc] initWithFrame:NSZeroRect];
     _layout.vertical = YES;
@@ -319,11 +349,10 @@
     _sidebarHost.accessibilityLabel = @"Browser sidebar";
     _sidebarHost.wantsLayer = YES;
     [_layout addSubview:_sidebarHost];
-    _content = [NSView new];
+    _content = [LTContentSurface new];
     [_layout addSubview:_content];
     _content.wantsLayer = YES;
     _content.layer.masksToBounds = YES;
-    _content.layer.backgroundColor = NSColor.textBackgroundColor.CGColor;
     _webSplit = [[LTContentSplit alloc] initWithFrame:NSZeroRect];
     _webSplit.vertical = _verticalSplit;
     _webSplit.dividerStyle = NSSplitViewDividerStyleThin;
@@ -341,30 +370,42 @@
     NSImageView *logo =
         [NSImageView imageViewWithImage:[NSImage imageWithSystemSymbolName:@"leaf"
                                                   accessibilityDescription:@"Lite"]];
-    logo.contentTintColor = [NSColor colorWithRed:0.32 green:0.52 blue:0.47 alpha:1];
+    logo.contentTintColor = NSColor.controlAccentColor;
     [logo.widthAnchor constraintEqualToConstant:58].active = YES;
     [logo.heightAnchor constraintEqualToConstant:58].active = YES;
     NSTextField *brand =
-        LTLabel(_store.privateMode ? @"A private space." : @"A little room to think.", 29,
-                NSFontWeightMedium);
+        LTLabel(_store.privateMode ? @"A private space." : @"A little room to think.", 28,
+                NSFontWeightSemibold);
+    brand.alignment = NSTextAlignmentCenter;
+    brand.maximumNumberOfLines = 2;
+    brand.lineBreakMode = NSLineBreakByWordWrapping;
     NSTextField *hint =
         LTLabel(_store.privateMode ? @"History and cookies from this window stay temporary."
                                    : @"Your tabs, your Spaces. Everything in its place.",
                 13, NSFontWeightRegular);
     hint.textColor = NSColor.secondaryLabelColor;
-    NSButton *start = [NSButton buttonWithTitle:@"Search or enter URL     ⌘T"
+    hint.alignment = NSTextAlignmentCenter;
+    hint.maximumNumberOfLines = 2;
+    hint.lineBreakMode = NSLineBreakByWordWrapping;
+    NSButton *start = [NSButton buttonWithTitle:@"Search or Enter Address"
                                          target:self
                                          action:@selector(newTab:)];
     start.bezelStyle = NSBezelStyleRounded;
     start.controlSize = NSControlSizeLarge;
+    start.image = [NSImage imageWithSystemSymbolName:@"magnifyingglass"
+                          accessibilityDescription:nil];
+    start.imagePosition = NSImageLeft;
     NSStackView *welcome =
-        LTStack(@[ logo, brand, hint, start ], NSUserInterfaceLayoutOrientationVertical, 18);
+        LTStack(@[ logo, brand, hint, start ], NSUserInterfaceLayoutOrientationVertical, 16);
     welcome.alignment = NSLayoutAttributeCenterX;
     welcome.translatesAutoresizingMaskIntoConstraints = NO;
     [_landing addSubview:welcome];
     [NSLayoutConstraint activateConstraints:@[
         [welcome.centerXAnchor constraintEqualToAnchor:_landing.centerXAnchor],
-        [welcome.centerYAnchor constraintEqualToAnchor:_landing.centerYAnchor constant:-24]
+        [welcome.centerYAnchor constraintEqualToAnchor:_landing.centerYAnchor constant:-24],
+        [welcome.widthAnchor constraintLessThanOrEqualToAnchor:_landing.widthAnchor constant:-48],
+        [brand.widthAnchor constraintLessThanOrEqualToAnchor:welcome.widthAnchor],
+        [hint.widthAnchor constraintLessThanOrEqualToAnchor:welcome.widthAnchor]
     ]];
     _error = LTLabel(@"", 12, NSFontWeightMedium);
     _error.textColor = NSColor.systemRedColor;
@@ -383,18 +424,23 @@
     _find.target = self;
     _find.action = @selector(findNext:);
     [_find.widthAnchor constraintEqualToConstant:220].active = YES;
-    _findBar = LTStack(
+    NSStackView *findControls = LTStack(
         @[
             _find, LTButton(@"chevron.up", @"Previous match", self, @selector(findPrevious:)),
             LTButton(@"chevron.down", @"Next match", self, @selector(findNext:)),
             LTButton(@"xmark", @"Close find", self, @selector(closeFind:))
         ],
         NSUserInterfaceLayoutOrientationHorizontal, 5);
+    _findBar = [NSVisualEffectView new];
+    _findBar.material = NSVisualEffectMaterialPopover;
+    _findBar.blendingMode = NSVisualEffectBlendingModeWithinWindow;
+    _findBar.state = NSVisualEffectStateFollowsWindowActiveState;
     _findBar.hidden = YES;
     _findBar.wantsLayer = YES;
-    _findBar.layer.backgroundColor = NSColor.windowBackgroundColor.CGColor;
-    _findBar.layer.cornerRadius = 8;
-    _findBar.edgeInsets = NSEdgeInsetsMake(6, 8, 6, 8);
+    _findBar.layer.cornerRadius = 10;
+    _findBar.layer.masksToBounds = YES;
+    findControls.edgeInsets = NSEdgeInsetsMake(8, 10, 8, 10);
+    LTPin(findControls, _findBar, 0);
     _findBar.translatesAutoresizingMaskIntoConstraints = NO;
     [root addSubview:_findBar];
     [NSLayoutConstraint activateConstraints:@[
@@ -588,13 +634,15 @@
     _forward.enabled = p.canForward;
     _reload.image = [NSImage imageWithSystemSymbolName:p.loading ? @"xmark" : @"arrow.clockwise"
                               accessibilityDescription:p.loading ? @"Stop" : @"Reload"];
+    _reload.toolTip = p.loading ? @"Stop loading" : @"Reload";
+    _reload.accessibilityLabel = _reload.toolTip;
+    _reload.enabled = p != nil;
     NSString *host = [NSURL URLWithString:p.url].host;
-    _address.title = p ? host ?: p.url : @"Search or enter URL";
-    _address.image = p.secure ? [NSImage imageWithSystemSymbolName:@"lock.fill"
-                                          accessibilityDescription:@"Encrypted connection"]
-                              : nil;
-    _address.imagePosition = NSImageLeft;
-    _address.toolTip = p.url;
+    _address.title = p ? host ?: p.url : @"Search or enter address";
+    _security.image = [NSImage imageWithSystemSymbolName:p.secure ? @"lock.fill" : @"info.circle"
+                              accessibilityDescription:@"Site information and permissions"];
+    _security.enabled = p != nil;
+    _address.toolTip = p.url.length ? p.url : @"Search or enter address";
     LTBlockingPolicy *policy = [LTBlockingPolicy new];
     [policy updatePreferences:_store.profile.settings[@"contentBlocking"]];
     BOOL blockingEnabled = [LTContentBlocker shared] && [policy enabledForURL:p.url ?: @""];

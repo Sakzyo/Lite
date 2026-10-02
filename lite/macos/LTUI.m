@@ -4,8 +4,12 @@ NSButton *LTButton(NSString *symbol, NSString *help, id target, SEL action) {
                                                       accessibilityDescription:help]
                                      target:target
                                      action:action];
-    b.bordered = NO;
-    b.bezelStyle = NSBezelStyleTexturedRounded;
+    b.bordered = YES;
+    b.bezelStyle = NSBezelStyleRecessed;
+    b.showsBorderOnlyWhileMouseInside = YES;
+    b.contentTintColor = NSColor.secondaryLabelColor;
+    b.symbolConfiguration = [NSImageSymbolConfiguration configurationWithPointSize:13
+                                                                          weight:NSFontWeightRegular];
     b.toolTip = help;
     b.accessibilityLabel = help;
     [b.widthAnchor constraintEqualToConstant:28].active = YES;
