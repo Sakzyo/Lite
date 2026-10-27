@@ -1,6 +1,7 @@
 #import "../model/LTStore.h"
+#import "LTTheme.h"
 #import <Cocoa/Cocoa.h>
-@interface LTSidebar : NSVisualEffectView
+@interface LTSidebar : LTBackdrop
 @property (nonatomic, copy) void (^selected)(NSString *identifier);
 @property (nonatomic, copy) void (^spaceSelected)(NSString *identifier);
 @property (nonatomic, copy) void (^command)(NSString *command, NSString *identifier);

@@ -8,11 +8,12 @@
 #import "LTLibraryPanel.h"
 #import "LTPasswords.h"
 #import "LTSidebar.h"
+#import "LTTheme.h"
 #import "LTUI.h"
 #import <QuartzCore/QuartzCore.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 
-@interface LTWindowSurface : NSView
+@interface LTWindowSurface : LTBackdrop
 @property (nonatomic, copy) void (^pointerChanged)(NSPoint);
 @end
 @implementation LTWindowSurface {
@@ -38,18 +39,79 @@
 }
 @end
 
+// Transparent gutter around the web cards; the tinted window frame doubles as a drag handle.
 @interface LTContentSurface : NSView
 @end
 @implementation LTContentSurface
-- (BOOL)wantsUpdateLayer {
-    return YES;
+- (void)mouseDown:(NSEvent *)event {
+    [self.window performWindowDragWithEvent:event];
 }
-- (void)updateLayer {
-    self.layer.backgroundColor = NSColor.textBackgroundColor.CGColor;
+@end
+
+@interface LTLayoutSplit : NSSplitView
+@end
+@implementation LTLayoutSplit
+- (CGFloat)dividerThickness {
+    return 1;
 }
-- (void)viewDidChangeEffectiveAppearance {
-    [super viewDidChangeEffectiveAppearance];
-    self.needsDisplay = YES;
+- (void)drawDividerInRect:(NSRect)rect {
+}
+@end
+
+// Address field pill; secondary page actions appear while the pointer is over it.
+@interface LTAddressPill : NSBox
+@property (nonatomic, copy) NSArray<NSView *> *hoverViews;
+@end
+@implementation LTAddressPill {
+    NSTrackingArea *_tracking;
+    BOOL _hovered;
+}
+- (instancetype)initWithFrame:(NSRect)frame {
+    if ((self = [super initWithFrame:frame])) {
+        self.boxType = NSBoxCustom;
+        self.titlePosition = NSNoTitle;
+        self.borderWidth = 0;
+        self.cornerRadius = 10;
+        self.contentViewMargins = NSZeroSize;
+        [self applyFill];
+    }
+    return self;
+}
+- (void)applyFill {
+    BOOL hovered = _hovered;
+    self.fillColor = [NSColor colorWithName:nil
+                              dynamicProvider:^NSColor *(NSAppearance *appearance) {
+                                BOOL dark = LTAppearanceIsDark(appearance);
+                                return [NSColor colorWithWhite:1
+                                                         alpha:dark ? (hovered ? .12 : .08)
+                                                                    : (hovered ? .72 : .55)];
+                              }];
+    for (NSView *v in _hoverViews)
+        v.hidden = !hovered;
+}
+- (void)setHoverViews:(NSArray<NSView *> *)views {
+    _hoverViews = [views copy];
+    [self applyFill];
+}
+- (void)updateTrackingAreas {
+    [super updateTrackingAreas];
+    if (_tracking)
+        [self removeTrackingArea:_tracking];
+    _tracking = [[NSTrackingArea alloc]
+        initWithRect:NSZeroRect
+             options:NSTrackingInVisibleRect | NSTrackingMouseEnteredAndExited |
+                     NSTrackingActiveInKeyWindow
+               owner:self
+            userInfo:nil];
+    [self addTrackingArea:_tracking];
+}
+- (void)mouseEntered:(NSEvent *)event {
+    _hovered = YES;
+    [self applyFill];
+}
+- (void)mouseExited:(NSEvent *)event {
+    _hovered = NO;
+    [self applyFill];
 }
 @end
 
@@ -68,6 +130,11 @@
 @property (nonatomic, copy) void (^dropped)(NSString *);
 @end
 @implementation LTContentSplit
+- (CGFloat)dividerThickness {
+    return 8;
+}
+- (void)drawDividerInRect:(NSRect)rect {
+}
 - (NSDragOperation)draggingEntered:(id<NSDraggingInfo>)sender {
     return NSDragOperationCopy;
 }
@@ -91,6 +158,10 @@
     NSString *_focusedID;
     NSSplitView *_layout;
     LTContentSplit *_webSplit;
+    NSArray<LTCard *> *_cards;
+    NSButton *_sidebarToggle;
+    NSImageView *_logo;
+    NSLayoutConstraint *_miniHeaderTop;
     LTSidebar *_sidebar;
     NSView *_sidebarHost;
     BOOL _sidebarCollapsed, _sidebarRevealed, _updatingSidebar;
@@ -247,47 +318,62 @@
     _address.accessibilityLabel = @"Address";
     [_address setContentCompressionResistancePriority:250
                                        forOrientation:NSLayoutConstraintOrientationHorizontal];
+    [_address setContentHuggingPriority:1 forOrientation:NSLayoutConstraintOrientationHorizontal];
     _media = LTButton(@"play.rectangle", @"Media controls", self, @selector(media:));
     _shield = LTButton(@"shield.lefthalf.filled", @"Content blocking", self, @selector(contentBlocking:));
     _security =
         LTButton(@"info.circle", @"Site information and permissions", self, @selector(siteInfo:));
+    NSButton *splitButton = LTButton(@"rectangle.split.2x1", @"Split View", self, @selector(split:));
+    NSButton *shareButton = LTButton(@"square.and.arrow.up", @"Share page", self, @selector(share:));
+    // Leave room for the traffic lights, then keep page navigation on the same line like Arc.
+    NSView *lights = [NSView new];
+    [lights.widthAnchor constraintEqualToConstant:66].active = YES;
     NSView *navigationSpace = [NSView new];
     [navigationSpace setContentHuggingPriority:1
                                forOrientation:NSLayoutConstraintOrientationHorizontal];
-    NSArray *controls = @[
-        _back, _forward, _reload, navigationSpace, _media,
-        LTButton(@"rectangle.split.2x1", @"Split View", self, @selector(split:)),
-        LTButton(@"square.and.arrow.up", @"Share page", self, @selector(share:))
-    ];
-    LTWindowDragArea *dragArea = [LTWindowDragArea new];
-    [dragArea.heightAnchor constraintEqualToConstant:24].active = YES;
+    NSMutableArray *top = [NSMutableArray arrayWithObject:lights];
+    if (!_mini) {
+        _sidebarToggle = LTButton(@"sidebar.left", @"Hide sidebar", self, @selector(toggleSidebar:));
+        [top addObject:_sidebarToggle];
+    }
+    [top addObject:navigationSpace];
     if (_store.privateMode) {
         NSTextField *badge = LTLabel(@"Private", 11, NSFontWeightSemibold);
-        badge.textColor = NSColor.secondaryLabelColor;
+        NSBox *capsule = [NSBox new];
+        capsule.boxType = NSBoxCustom;
+        capsule.titlePosition = NSNoTitle;
+        capsule.borderWidth = 0;
+        capsule.cornerRadius = 9;
+        capsule.fillColor = [LTPaletteColor(@"Private") colorWithAlphaComponent:.35];
+        capsule.contentViewMargins = NSZeroSize;
         badge.translatesAutoresizingMaskIntoConstraints = NO;
-        [dragArea addSubview:badge];
-        [badge.trailingAnchor constraintEqualToAnchor:dragArea.trailingAnchor].active = YES;
-        [badge.centerYAnchor constraintEqualToAnchor:dragArea.centerYAnchor].active = YES;
+        [capsule.contentView addSubview:badge];
+        [NSLayoutConstraint activateConstraints:@[
+            [badge.leadingAnchor constraintEqualToAnchor:capsule.contentView.leadingAnchor constant:8],
+            [badge.trailingAnchor constraintEqualToAnchor:capsule.contentView.trailingAnchor constant:-8],
+            [badge.centerYAnchor constraintEqualToAnchor:capsule.contentView.centerYAnchor],
+            [capsule.heightAnchor constraintEqualToConstant:18]
+        ]];
+        [top addObject:capsule];
     }
-    NSStackView *navigation = LTStack(controls, NSUserInterfaceLayoutOrientationHorizontal, 2);
-    NSStackView *addressRow =
-        LTStack(@[ _security, _address, _shield ], NSUserInterfaceLayoutOrientationHorizontal, 2);
-    NSBox *addressWell = [NSBox new];
-    addressWell.boxType = NSBoxCustom;
-    addressWell.titlePosition = NSNoTitle;
-    addressWell.borderWidth = 0;
-    addressWell.fillColor = NSColor.controlBackgroundColor;
-    addressWell.cornerRadius = 9;
-    addressWell.contentViewMargins = NSZeroSize;
-    LTPin(addressRow, addressWell.contentView, 4);
+    [top addObjectsFromArray:@[ _back, _forward, _reload ]];
+    NSStackView *navigation = LTStack(top, NSUserInterfaceLayoutOrientationHorizontal, 2);
+    LTWindowDragArea *dragArea = [LTWindowDragArea new];
+    LTPin(navigation, dragArea, 0);
+    [dragArea.heightAnchor constraintEqualToConstant:28].active = YES;
+    NSStackView *addressRow = LTStack(@[ _security, _address, _media, splitButton, shareButton, _shield ],
+                                      NSUserInterfaceLayoutOrientationHorizontal, 0);
+    addressRow.edgeInsets = NSEdgeInsetsMake(0, 4, 0, 4);
+    LTAddressPill *addressWell = [LTAddressPill new];
+    LTPin(addressRow, addressWell.contentView, 0);
+    addressWell.hoverViews = @[ splitButton, shareButton ];
     NSStackView *header =
-        LTStack(@[ dragArea, navigation, addressWell ], NSUserInterfaceLayoutOrientationVertical, 8);
+        LTStack(@[ dragArea, addressWell ], NSUserInterfaceLayoutOrientationVertical, 6);
     [dragArea.widthAnchor constraintEqualToAnchor:header.widthAnchor].active = YES;
-    [navigation.widthAnchor constraintEqualToAnchor:header.widthAnchor].active = YES;
     [addressWell.widthAnchor constraintEqualToAnchor:header.widthAnchor].active = YES;
     [addressWell.heightAnchor constraintEqualToConstant:36].active = YES;
     [_address.heightAnchor constraintEqualToConstant:28].active = YES;
-    _layout = [[NSSplitView alloc] initWithFrame:NSZeroRect];
+    _layout = [[LTLayoutSplit alloc] initWithFrame:NSZeroRect];
     _layout.vertical = YES;
     _layout.dividerStyle = NSSplitViewDividerStyleThin;
     _layout.delegate = self;
@@ -329,9 +415,8 @@
           return d;
         };
     } else {
-        NSVisualEffectView *miniSidebar = [NSVisualEffectView new];
-        miniSidebar.material = NSVisualEffectMaterialSidebar;
-        miniSidebar.blendingMode = NSVisualEffectBlendingModeBehindWindow;
+        LTBackdrop *miniSidebar = [LTBackdrop new];
+        miniSidebar.drawsBackdrop = NO;
         _sidebarHost = miniSidebar;
         NSButton *promote = [NSButton buttonWithTitle:@"Open in Lite ↗"
                                                target:self
@@ -340,10 +425,11 @@
         [header addArrangedSubview:promote];
         header.translatesAutoresizingMaskIntoConstraints = NO;
         [miniSidebar addSubview:header];
-        [header.topAnchor constraintEqualToAnchor:miniSidebar.topAnchor constant:10].active = YES;
-        [header.leadingAnchor constraintEqualToAnchor:miniSidebar.leadingAnchor constant:12]
+        _miniHeaderTop = [header.topAnchor constraintEqualToAnchor:miniSidebar.topAnchor constant:2];
+        _miniHeaderTop.active = YES;
+        [header.leadingAnchor constraintEqualToAnchor:miniSidebar.leadingAnchor constant:8]
             .active = YES;
-        [header.trailingAnchor constraintEqualToAnchor:miniSidebar.trailingAnchor constant:-12]
+        [header.trailingAnchor constraintEqualToAnchor:miniSidebar.trailingAnchor constant:-8]
             .active = YES;
     }
     _sidebarHost.accessibilityLabel = @"Browser sidebar";
@@ -352,12 +438,11 @@
     _content = [LTContentSurface new];
     [_layout addSubview:_content];
     _content.wantsLayer = YES;
-    _content.layer.masksToBounds = YES;
     _webSplit = [[LTContentSplit alloc] initWithFrame:NSZeroRect];
     _webSplit.vertical = _verticalSplit;
-    _webSplit.dividerStyle = NSSplitViewDividerStyleThin;
     _webSplit.delegate = self;
-    LTPin(_webSplit, _content, 0);
+    LTPin(_webSplit, _content, 8);
+    _cards = @[ [LTCard new], [LTCard new] ];
     [_webSplit registerForDraggedTypes:@[ @"app.lite.sidebar-item" ]];
     __weak typeof(self) weak = self;
     _webSplit.dropped = ^(NSString *identifier) {
@@ -371,6 +456,9 @@
         [NSImageView imageViewWithImage:[NSImage imageWithSystemSymbolName:@"leaf"
                                                   accessibilityDescription:@"Lite"]];
     logo.contentTintColor = NSColor.controlAccentColor;
+    logo.symbolConfiguration = [NSImageSymbolConfiguration configurationWithPointSize:40
+                                                                              weight:NSFontWeightRegular];
+    _logo = logo;
     [logo.widthAnchor constraintEqualToConstant:58].active = YES;
     [logo.heightAnchor constraintEqualToConstant:58].active = YES;
     NSTextField *brand =
@@ -499,7 +587,15 @@
     if (!_mini && ![_store.profile node:_secondaryID])
         _secondaryID = @"";
     [_sidebar refreshSpace:_spaceID selected:_activeID];
+    [self updateTheme];
     [self displayPages];
+}
+- (void)updateTheme {
+    NSColor *tint = LTSpaceTint(_store.profile.settings, _spaceID, _store.privateMode);
+    BOOL animated = self.window.visible;
+    [(LTBackdrop *)self.window.contentView setTint:tint animated:animated];
+    [(LTBackdrop *)_sidebarHost setTint:tint animated:animated && _sidebarHost.window];
+    _logo.contentTintColor = tint;
 }
 - (LTPage *)pageFor:(NSString *)identifier {
     if (!identifier.length)
@@ -543,10 +639,15 @@
     }
     if (!views.count)
         [views addObject:_landing];
-    if (![_webSplit.subviews isEqual:views]) {
+    NSMutableArray *cards = [NSMutableArray new];
+    for (NSUInteger i = 0; i < views.count; i++) {
+        [_cards[i] host:views[i]];
+        [cards addObject:_cards[i]];
+    }
+    if (![_webSplit.subviews isEqual:cards]) {
         for (NSView *v in [_webSplit.subviews copy])
             [v removeFromSuperview];
-        for (NSView *v in views)
+        for (NSView *v in cards)
             [_webSplit addSubview:v];
         _webSplit.vertical = _verticalSplit;
         [_webSplit adjustSubviews];
@@ -819,6 +920,12 @@
                         }
                     [self commit:^(LTProfile *p) {
                       [p removeSpace:sid];
+                      NSDictionary *themes = p.settings[@"spaceThemes"];
+                      if ([themes isKindOfClass:NSDictionary.class] && themes[sid]) {
+                          NSMutableDictionary *kept = [themes mutableCopy];
+                          [kept removeObjectForKey:sid];
+                          p.settings[@"spaceThemes"] = kept;
+                      }
                     }];
                   });
     } else if ([command isEqual:@"newFolder"] || [command isEqual:@"folderInside"]) {
@@ -1398,6 +1505,12 @@
                ofSubviewAt:(NSInteger)index {
     return v == _layout ? 340 : p - 120;
 }
+- (NSRect)splitView:(NSSplitView *)v
+         effectiveRect:(NSRect)proposed
+          forDrawnRect:(NSRect)drawn
+      ofDividerAtIndex:(NSInteger)index {
+    return v == _layout ? NSInsetRect(drawn, -4, 0) : proposed;
+}
 - (BOOL)splitView:(NSSplitView *)v canCollapseSubview:(NSView *)subview {
     return NO;
 }
@@ -1453,8 +1566,10 @@
     NSUInteger generation = ++_sidebarAnimationGeneration;
     // Resume from the visible position when the pointer reverses a transition.
     CALayer *sidebarPresentation = _sidebarHost.layer.presentationLayer ?: _sidebarHost.layer;
+    // Collapsed sidebars float as an inset panel, Arc-style, and slide fully off-screen.
+    CGFloat hiddenX = -(_sidebarWidth + 16);
     CGFloat previousX =
-        _sidebarHost.superview ? CGRectGetMinX(sidebarPresentation.frame) : -_sidebarWidth;
+        _sidebarHost.superview ? CGRectGetMinX(sidebarPresentation.frame) : hiddenX;
     CALayer *contentPresentation = _content.layer.presentationLayer ?: _content.layer;
     CGPoint previousPosition = contentPresentation.position;
     CGRect previousBounds = contentPresentation.bounds;
@@ -1468,8 +1583,8 @@
         if (visible || animated) {
             if (_sidebarHost.superview != root)
                 [root addSubview:_sidebarHost positioned:NSWindowAbove relativeTo:_layout];
-            _sidebarHost.frame =
-                NSMakeRect(visible ? 0 : -_sidebarWidth, 0, _sidebarWidth, root.bounds.size.height);
+            _sidebarHost.frame = NSMakeRect(visible ? 6 : hiddenX, 6, _sidebarWidth,
+                                            MAX(0, root.bounds.size.height - 12));
             _sidebarHost.autoresizingMask = NSViewHeightSizable;
         } else
             [_sidebarHost removeFromSuperview];
@@ -1481,6 +1596,10 @@
         [_layout adjustSubviews];
         [_layout setPosition:_sidebarWidth ofDividerAtIndex:0];
     }
+    ((LTBackdrop *)_sidebarHost).floating = _sidebarCollapsed;
+    _miniHeaderTop.constant = _sidebarCollapsed ? -4 : 2;
+    _sidebarToggle.toolTip = _sidebarCollapsed ? @"Keep sidebar open" : @"Hide sidebar";
+    _sidebarToggle.accessibilityLabel = _sidebarToggle.toolTip;
     for (NSNumber *kind in
          @[ @(NSWindowCloseButton), @(NSWindowMiniaturizeButton), @(NSWindowZoomButton) ])
         [self.window standardWindowButton:(NSWindowButton)kind.unsignedIntegerValue].hidden =
@@ -1528,7 +1647,7 @@
     CGFloat revealEdge = 3;
     if (_sidebarHost.superview && _sidebarHost.layer.presentationLayer)
         revealEdge = MAX(revealEdge, CGRectGetMaxX(_sidebarHost.layer.presentationLayer.frame));
-    if (inside && point.x <= (_sidebarRevealed ? _sidebarWidth + 6 : revealEdge)) {
+    if (inside && point.x <= (_sidebarRevealed ? _sidebarWidth + 12 : revealEdge)) {
         [_sidebarHideTimer invalidate];
         _sidebarHideTimer = nil;
         if (!_sidebarRevealed) {

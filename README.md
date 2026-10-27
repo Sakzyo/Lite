@@ -26,6 +26,8 @@ launched process. The Codex Run action uses the same script.
 
 - Native sidebar with pinned and temporary tabs, nested folders, context menus,
   drag and drop, Space switching, and a compact global Favorites area.
+- Lightweight Arc-inspired chrome: per-Space tinted window frame, rounded page
+  cards, a floating sidebar when collapsed, and a Space color picker.
 - Local, validated SQLite transactions for organization and restoration metadata.
 - Website icons cached across launches and prefetched for unopened bookmarks;
   bookmark folders start collapsed at every launch.
