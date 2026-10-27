@@ -1,5 +1,6 @@
 #import "../model/LTGitHub.h"
 #import "../macos/LTShortcuts.h"
+#import "../macos/LTTheme.h"
 #import <Security/Security.h>
 #import <CommonCrypto/CommonDigest.h>
 #import "../macos/LTFaviconCache.h"
@@ -646,6 +647,25 @@ int main(int argc, char **argv) {
         CHECK(![githubProfile node:newID] && [githubProfile validate:&e], "closed unopened PR removed without invalidating the profile");
         [githubProfile removeNode:githubFolder.identifier];
         CHECK([githubProfile.settings[@"githubLiveFolders"] count] == 0, "deleting a Live Folder removes its refresh configuration");
+        NSString *automatic = LTSpacePaletteName(@{}, @"space-personal", NO);
+        CHECK([LTPaletteNames() containsObject:automatic] && ![automatic isEqual:@"Graphite"] &&
+                  [LTSpacePaletteName(@{}, @"space-personal", NO) isEqual:automatic],
+              "automatic Space color is stable");
+        CHECK([LTSpacePaletteName(@{@"spaceThemes" : @{@"space-personal" : @"Graphite"}},
+                                  @"space-personal", NO) isEqual:@"Graphite"],
+              "Space color honors saved choice");
+        CHECK([LTSpacePaletteName(@{@"spaceThemes" : @{@"space-personal" : @"Neon"}},
+                                  @"space-personal", NO) isEqual:automatic] &&
+                  [LTSpacePaletteName(@{@"spaceThemes" : @"Mint"}, @"space-personal", NO)
+                      isEqual:automatic],
+              "Space color ignores invalid saved values");
+        CHECK([LTSpacePaletteName(@{@"spaceThemes" : @{@"space-personal" : @"Mint"}},
+                                  @"space-personal", YES) isEqual:@"Private"] &&
+                  LTSpaceTint(@{}, @"x", YES) != nil,
+              "private windows use the private tint");
+        CHECK(LTBackdropColors(LTPaletteColor(@"Ocean"), YES).count == 2 &&
+                  LTBackdropColors(nil, NO).count == 2,
+              "backdrop gradient colors resolve");
         printf("\n%d passed, %d failed\n", passed, failed);
         return failed ? 1 : 0;
     }

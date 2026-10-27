@@ -123,6 +123,11 @@ saves are deferred outside outline notifications to avoid reentrant AppKit edits
 Favorites have no renderer until opened. Restoring a window loads only its selected
 page and visible split page, regardless of how many pinned tabs exist.
 
+Window chrome is drawn with layer-backed AppKit views only (`LTTheme`): a
+`CAGradientLayer` backdrop tinted per Space (`spaceThemes` in profile settings) and
+rounded, clipped content cards hosting each split page. No image assets or extra
+frameworks beyond QuartzCore are used.
+
 ## Upstream references
 
 - [CEF architecture](https://chromiumembedded.github.io/cef/architecture)

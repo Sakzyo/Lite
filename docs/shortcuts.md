@@ -28,10 +28,12 @@ windows and survive relaunch. Escape cancels recording.
 | ⇧⌘I | Developer Tools |
 
 When the sidebar is collapsed, move the pointer to the left edge of the window
-to reveal it over the page. It hides again when the pointer leaves. Navigation
-and address controls live in the sidebar, including in Mini Lite; the page has
-no top toolbar or leftover sidebar divider. ⇧⌘S pins or collapses the sidebar,
-and normal windows remember its width and collapsed state.
+to reveal it as a floating panel over the page. It hides again when the pointer
+leaves. Back, forward, reload, and the sidebar toggle share the traffic-light row;
+the address pill sits below them, with Split and Share shown on hover. This
+applies in Mini Lite too; the page has no top toolbar and sits in a rounded card
+inside the tinted window frame. ⇧⌘S pins or collapses the sidebar, and normal
+windows remember its width and collapsed state.
 The sidebar slides in and out with a short ease-out transition; Reduce Motion
 disables the animation.
 
@@ -47,7 +49,10 @@ menus expose rename, duplicate, pin, moves, Favorites, splits, and copy URL.
 Drop a tab on a Space button to move it, on a folder to nest it, on the pinned
 region to pin it, or on the content divider to add a split pane. Favorites can be
 reordered by dragging onto another Favorite. Native menus expose commands even
-when no keyboard shortcut is assigned.
+when no keyboard shortcut is assigned. The sidebar's bottom bar has the Library
+menu (Downloads, History, Settings), Space dots, and a new-Space button. Each Space
+tints the window; choose a color from the Space's **…** menu → **Space Color**
+(Automatic picks one from the Space ID).
 
 Bookmark folders, including nested folders, start closed on every launch. Cached
 website icons appear immediately; missing icons are fetched in the background
