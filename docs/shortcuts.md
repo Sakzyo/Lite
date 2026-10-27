@@ -32,7 +32,9 @@ to reveal it as a floating panel over the page. It hides again when the pointer
 leaves. Back, forward, reload, and the sidebar toggle share the traffic-light row;
 the address pill sits below them, with Split and Share shown on hover. This
 applies in Mini Lite too; the page has no top toolbar and sits in a rounded card
-inside the tinted window frame. ⇧⌘S pins or collapses the sidebar, and normal
+inside the tinted window frame. In full screen the frame drops away so the page
+fills the screen, and the window buttons stay available in the titlebar that
+appears at the top edge even while the sidebar is collapsed. ⇧⌘S pins or collapses the sidebar, and normal
 windows remember its width and collapsed state.
 The sidebar slides in and out with a short ease-out transition; Reduce Motion
 disables the animation.

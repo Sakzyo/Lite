@@ -198,10 +198,10 @@ static void SetShadowPath(CALayer *layer, NSRect bounds, CGFloat radius) {
 - (void)updateLayer {
     BOOL dark = LTAppearanceIsDark(self.effectiveAppearance);
     self.layer.shadowColor = NSColor.blackColor.CGColor;
-    self.layer.shadowOpacity = dark ? .35 : .12;
+    self.layer.shadowOpacity = _flush ? 0 : dark ? .35 : .12;
     self.layer.shadowRadius = dark ? 4 : 3;
     self.layer.shadowOffset = CGSizeMake(0, -1);
-    SetShadowPath(self.layer, self.bounds, 10);
+    SetShadowPath(self.layer, self.bounds, _flush ? 0 : 10);
 }
 - (void)viewDidChangeEffectiveAppearance {
     [super viewDidChangeEffectiveAppearance];
@@ -209,7 +209,15 @@ static void SetShadowPath(CALayer *layer, NSRect bounds, CGFloat radius) {
 }
 - (void)setFrameSize:(NSSize)size {
     [super setFrameSize:size];
-    SetShadowPath(self.layer, self.bounds, 10);
+    SetShadowPath(self.layer, self.bounds, _flush ? 0 : 10);
+}
+- (void)setFlush:(BOOL)flush {
+    if (_flush == flush)
+        return;
+    _flush = flush;
+    _clip.layer.cornerRadius = flush ? 0 : 10;
+    _clip.layer.borderWidth = flush ? 0 : 1;
+    self.needsDisplay = YES;
 }
 - (void)host:(NSView *)view {
     NSView *old = _hosted;

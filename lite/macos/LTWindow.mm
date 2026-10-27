@@ -158,6 +158,8 @@
     NSString *_focusedID;
     NSSplitView *_layout;
     LTContentSplit *_webSplit;
+    NSArray<NSLayoutConstraint *> *_webInsets;
+    BOOL _fullScreen;
     NSArray<LTCard *> *_cards;
     NSButton *_sidebarToggle;
     NSImageView *_logo;
@@ -441,7 +443,15 @@
     _webSplit = [[LTContentSplit alloc] initWithFrame:NSZeroRect];
     _webSplit.vertical = _verticalSplit;
     _webSplit.delegate = self;
-    LTPin(_webSplit, _content, 8);
+    _webSplit.translatesAutoresizingMaskIntoConstraints = NO;
+    [_content addSubview:_webSplit];
+    _webInsets = @[
+        [_webSplit.leadingAnchor constraintEqualToAnchor:_content.leadingAnchor constant:8],
+        [_content.trailingAnchor constraintEqualToAnchor:_webSplit.trailingAnchor constant:8],
+        [_webSplit.topAnchor constraintEqualToAnchor:_content.topAnchor constant:8],
+        [_content.bottomAnchor constraintEqualToAnchor:_webSplit.bottomAnchor constant:8]
+    ];
+    [NSLayoutConstraint activateConstraints:_webInsets];
     _cards = @[ [LTCard new], [LTCard new] ];
     [_webSplit registerForDraggedTypes:@[ @"app.lite.sidebar-item" ]];
     __weak typeof(self) weak = self;
@@ -1495,6 +1505,47 @@
 - (void)windowDidMove:(NSNotification *)n {
     [self scheduleSave];
 }
+- (void)windowWillEnterFullScreen:(NSNotification *)n {
+    [self setFullScreenChrome:YES];
+}
+- (void)windowWillExitFullScreen:(NSNotification *)n {
+    [self setFullScreenChrome:NO];
+}
+// Transitions can fail or be cut short (for example when the app deactivates midway),
+// so settle on the window's actual state once AppKit reports the outcome.
+- (void)windowDidEnterFullScreen:(NSNotification *)n {
+    [self syncFullScreenChrome];
+}
+- (void)windowDidFailToEnterFullScreen:(NSWindow *)window {
+    [self syncFullScreenChrome];
+}
+- (void)windowDidExitFullScreen:(NSNotification *)n {
+    [self syncFullScreenChrome];
+}
+- (void)windowDidFailToExitFullScreen:(NSWindow *)window {
+    [self syncFullScreenChrome];
+}
+- (void)syncFullScreenChrome {
+    [self setFullScreenChrome:(self.window.styleMask & NSWindowStyleMaskFullScreen) != 0];
+}
+// Full screen drops the tinted frame so pages run edge to edge.
+- (void)setFullScreenChrome:(BOOL)fullScreen {
+    _fullScreen = fullScreen;
+    for (NSLayoutConstraint *inset in _webInsets)
+        inset.constant = fullScreen ? 0 : 8;
+    for (LTCard *card in _cards)
+        card.flush = fullScreen;
+    [self updateWindowButtons];
+}
+// Collapsed sidebars hide the traffic lights with the header row. In full screen the
+// system titlebar reveals them on demand, so they must stay available there.
+- (void)updateWindowButtons {
+    BOOL hidden = !_fullScreen && _sidebarCollapsed && !_sidebarRevealed;
+    for (NSNumber *kind in
+         @[ @(NSWindowCloseButton), @(NSWindowMiniaturizeButton), @(NSWindowZoomButton) ])
+        [self.window standardWindowButton:(NSWindowButton)kind.unsignedIntegerValue].hidden =
+            hidden;
+}
 - (CGFloat)splitView:(NSSplitView *)v
     constrainMinCoordinate:(CGFloat)p
                ofSubviewAt:(NSInteger)index {
@@ -1600,10 +1651,7 @@
     _miniHeaderTop.constant = _sidebarCollapsed ? -4 : 2;
     _sidebarToggle.toolTip = _sidebarCollapsed ? @"Keep sidebar open" : @"Hide sidebar";
     _sidebarToggle.accessibilityLabel = _sidebarToggle.toolTip;
-    for (NSNumber *kind in
-         @[ @(NSWindowCloseButton), @(NSWindowMiniaturizeButton), @(NSWindowZoomButton) ])
-        [self.window standardWindowButton:(NSWindowButton)kind.unsignedIntegerValue].hidden =
-            !visible;
+    [self updateWindowButtons];
     if (animated) {
         [root layoutSubtreeIfNeeded];
         [CATransaction begin];
