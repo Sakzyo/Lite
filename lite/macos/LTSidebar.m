@@ -233,6 +233,8 @@ static void FillRounded(NSRect rect, CGFloat radius, NSColor *color, BOOL lifted
         _tree.intercellSpacing = NSMakeSize(0, 2);
         _tree.backgroundColor = NSColor.clearColor;
         _tree.indentationPerLevel = 14;
+        // Indentation is applied inside the column; growing it would push rows past the edge.
+        _tree.autoresizesOutlineColumn = NO;
         _tree.style = NSTableViewStylePlain;
         _tree.selectionHighlightStyle = NSTableViewSelectionHighlightStyleRegular;
         _tree.floatsGroupRows = NO;
@@ -263,6 +265,7 @@ static void FillRounded(NSRect rect, CGFloat radius, NSColor *color, BOOL lifted
         scroll.documentView = _tree;
         scroll.hasVerticalScroller = YES;
         scroll.autohidesScrollers = YES;
+        scroll.horizontalScrollElasticity = NSScrollElasticityNone;
         scroll.drawsBackground = NO;
         _spaces = LTStack(@[], NSUserInterfaceLayoutOrientationHorizontal, 2);
         NSView *leading = [NSView new], *trailing = [NSView new];
@@ -466,7 +469,9 @@ static void FillRounded(NSRect rect, CGFloat radius, NSColor *color, BOOL lifted
     return 34;
 }
 - (BOOL)outlineView:(NSOutlineView *)view shouldShowOutlineCellForItem:(id)item {
-    return NO;
+    // NSOutlineView refuses to collapse items without an outline cell, so folders keep one;
+    // LTSidebarOutline gives it a zero frame. Pinned/Today stay permanently expanded.
+    return [item isKindOfClass:LTNode.class];
 }
 - (NSTableRowView *)outlineView:(NSOutlineView *)view rowViewForItem:(id)item {
     LTSidebarRowView *row = [LTSidebarRowView new];

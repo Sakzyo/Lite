@@ -23,5 +23,7 @@ FOUNDATION_EXPORT BOOL LTAppearanceIsDark(NSAppearance *appearance);
 // Rounded, softly shadowed card that hosts web content inside the window chrome.
 @interface LTCard : NSView
 @property (nonatomic, readonly, weak) NSView *hosted;
+// Square, borderless and shadowless style used when the window fills the screen.
+@property (nonatomic) BOOL flush;
 - (void)host:(NSView *)view;
 @end

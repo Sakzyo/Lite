@@ -16,7 +16,8 @@ from test_processes import stop_app
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 REQUIRED = ['nativeMainWindow', 'nativeAccessibleNavigation', 'nativeFixtureSeeded',
             'nativeSplitPrimaryFocused', 'nativeSplitFocusForward', 'nativeSplitFocusBackward',
-            'nativeSidebarCollapsed', 'nativeSidebarRevealed', 'nativeCommandShortcutAndNames',
+            'nativeSidebarCollapsed', 'nativeFullScreenChrome', 'nativeFullScreenRestored',
+            'nativeSidebarRevealed', 'nativeCommandShortcutAndNames',
             'nativeCommandArrowNavigation', 'nativeCommandEscape', 'nativeSettingsAccessibleControls',
             'nativeDownloadsAccessibleControls', 'nativeWindowCloseDialog',
             'nativeWindowCancelPreservesEveryPage', 'nativeBeforeUnloadDialog',

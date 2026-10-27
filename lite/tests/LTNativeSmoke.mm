@@ -1,4 +1,5 @@
 #import "LTNativeSmoke.h"
+#import "../macos/LTTheme.h"
 #import "../macos/LTWindow.h"
 
 // Exercise the same native command paths as the UI without exposing test flags
@@ -40,6 +41,36 @@ static void Key(NSWindow *window, NSString *characters, unsigned short code, NSE
         timestamp:NSProcessInfo.processInfo.systemUptime windowNumber:window.windowNumber context:nil
         characters:characters charactersIgnoringModifiers:characters isARepeat:NO keyCode:code];
     [NSApp sendEvent:event];
+}
+static BOOL FullScreen(NSWindow *window) {
+    return (window.styleMask & NSWindowStyleMaskFullScreen) != 0;
+}
+static BOOL TrafficLightsHidden(NSWindow *window) {
+    for (NSNumber *kind in @[ @(NSWindowCloseButton), @(NSWindowMiniaturizeButton), @(NSWindowZoomButton) ])
+        if (![window standardWindowButton:(NSWindowButton)kind.unsignedIntegerValue].hidden) return NO;
+    return YES;
+}
+static BOOL TrafficLightsShown(NSWindow *window) {
+    for (NSNumber *kind in @[ @(NSWindowCloseButton), @(NSWindowMiniaturizeButton), @(NSWindowZoomButton) ])
+        if ([window standardWindowButton:(NSWindowButton)kind.unsignedIntegerValue].hidden) return NO;
+    return YES;
+}
+// The page cards' outer edge, in content view coordinates, and whether they are all flush.
+static NSRect CardBounds(NSWindow *window, BOOL *flush) {
+    NSView *root = window.contentView;
+    [root layoutSubtreeIfNeeded];
+    NSRect bounds = NSZeroRect;
+    *flush = YES;
+    for (NSView *view in Views(root)) {
+        if (![view isKindOfClass:LTCard.class] || view.hiddenOrHasHiddenAncestor) continue;
+        bounds = NSUnionRect(bounds, [root convertRect:view.bounds fromView:view]);
+        *flush = *flush && ((LTCard *)view).flush;
+    }
+    return bounds;
+}
+static BOOL SameRect(NSRect a, NSRect b) {
+    return fabs(NSMinX(a) - NSMinX(b)) < .5 && fabs(NSMinY(a) - NSMinY(b)) < .5 &&
+           fabs(NSWidth(a) - NSWidth(b)) < .5 && fabs(NSHeight(a) - NSHeight(b)) < .5;
 }
 @interface LTNativeSmoke : NSObject
 @property LTWindow *owner;
@@ -145,8 +176,35 @@ static LTNativeSmoke *runningNative;
             [self record:@"nativeSplitFocusBackward" passed:Focuses(_owner.window, _primary)];
             [_owner performCommand:@"toggleSidebar"]; [self advance:5 delay:.5]; break;
         case 5:
-            [self record:@"nativeSidebarCollapsed" passed:_sidebar && _sidebar.window == nil];
+            [self record:@"nativeSidebarCollapsed" passed:_sidebar && _sidebar.window == nil && TrafficLightsHidden(_owner.window)];
+            [_owner.window makeKeyAndOrderFront:nil];
+            [_owner performCommand:@"fullScreen"]; [self advance:40 delay:.2]; break;
+        case 40:
+            if (!FullScreen(_owner.window)) {
+                if (now - _next < 6) return;
+                [self record:@"nativeFullScreenChrome" passed:NO];
+                [_owner performCommand:@"toggleSidebar"]; [self advance:6 delay:.5]; break;
+            }
+            [self advance:41 delay:1.5]; break;
+        case 41: {
+            // A collapsed sidebar must not take the traffic lights away from the full-screen titlebar.
+            BOOL flush = NO;
+            NSRect cards = CardBounds(_owner.window, &flush);
+            [self record:@"nativeFullScreenChrome" passed:FullScreen(_owner.window) && flush &&
+                SameRect(cards, _owner.window.contentView.bounds) && TrafficLightsShown(_owner.window)];
+            [_owner performCommand:@"fullScreen"]; [self advance:42 delay:.2]; break;
+        }
+        case 42:
+            if (FullScreen(_owner.window) && now - _next < 6) return;
+            [self advance:43 delay:1.5]; break;
+        case 43: {
+            BOOL flush = YES;
+            NSRect cards = CardBounds(_owner.window, &flush);
+            [self record:@"nativeFullScreenRestored" passed:!FullScreen(_owner.window) && !flush &&
+                SameRect(cards, NSInsetRect(_owner.window.contentView.bounds, 8, 8)) &&
+                (_sidebar.window || TrafficLightsHidden(_owner.window))];
             [_owner performCommand:@"toggleSidebar"]; [self advance:6 delay:.5]; break;
+        }
         case 6:
             [self record:@"nativeSidebarRevealed" passed:_sidebar.window == _owner.window && _sidebar.frame.size.width >= 238];
             [_owner.window makeKeyAndOrderFront:nil];
