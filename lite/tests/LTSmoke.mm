@@ -186,7 +186,10 @@ static LTSmoke *running;
         [self answerAuthentication];
         if (_normal.errorText.length) { [self finish]; return; }
     }
-    if (NSDate.date.timeIntervalSince1970 - _started > 140) {
+    // Budget the checks, not engine startup: a cold hosted runner can take
+    // over 30 seconds to show the first page.
+    double startup = [_results[@"startupSeconds"] doubleValue];
+    if (NSDate.date.timeIntervalSince1970 - _started - startup > 140) {
         _results[@"timeout"] = @YES;
         [self finish];
         return;
@@ -400,14 +403,16 @@ static LTSmoke *running;
             }
         }];
     } else if (_stage == 27 && !_privatePage.loading && [_privatePage.title isEqual:@"Lite content blocking test"]) {
-        if (![NSProcessInfo.processInfo.arguments containsObject:@"--lite-blocking-smoke"])
-            [self checkPrivateLoginCapture];
         _stage = 28;
         [_privatePage evaluateForTesting:@"window.blockingResult || null" completion:^(id value, BOOL success) {
             if (!success || ![value isKindOfClass:NSDictionary.class]) { self.stage = 27; return; }
             self.results[@"blockingPrivateIsolation"] = @([value[@"blocked"] boolValue] &&
                 [value[@"workerBlocked"] boolValue] && [value[@"cosmetic"] boolValue] &&
                 [value[@"hits"] integerValue] == 0 && self.privatePage.blockedRequests >= 2);
+            // The login check replaces the page body, so it must wait until the
+            // fixture's asynchronous load handler has read its elements.
+            if (![NSProcessInfo.processInfo.arguments containsObject:@"--lite-blocking-smoke"])
+                [self checkPrivateLoginCapture];
             [self.normalContext updateBlockingPreferences:nil];
             self.stage = 29;
             [self.normal navigate:@"https://www.youtube.com:18744/watch?v=first"];
