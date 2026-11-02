@@ -2,12 +2,23 @@
 #import "../browser/LTEngine.h"
 #import "../macos/LTPasswords.h"
 #import "../performance/LTPerformance.h"
+#import <AVFoundation/AVFoundation.h>
 #include <libproc.h>
 #include <mach/mach_time.h>
 #include <sys/resource.h>
 static NSString *const StorageSeedScript = @"(async()=>{document.cookie='deleteMe=yes;path=/';localStorage.setItem('deleteMe','yes');sessionStorage.setItem('deleteMe','yes');let r=indexedDB.open('delete-me',1);await new Promise((ok,no)=>{r.onsuccess=()=>{r.result.close();ok()};r.onerror=no});await(await caches.open('delete-me')).put('/echo',new Response('cached'));await navigator.serviceWorker.register('/blocking-worker.js');await navigator.serviceWorker.ready;return true})()";
 static NSString *const StorageCheckScript = @"(async()=>({cookies:!document.cookie.includes('deleteMe'),local:localStorage.getItem('deleteMe')===null,session:sessionStorage.getItem('deleteMe')===null,indexedDB:!(await indexedDB.databases()).some(d=>d.name==='delete-me'),cache:!(await caches.keys()).includes('delete-me'),workers:(await navigator.serviceWorker.getRegistrations()).length===0}))()";
 static NSString *const MediaRequestScript = @"window.liteMediaResult=navigator.mediaDevices.getUserMedia({audio:true,video:true}).then(stream=>{window.liteMedia=stream;return {granted:true,kinds:stream.getTracks().map(t=>t.kind).sort(),live:stream.getTracks().every(t=>t.readyState==='live')}}).catch(error=>({granted:false,error:error.name}));true";
+// Chromium's capture needs macOS camera and microphone consent for this exact
+// (ad hoc) signature. Unattended machines cannot answer that system prompt.
+static NSString *MediaAuthorization(AVMediaType type) {
+    switch ([AVCaptureDevice authorizationStatusForMediaType:type]) {
+        case AVAuthorizationStatusAuthorized: return @"authorized";
+        case AVAuthorizationStatusDenied: return @"denied";
+        case AVAuthorizationStatusRestricted: return @"restricted";
+        default: return @"notDetermined";
+    }
+}
 static NSDictionary *ResourceSample(void) {
     NSMutableArray<NSNumber *> *pids = [NSMutableArray arrayWithObject:@(getpid())];
     for (NSUInteger i = 0; i < pids.count; i++) {
@@ -589,7 +600,17 @@ static LTSmoke *running;
         _stage = 159;
         [_normal evaluateJavaScript:@"liteMediaResult" completion:^(id value, BOOL success) {
             self.results[@"combinedMediaDenied"] = @(success && [value[@"granted"] isEqual:@NO] && [value[@"error"] isEqual:@"NotAllowedError"] && !self.normal.capturing);
-            [self.normal evaluateJavaScript:MediaRequestScript completion:^(id value, BOOL success) {}]; self.stage = 163;
+            NSDictionary *system = @{@"camera": MediaAuthorization(AVMediaTypeVideo), @"microphone": MediaAuthorization(AVMediaTypeAudio)};
+            self.results[@"systemMediaAuthorization"] = system;
+            BOOL authorized = [system[@"camera"] isEqual:@"authorized"] && [system[@"microphone"] isEqual:@"authorized"];
+            // Without system consent a granted request never settles. Skip only
+            // the grant, protect and stop stages; cancellation still runs.
+            if (authorized) {
+                [self.normal evaluateJavaScript:MediaRequestScript completion:^(id value, BOOL success) {}];
+                self.stage = 163;
+            } else {
+                [self.normal navigate:@"http://localhost:18743/storage?media-cancel"]; self.stage = 167;
+            }
         }];
     } else if (_stage == 163 && _window.attachedSheet) {
         for (NSView *view in [self descendants:_window.attachedSheet.contentView])

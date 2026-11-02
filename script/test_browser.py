@@ -118,7 +118,17 @@ try:
         required += ['downloadOriginMetadata']
         required += ['downloadDuplicateFilename', 'downloadProtectsDiscard', 'downloadPaused', 'downloadResumed', 'downloadCanceled', 'downloadNetworkInterrupted', 'downloadClosureStopsMetadata']
         required += ['permissionRestartSeeded', 'siteStorageAbsentAfterRestart', 'permissionPersistedAfterRestart', 'allSiteStorageSeeded', 'allSiteStorageAbsentAfterRestart', 'allSitePermissionReset', 'allSitePreservedOtherData']
+    system_media = result.get('systemMediaAuthorization', {})
+    media_consent = system_media and all(value == 'authorized' for value in system_media.values())
+    skipped = []
+    if os.environ.get('CI') == 'true' and system_media and not media_consent:
+        # Hosted runners cannot answer macOS camera/microphone consent for a fresh
+        # ad hoc signature. Local release runs still require these checks.
+        skipped = [key for key in ['combinedMediaGranted', 'combinedMediaProtected', 'combinedMediaStopped'] if key in required]
+        required = [key for key in required if key not in skipped]
     failures = [key for key in required if result.get(key) is not True]
+    if system_media and not media_consent and not skipped and 'combinedMediaGranted' in required:
+        print('NOTE: grant macOS camera and microphone access to this Lite build (systemMediaAuthorization: ' + json.dumps(system_media) + ')')
     login_checks = ['loginFill', 'loginNoSubmit', 'loginCrossSiteRejected', 'loginNewPasswordRejected', 'loginHiddenRejected', 'loginWrongOriginRejected']
     login_checks += ['loginBridgeHidden', 'loginSubmissionUnsafeRejected', 'loginSubmissionCaptured', 'loginSubmissionPrivateRejected']
     if not blocking_only and not readiness_only:
@@ -134,6 +144,8 @@ try:
     target.mkdir(exist_ok=True)
     (target/('blocking.json' if blocking_only else 'engine.json')).write_text(json.dumps(result, indent=2)+'\n')
     print(json.dumps(result, indent=2))
+    if skipped:
+        print('SKIPPED without macOS camera/microphone consent (' + json.dumps(system_media) + '): ' + ', '.join(skipped))
     print('FAIL: '+', '.join(failures) if failures else f'PASS: {len(required) + (0 if blocking_only or readiness_only else len(login_checks) + 7)} bundled Chromium checks')
     raise SystemExit(bool(failures))
 finally:

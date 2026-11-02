@@ -16,7 +16,7 @@ add_executable(Lite lite/macos/LTDownloadHistory.m lite/macos/main.mm lite/macos
 target_include_directories(Lite PRIVATE "${CEF_ROOT}")
 target_compile_definitions(Lite PRIVATE CEF_USE_SANDBOX)
 target_compile_options(Lite PRIVATE -fobjc-arc -Wall -Wno-unused-parameter)
-target_link_libraries(Lite PRIVATE LiteCore libcef_dll_wrapper "-framework Cocoa" "-framework UniformTypeIdentifiers" "-framework QuartzCore" "-framework ImageIO")
+target_link_libraries(Lite PRIVATE LiteCore libcef_dll_wrapper "-framework Cocoa" "-framework UniformTypeIdentifiers" "-framework QuartzCore" "-framework ImageIO" "-framework AVFoundation")
 add_executable(LiteHelper lite/browser/helper.cc)
 target_include_directories(LiteHelper PRIVATE "${CEF_ROOT}")
 target_compile_definitions(LiteHelper PRIVATE CEF_USE_SANDBOX)
