@@ -596,41 +596,53 @@ static LTSmoke *running;
             if ([view isKindOfClass:NSButton.class] && [((NSButton *)view).title isEqual:@"Allow for this request"]) [(NSButton *)view performClick:nil];
         _stage = 164;
     } else if (_stage == 164 && !_window.attachedSheet) {
-        _stage = 159;
-        [_normal evaluateJavaScript:@"liteMediaResult" completion:^(id value, BOOL success) {
-            self.results[@"combinedMediaGrantDetails"] = value ?: @{};
-            self.results[@"combinedMediaGranted"] = @(success && [value[@"granted"] boolValue] && [value[@"live"] boolValue] && [value[@"kinds"] isEqual:@[@"audio", @"video"]]);
-            self.stage = 165;
-        }];
+        _stage = 165;
     } else if (_stage == 165 && _normal.capturing) {
+        _stage = 159;
         _normal.visible = NO; [_normal freeze:YES]; [_normal discard];
         _results[@"combinedMediaProtected"] = @(_normal.alive && !_normal.frozen && !_normal.dirty);
         _normal.visible = YES;
-        [_normal evaluateJavaScript:@"liteMedia.getTracks().forEach(track=>track.stop());true" completion:^(id value, BOOL success) {}];
-        _settledAt = NSDate.date.timeIntervalSince1970; _stage = 166;
+        [_normal evaluateJavaScript:@"liteMediaResult" completion:^(id value, BOOL success) {
+            self.results[@"combinedMediaGrantDetails"] = value ?: @{};
+            self.results[@"combinedMediaGranted"] = @(success && [value[@"granted"] boolValue] && [value[@"live"] boolValue] && [value[@"kinds"] isEqual:@[@"audio", @"video"]]);
+            [self.normal evaluateJavaScript:@"liteMedia.getTracks().forEach(track=>track.stop());true" completion:^(id stopValue, BOOL stopSuccess) {
+                self.settledAt = NSDate.date.timeIntervalSince1970; self.stage = 166;
+            }];
+        }];
     } else if (_stage == 166 && NSDate.date.timeIntervalSince1970 - _settledAt > 1) {
         _stage = 159;
-        [_normal evaluateJavaScript:@"liteMedia.getTracks().every(track=>track.readyState==='ended')" completion:^(id value, BOOL success) {
-            self.results[@"combinedMediaStopped"] = @(success && [value isEqual:@YES]);
-            // Record engine source access separately from JS track state.
-            // Only the engine can release Lite's conservative capture guard.
+        [_normal evaluateJavaScript:@"liteMedia.getTracks().every(track=>track.readyState==='ended')" completion:^(id stopped, BOOL stoppedSuccessfully) {
+            self.results[@"combinedMediaStopped"] = @(stoppedSuccessfully && [stopped isEqual:@YES]);
             self.results[@"combinedMediaCaptureAfterStop"] = @(self.normal.capturing);
-            [self.normal evaluateJavaScript:MediaRequestScript completion:^(id value, BOOL success) {}]; self.stage = 167;
+            [self.normal navigate:@"http://localhost:18743/storage?media-cancel"]; self.stage = 167;
         }];
-    } else if (_stage == 167 && _window.attachedSheet) {
-        [_normal navigate:[_origin stringByAppendingString:@"second"]]; _stage = 168;
-    } else if (_stage == 168 && !_normal.loading && [_normal.title isEqual:@"Second Page"]) {
-        _results[@"combinedMediaNavigationCanceled"] = @(!_window.attachedSheet && !_normal.capturing);
+    } else if (_stage == 167 && !_normal.loading && [_normal.title isEqual:@"Lite storage test"]) {
+        [_normal evaluateJavaScript:MediaRequestScript completion:^(id value, BOOL success) {}];
+        _settledAt = NSDate.date.timeIntervalSince1970; _stage = 168;
+    } else if (_stage == 168 && _window.attachedSheet) {
+        [_normal navigate:@"http://localhost:18743/second"]; _stage = 169;
+    } else if (_stage == 168 && NSDate.date.timeIntervalSince1970 - _settledAt > 5) {
+        _results[@"combinedMediaNavigationCanceled"] = @NO;
+        [_normal navigate:@"http://localhost:18743/second"]; _stage = 169;
+    } else if (_stage == 169 && !_normal.loading && [_normal.title isEqual:@"Second Page"]) {
+        if (!_results[@"combinedMediaNavigationCanceled"])
+            _results[@"combinedMediaNavigationCanceled"] = @(!_window.attachedSheet && !_normal.capturing);
         _browsersBeforeMediaClose = LTLivingBrowserCount();
-        _mediaClosePage = [[LTPage alloc] initWithID:@"media-close" url:[_origin stringByAppendingString:@"storage"] context:_normalContext];
+        _mediaClosePage = [[LTPage alloc] initWithID:@"media-close" url:@"http://localhost:18743/storage" context:_normalContext];
         _mediaClosePage.delegate = self; [_window.contentView addSubview:_mediaClosePage.container];
-        [_mediaClosePage loadIfNeeded]; _stage = 169;
-    } else if (_stage == 169 && !_mediaClosePage.loading && [_mediaClosePage.title isEqual:@"Lite storage test"]) {
-        [_mediaClosePage evaluateJavaScript:MediaRequestScript completion:^(id value, BOOL success) {}]; _stage = 170;
-    } else if (_stage == 170 && _window.attachedSheet) {
-        [_mediaClosePage close]; _stage = 171;
-    } else if (_stage == 171 && !_mediaClosePage.alive && !_window.attachedSheet) {
-        _results[@"combinedMediaClosureCanceled"] = @(LTLivingBrowserCount() == _browsersBeforeMediaClose && _normal.alive);
+        [_mediaClosePage loadIfNeeded]; _stage = 170;
+    } else if (_stage == 170 && !_mediaClosePage.loading && [_mediaClosePage.title isEqual:@"Lite storage test"]) {
+        [_mediaClosePage evaluateJavaScript:MediaRequestScript completion:^(id value, BOOL success) {}];
+        _settledAt = NSDate.date.timeIntervalSince1970; _stage = 171;
+    } else if (_stage == 171 && _window.attachedSheet) {
+        _results[@"combinedMediaClosePromptShown"] = @YES;
+        [_mediaClosePage close]; _stage = 172;
+    } else if (_stage == 171 && NSDate.date.timeIntervalSince1970 - _settledAt > 5) {
+        _results[@"combinedMediaClosePromptShown"] = @NO;
+        [_mediaClosePage close]; _stage = 172;
+    } else if (_stage == 172 && !_mediaClosePage.alive && !_window.attachedSheet) {
+        _results[@"combinedMediaClosureCanceled"] = @([_results[@"combinedMediaClosePromptShown"] boolValue] &&
+            LTLivingBrowserCount() == _browsersBeforeMediaClose && _normal.alive);
         [_normal navigate:[_origin stringByAppendingString:@"storage?permissions"]]; _stage = 110;
     } else if (_stage == 110 && !_normal.loading && [_normal.title isEqual:@"Lite storage test"]) {
         _stage = 111;
