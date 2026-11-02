@@ -4,6 +4,7 @@
 #import "../model/LTGitHub.h"
 #import "LTCommandPanel.h"
 #import "LTDownloadHistory.h"
+#import "LTExtensionsPanel.h"
 #import "LTFaviconCache.h"
 #import "LTLibraryPanel.h"
 #import "LTPasswords.h"
@@ -174,7 +175,7 @@
     NSView *_content;
     NSView *_landing;
     NSView *_parking;
-    NSButton *_address, *_back, *_forward, *_reload, *_media, *_shield, *_security;
+    NSButton *_address, *_back, *_forward, *_reload, *_media, *_shield, *_security, *_extensionsButton;
     NSTextField *_error;
     NSSearchField *_find;
     NSVisualEffectView *_findBar;
@@ -325,6 +326,8 @@
     _shield = LTButton(@"shield.lefthalf.filled", @"Content blocking", self, @selector(contentBlocking:));
     _security =
         LTButton(@"info.circle", @"Site information and permissions", self, @selector(siteInfo:));
+    _extensionsButton = LTButton(@"puzzlepiece.extension", @"Extensions", self, @selector(extensionsMenu:));
+    _extensionsButton.hidden = !_extensions;
     NSButton *splitButton = LTButton(@"rectangle.split.2x1", @"Split View", self, @selector(split:));
     NSButton *shareButton = LTButton(@"square.and.arrow.up", @"Share page", self, @selector(share:));
     // Leave room for the traffic lights, then keep page navigation on the same line like Arc.
@@ -363,7 +366,7 @@
     LTWindowDragArea *dragArea = [LTWindowDragArea new];
     LTPin(navigation, dragArea, 0);
     [dragArea.heightAnchor constraintEqualToConstant:28].active = YES;
-    NSStackView *addressRow = LTStack(@[ _security, _address, _media, splitButton, shareButton, _shield ],
+    NSStackView *addressRow = LTStack(@[ _security, _address, _media, splitButton, shareButton, _shield, _extensionsButton ],
                                       NSUserInterfaceLayoutOrientationHorizontal, 0);
     addressRow.edgeInsets = NSEdgeInsetsMake(0, 4, 0, 4);
     LTAddressPill *addressWell = [LTAddressPill new];
@@ -1093,11 +1096,12 @@
             });
         } else [NSNotificationCenter.defaultCenter postNotificationName:@"LTClearAllWebsiteData" object:self];
     } else if ([command isEqual:@"extensions"]) {
-        LTAlert(self.window, @"Chromium compatibility",
-                @"Lite uses Chromium 154 with native embedded pages. Chrome Web Store extensions "
-                @"and licensed DRM are not enabled in this build. HTML, "
-                @"JavaScript, WebGL, WebRTC, and Chromium storage are provided by the engine. No "
-                @"unsupported extension API is emulated.");
+        if (_extensions)
+            [NSNotificationCenter.defaultCenter postNotificationName:@"LTAppCommand" object:command];
+        else
+            LTAlert(self.window, @"Extensions are off in private windows",
+                    @"Extensions run only in regular windows, so they cannot see private browsing. "
+                    @"Manage them from a regular Lite window.");
     } else if ([command isEqual:@"defaultBrowser"]) {
         [NSWorkspace.sharedWorkspace
             setDefaultApplicationAtURL:NSBundle.mainBundle.bundleURL
@@ -1720,6 +1724,65 @@
 }
 - (void)split:(id)s {
     [self performCommand:_secondaryID.length ? @"closeSplit" : @"splitRight"];
+}
+- (void)setExtensions:(LTExtensions *)extensions {
+    _extensions = extensions;
+    _extensionsButton.hidden = !extensions;
+}
+- (void)extensionsMenu:(NSButton *)sender {
+    NSMenu *menu = [NSMenu new];
+    NSMenuItem *(^add)(NSString *, NSArray *) = ^NSMenuItem *(NSString *title, NSArray *action) {
+        NSMenuItem *item = [menu addItemWithTitle:title action:action ? @selector(extensionItem:) : nil keyEquivalent:@""];
+        item.target = self;
+        item.representedObject = action;
+        item.keyEquivalentModifierMask = 0;
+        return item;
+    };
+    NSString *storeID = LTWebStoreExtensionID([self activePage].url ?: @"");
+    if (storeID && ![_extensions extensionWithIdentifier:storeID]) {
+        add(@"Add This Extension to Lite…", @[ @"install", storeID ]);
+        [menu addItem:NSMenuItem.separatorItem];
+    }
+    for (LTExtension *extension in _extensions.launched) {
+        NSString *kind = extension.popup ? @"popup" : extension.options ? @"options" : nil;
+        NSMenuItem *item = add(extension.name, kind ? @[ kind, extension.identifier ] : nil);
+        item.image = LTExtensionIcon(extension);
+        if (!kind) item.toolTip = @"This extension has no popup or options page.";
+        if (extension.popup && extension.options) {
+            NSMenuItem *options = add([extension.name stringByAppendingString:@" Options"], @[ @"options", extension.identifier ]);
+            options.image = item.image;
+            options.alternate = YES;
+            options.keyEquivalentModifierMask = NSEventModifierFlagOption;
+        }
+    }
+    if (!_extensions.launched.count) add(@"No Extensions Running", nil);
+    [menu addItem:NSMenuItem.separatorItem];
+    if (_extensions.restartRequired) add(@"Restart to Apply Extension Changes…", @[ @"restart" ]);
+    add(@"Manage Extensions…", @[ @"manage" ]);
+    [menu popUpMenuPositioningItem:nil atLocation:NSMakePoint(0, sender.bounds.size.height + 4) inView:sender];
+}
+- (void)extensionItem:(NSMenuItem *)item {
+    NSArray *action = item.representedObject;
+    NSString *kind = action.firstObject;
+    // Running extensions keep their launch-time pages until restart, even if removed or updated since.
+    LTExtension *extension = nil;
+    for (LTExtension *launched in _extensions.launched)
+        if (action.count > 1 && [launched.identifier isEqual:action[1]]) extension = launched;
+    if ([kind isEqual:@"install"])
+        [NSNotificationCenter.defaultCenter postNotificationName:@"LTAppCommand" object:@"extensions"
+                                                        userInfo:@{@"install" : action[1]}];
+    else if ([kind isEqual:@"manage"])
+        [NSNotificationCenter.defaultCenter postNotificationName:@"LTAppCommand" object:@"extensions"];
+    else if ([kind isEqual:@"restart"])
+        [NSNotificationCenter.defaultCenter postNotificationName:@"LTRestart" object:nil];
+    else if ([kind isEqual:@"popup"] && extension.popup)
+        [self showExtensionPopup:extension];
+    else if ([kind isEqual:@"options"] && extension.options)
+        [self openURL:[extension URLForPage:extension.options]];
+}
+- (NSPopover *)showExtensionPopup:(LTExtension *)extension {
+    __weak typeof(self) weak = self;
+    return LTShowExtensionPopup(extension, _context, _extensionsButton, ^(NSString *url) { [weak openURL:url]; });
 }
 - (void)share:(NSButton *)s {
     LTPage *p = [self activePage];

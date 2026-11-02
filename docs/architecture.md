@@ -32,7 +32,15 @@ CEF's macOS native-parent integration uses **Alloy style**, backed by Chromium.
 It supplies the content engine and security processes but does not provide the
 entire Chrome application. Lite implements its own native tab/window/history UI.
 The engine boundary is explicit so a future Chrome-style or Chromium-core host
-can provide extensions and more password-manager capabilities without replacing the organization model.
+can provide the full extension API and more password-manager capabilities without replacing the organization model.
+
+`LTExtensions` (in `lite/model`) keeps the profile's extension list and verifies
+Chrome Web Store CRX3 packages. Before `CefInitialize`, `main.mm` passes the
+enabled, loadable directories to Chromium's `--load-extension` switch. CEF's
+Chrome bootstrap then runs content scripts, service workers and
+`chrome-extension://` pages for Lite's Alloy pages. The list is fixed for the
+engine's lifetime, so changes need a restart. Replaced Web Store versions are
+deleted only before the next engine start. See [extensions](extensions.md).
 
 The main process loads the bundled framework with `CefScopedLibraryLoader`.
 Each helper initializes `CefScopedSandboxContext` **before** loading the framework.
@@ -72,6 +80,7 @@ Lite.sqlite-wal / -shm     # SQLite WAL files while running
 Chromium/Default/          # normal Chromium profile/storage
 Favicons/                  # bounded PNG favicon cache, shared by site origin
 Credentials/Logins.vault    # authenticated encrypted website accounts/passwords
+Extensions/Extensions.json  # extension list; Web Store packages in Extensions/<id>/
 ```
 
 `LTLoginStore` keeps website accounts and passwords in one `LTLoginVault` file.

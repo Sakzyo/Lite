@@ -1,6 +1,7 @@
 #import "LTNativeSmoke.h"
 #import "../macos/LTTheme.h"
 #import "../macos/LTWindow.h"
+#import "../model/LTExtensions.h"
 
 // Exercise the same native command paths as the UI without exposing test flags
 // in the browser engine or changing lifecycle state to manufacture a pass.
@@ -8,6 +9,7 @@
 - (LTPage *)activePage;
 - (void)selectTab:(NSString *)identifier;
 - (void)splitWith:(NSString *)identifier vertical:(BOOL)vertical;
+- (NSPopover *)showExtensionPopup:(LTExtension *)extension;
 @end
 
 static NSArray<NSView *> *Views(NSView *root) {
@@ -83,6 +85,8 @@ static BOOL SameRect(NSRect a, NSRect b) {
 @property LTPage *authPage;
 @property NSView *sidebar;
 @property NSWindow *panel;
+@property NSPopover *popover;
+@property NSUInteger browsersWithPopover;
 @property NSTimer *timer;
 @property NSMutableDictionary *results;
 @property NSString *output;
@@ -240,7 +244,29 @@ static LTNativeSmoke *runningNative;
         case 10:
             _panel = VisibleWindow(@"Lite — Downloads");
             [self record:@"nativeDownloadsAccessibleControls" passed:_panel && Label(_panel, @"Search downloads") && Label(_panel, @"Downloads") && Button(_panel, @"Pause / Resume")];
-            [_panel performClose:nil]; [_owner.window makeKeyAndOrderFront:nil];
+            [_panel performClose:nil];
+            [_owner performCommand:@"extensions"]; [self advance:60 delay:.2]; break;
+        case 60: {
+            // The runner registers the fixture extension in this profile's Extensions.json.
+            _panel = VisibleWindow(@"Extensions");
+            NSTableView *table = (NSTableView *)Label(_panel, @"Extensions");
+            NSView *button = Label(_owner.window, @"Extensions");
+            [self record:@"nativeExtensionsPanel" passed:_panel && Button(_panel, @"Add Folder…") &&
+                Button(_panel, @"Add from Chrome Web Store…") && [table isKindOfClass:NSTableView.class] &&
+                table.numberOfRows == 1 && button && !button.hidden];
+            [_panel performClose:nil];
+            _popover = _owner.extensions.launched.count ? [_owner showExtensionPopup:_owner.extensions.launched.firstObject] : nil;
+            [self advance:61 delay:.2]; break;
+        }
+        case 61:
+            if (!NSEqualSizes(_popover.contentSize, NSMakeSize(240, 120)) && now - _next < 8) return;
+            [self record:@"nativeExtensionPopup" passed:_popover.shown && NSEqualSizes(_popover.contentSize, NSMakeSize(240, 120))];
+            _browsersWithPopover = LTLivingBrowserCount();
+            [_popover close]; [self advance:62 delay:1]; break;
+        case 62:
+            [self record:@"nativeExtensionPopupClosed" passed:_popover && !_popover.shown && LTLivingBrowserCount() + 1 == _browsersWithPopover];
+            _popover = nil;
+            [_owner.window makeKeyAndOrderFront:nil];
             [_owner.window performClose:nil]; [self advance:11 delay:.2]; break;
         case 11: {
             NSButton *cancel = Button(_owner.window.attachedSheet, @"Cancel");
@@ -275,6 +301,7 @@ static LTNativeSmoke *runningNative;
         case 16:
             _privateWindow = [self additionalWindow:YES];
             [self record:@"nativePrivateWindow" passed:_privateWindow && _privateWindow.store != _owner.store && [_privateWindow.window.title containsString:@"Private"]];
+            [self record:@"nativeExtensionsHiddenInPrivate" passed:!_privateWindow.extensions && Label(_privateWindow.window, @"Extensions").hidden];
             [_privateWindow openURL:@"http://127.0.0.1:18743/storage"];
             _privatePage = [_privateWindow activePage]; [self advance:17 delay:.2]; break;
         case 17: {

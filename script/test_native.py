@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 """Exercise real Lite windows and controls using a disposable browser profile."""
+import base64
+import hashlib
 import json
 import os
 import pathlib
@@ -15,6 +17,7 @@ from test_processes import stop_app
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 REQUIRED = ['nativeMainWindow', 'nativeAccessibleNavigation', 'nativeFixtureSeeded',
+            'nativeExtensionsPanel', 'nativeExtensionPopup', 'nativeExtensionPopupClosed', 'nativeExtensionsHiddenInPrivate',
             'nativeSplitPrimaryFocused', 'nativeSplitFocusForward', 'nativeSplitFocusBackward',
             'nativeSidebarCollapsed', 'nativeFullScreenChrome', 'nativeFullScreenRestored',
             'nativeSidebarRevealed', 'nativeCommandShortcutAndNames',
@@ -48,6 +51,13 @@ def main():
         db.execute('CREATE TABLE profile (id INTEGER PRIMARY KEY CHECK(id=1),json BLOB NOT NULL)')
         db.execute('INSERT INTO profile VALUES (1,?)', (json.dumps(data).encode(),))
         db.execute('PRAGMA user_version=1')
+    # Register the fixture extension the way the Extensions panel's Add Folder does.
+    fixture = (ROOT / 'lite/tests/fixtures/extension').resolve()
+    key = base64.b64decode(json.loads((fixture / 'manifest.json').read_text())['key'])
+    extension_id = ''.join(chr(97 + int(c, 16)) for c in hashlib.sha256(key).hexdigest()[:32])
+    (profile / 'Extensions').mkdir()
+    (profile / 'Extensions/Extensions.json').write_text(json.dumps({'version': 1, 'extensions': [
+        dict(id=extension_id, path=str(fixture), source='unpacked', enabled=True)]}))
     server = None
     output = profile / 'native-results.json'
     try:

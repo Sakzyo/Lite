@@ -1,0 +1,12 @@
+{
+  "manifest_version": 3,
+  "name": "Lite Extension Fixture",
+  "version": "1.0",
+  "description": "Synthetic extension for Lite's engine verification.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAsKTrm5NrIxfegvA9AVag82jJvnEGa1tr/FKIs0iSDrgpiW050gtjO56vR8BUc7UQza1+I/Nc5VfnEbaoMI4oDo5YgZvr1tqGy+qJ1Uqt2jND+LNfBU3KNYWec1SCq7o2JKma3+xV+GGoUWThsHZ2IlVsDWGNv8bGkEgSwNMdJ2iCiaJRevOu17+2HlPeYRYb/3zey0lnnw2Hjo45VbH1NlpUGGBzR//euj5Xc9rGylo/XxgeUox8AaPn5ljZK7mDIBy3Qwyp4rlSIJ0/BLJWu3QEI4rYL6DCulVnr6ECzvX5Gt+wcGF8S6D59EJY536r/nFvCdLWQ0WSU5idBYD3OQIDAQAB",
+  "background": {"service_worker": "worker.js"},
+  "action": {"default_popup": "popup.html"},
+  "options_page": "popup.html",
+  "permissions": ["storage"],
+  "content_scripts": [{"matches": ["http://127.0.0.1/*"], "js": ["content.js"], "run_at": "document_end"}]
+}

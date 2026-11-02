@@ -210,6 +210,8 @@ struct BlockingState {
     NSMutableArray<NSDictionary *> *_permissionGrants;
     NSMutableSet<NSString *> *_permissionOrigins;
     std::shared_ptr<BlockingState> _blockingState;
+    BOOL _autoResize;
+    NSSize _autoResizeMinimum, _autoResizeMaximum;
 }
 - (void)didClose;
 - (void)restoreScroll;
@@ -550,6 +552,12 @@ class Client : public CefClient,
                        CefBrowserSettings &, CefRefPtr<CefDictionaryValue> &, bool *) override {
         LTPage *p = page_;
         return !gesture || !p || !CreatePopup(info, client, p->_context);
+    }
+    bool OnAutoResize(CefRefPtr<CefBrowser>, const CefSize &size) override {
+        LTPage *p = page_;
+        p.preferredSize = NSMakeSize(size.width, size.height);
+        [p.delegate pageChanged:p];
+        return true;
     }
     bool OnOpenURLFromTab(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>, const CefString &url,
                           WindowOpenDisposition, bool) override {
@@ -1033,10 +1041,22 @@ static void CancelBrowserRequests(CefRefPtr<CefBrowser> browser) {
         NSView *view = (__bridge NSView *)_browser->GetHost()->GetWindowHandle();
         view.frame = _container.bounds;
         view.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+        if (_autoResize)
+            _browser->GetHost()->SetAutoResizeEnabled(true,
+                CefSize(_autoResizeMinimum.width, _autoResizeMinimum.height),
+                CefSize(_autoResizeMaximum.width, _autoResizeMaximum.height));
     } else {
         self.errorText = @"Chromium could not create this page.";
         [_delegate pageChanged:self];
     }
+}
+- (void)enableAutoResizeWithMinimum:(NSSize)minimum maximum:(NSSize)maximum {
+    _autoResize = YES;
+    _autoResizeMinimum = minimum;
+    _autoResizeMaximum = maximum;
+    if (_browser)
+        _browser->GetHost()->SetAutoResizeEnabled(true, CefSize(minimum.width, minimum.height),
+                                                  CefSize(maximum.width, maximum.height));
 }
 - (void)navigate:(NSString *)url {
     self.sessionState = nil;

@@ -30,8 +30,9 @@ class SDKTests(unittest.TestCase):
         self.archive = self.vendor / (self.name + '.tar.bz2')
         self.sdk = self.vendor / 'cef'
         # A minimal real Mach-O header lets lipo inspect CPU type without a compiler.
-        cpu = 0x0100000c if ARCH == 'macosarm64' else 0x01000007
-        binary = struct.pack('<8I', 0xfeedfacf, cpu, 0, 6, 0, 0, 0, 0)
+        # lipo names x86_64 only with CPU_SUBTYPE_X86_64_ALL (3); arm64's ALL subtype is 0.
+        cpu, subtype = (0x0100000c, 0) if ARCH == 'macosarm64' else (0x01000007, 3)
+        binary = struct.pack('<8I', 0xfeedfacf, cpu, subtype, 6, 0, 0, 0, 0)
         files = {'include/cef_version.h': f'#define CEF_VERSION "{fetch_cef.VERSION}"\n'.encode(),
                  'include/cef_app.h': b'fixture', 'CMakeLists.txt': b'fixture', 'LICENSE.txt': b'fixture',
                  'Release/Chromium Embedded Framework.framework/Chromium Embedded Framework': binary}

@@ -1,12 +1,14 @@
 #import "../browser/LTEngine.h"
 #import "../model/LTStore.h"
 #import <Cocoa/Cocoa.h>
-@class LTFaviconCache, LTLoginStore, LTGitHub, LTDownloadHistory;
+@class LTFaviconCache, LTLoginStore, LTGitHub, LTDownloadHistory, LTExtensions;
 @interface LTWindow : NSWindowController <LTPageDelegate>
 @property (nonatomic, readonly) LTStore *store;
 @property (nonatomic, readonly) BOOL mini;
 @property (nonatomic, readonly) NSArray<LTPage *> *pages;
 @property (nonatomic) LTGitHub *github;
+/// Profile extensions; nil in private windows.
+@property (nonatomic) LTExtensions *extensions;
 @property (nonatomic, copy) void (^promote)(NSString *url, NSString *spaceID);
 @property (nonatomic, copy) void (^didClose)(LTWindow *window);
 - (instancetype)initWithStore:(LTStore *)store

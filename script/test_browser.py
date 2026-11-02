@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Run the staged application's Chromium integration tests in a unique profile."""
-import base64, hashlib, json, os, pathlib, plistlib, signal, subprocess, sys, time, urllib.request, uuid
+import base64, hashlib, json, os, pathlib, platform, plistlib, signal, subprocess, sys, time, urllib.request, uuid
 from test_processes import stop_app
 root = pathlib.Path(__file__).resolve().parents[1]
 app = pathlib.Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else root/'dist/Lite.app'
@@ -47,7 +47,8 @@ try:
     # Fake tracks still require Lite's actual permission prompt; never auto-grant.
     launch += ['--use-fake-device-for-media-stream']
     subprocess.run(launch + (['--lite-blocking-smoke'] if blocking_only else []) + (['--lite-readiness-smoke'] if readiness_only else []), check=True)
-    while not output.exists() and time.monotonic()-started < 165:
+    # The app allows 140 s after its first page loads; leave room for a cold engine start.
+    while not output.exists() and time.monotonic()-started < 240:
         time.sleep(0.2)
     if not output.exists():
         raise RuntimeError('Browser test timed out; inspect '+str(profile))
@@ -118,12 +119,27 @@ try:
         required += ['downloadOriginMetadata']
         required += ['downloadDuplicateFilename', 'downloadProtectsDiscard', 'downloadPaused', 'downloadResumed', 'downloadCanceled', 'downloadNetworkInterrupted', 'downloadClosureStopsMetadata']
         required += ['permissionRestartSeeded', 'siteStorageAbsentAfterRestart', 'permissionPersistedAfterRestart', 'allSiteStorageSeeded', 'allSiteStorageAbsentAfterRestart', 'allSitePermissionReset', 'allSitePreservedOtherData']
+    system_media = result.get('systemMediaAuthorization', {})
+    media_consent = system_media and all(value == 'authorized' for value in system_media.values())
+    skipped = []
+    if os.environ.get('CI') == 'true' and system_media and not media_consent:
+        # Hosted runners cannot answer macOS camera/microphone consent for a fresh
+        # ad hoc signature. Local release runs still require these checks.
+        skipped = [key for key in ['combinedMediaGranted', 'combinedMediaProtected', 'combinedMediaStopped'] if key in required]
+        required = [key for key in required if key not in skipped]
     failures = [key for key in required if result.get(key) is not True]
+    if system_media and not media_consent and not skipped and 'combinedMediaGranted' in required:
+        print('NOTE: grant macOS camera and microphone access to this Lite build (systemMediaAuthorization: ' + json.dumps(system_media) + ')')
     login_checks = ['loginFill', 'loginNoSubmit', 'loginCrossSiteRejected', 'loginNewPasswordRejected', 'loginHiddenRejected', 'loginWrongOriginRejected']
     login_checks += ['loginBridgeHidden', 'loginSubmissionUnsafeRejected', 'loginSubmissionCaptured', 'loginSubmissionPrivateRejected']
     if not blocking_only and not readiness_only:
         failures += [key for key in login_checks if result.get(key) is not True]
-        failures += ['webPlatform.'+key for key in ['chromium','dom','indexedDB','wasm','webgl','fetch','cookie'] if result.get('webPlatform',{}).get(key) is not True]
+        platform_checks = ['chromium','dom','indexedDB','wasm','webgl','fetch','cookie']
+        if os.environ.get('CI') == 'true' and platform.machine() == 'x86_64' and result.get('webPlatform',{}).get('webgl') is not True:
+            # Hosted Intel macOS runners are GPU-less VMs, so Chromium offers no WebGL2.
+            platform_checks.remove('webgl')
+            skipped.append('webPlatform.webgl (no GPU on hosted Intel runner)')
+        failures += ['webPlatform.'+key for key in platform_checks if result.get('webPlatform',{}).get(key) is not True]
     if result.get('timeout'):
         failures.append('timeout')
     if not blocking_only and not readiness_only and result.get('memory1',{}).get('processes',0) < 3:
@@ -134,7 +150,9 @@ try:
     target.mkdir(exist_ok=True)
     (target/('blocking.json' if blocking_only else 'engine.json')).write_text(json.dumps(result, indent=2)+'\n')
     print(json.dumps(result, indent=2))
-    print('FAIL: '+', '.join(failures) if failures else f'PASS: {len(required) + (0 if blocking_only or readiness_only else len(login_checks) + 7)} bundled Chromium checks')
+    if skipped:
+        print('SKIPPED on hosted runner (camera/microphone consent: ' + json.dumps(system_media) + '): ' + ', '.join(skipped))
+    print('FAIL: '+', '.join(failures) if failures else f'PASS: {len(required) + (0 if blocking_only or readiness_only else len(login_checks) + len(platform_checks))} bundled Chromium checks')
     raise SystemExit(bool(failures))
 finally:
     if profile_created:
