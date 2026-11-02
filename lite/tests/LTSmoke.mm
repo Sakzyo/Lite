@@ -84,6 +84,9 @@ static BOOL YouTubeGuardPassed(NSDictionary *result, BOOL enabled) {
 @property NSInteger enduranceCycle;
 @property NSInteger restartPhase;
 @property NSMutableArray *enduranceSamples;
+@property NSString *extensionID;
+@property LTPage *extensionPage;
+@property BOOL evaluatingExtension;
 - (void)begin;
 @end
 static LTSmoke *running;
@@ -113,6 +116,11 @@ static LTSmoke *running;
         _stage = 19;
         _normal.url = [_origin stringByAppendingString:@"content-blocking?phase=enabled"];
     }
+    for (NSString *argument in NSProcessInfo.processInfo.arguments)
+        if ([argument hasPrefix:@"--lite-extension-smoke="]) {
+            _stage = 300;
+            _extensionID = [argument substringFromIndex:23];
+        }
     if ([NSProcessInfo.processInfo.arguments containsObject:@"--lite-storage-reopen"] ||
         [NSProcessInfo.processInfo.arguments containsObject:@"--lite-storage-reset-check"]) {
         _stage = [NSProcessInfo.processInfo.arguments containsObject:@"--lite-storage-reopen"] ? 201 : 202;
@@ -741,6 +749,8 @@ static LTSmoke *running;
         }];
     } else if (_stage == 133 && NSDate.date.timeIntervalSince1970 - _settledAt > 5) {
         _results[@"permissionRestartSeeded"] = @NO; [self finish];
+    } else if (_stage >= 300 && _stage < 400) {
+        [self checkExtension];
     } else if ((_stage == 201 || _stage == 202) && !_normal.loading && [_normal.title isEqual:@"Lite storage test"]) {
         NSInteger phase = _stage; _stage = 203;
         [_normal evaluateJavaScript:[NSString stringWithFormat:@"(async()=>({storage:await %@,permission:Notification.permission}))()", StorageCheckScript]
@@ -762,6 +772,70 @@ static LTSmoke *running;
         _stage = 206;
         [_normal evaluateJavaScript:StorageSeedScript completion:^(id value, BOOL success) {
             self.results[@"allSiteStorageSeeded"] = @(success && [value isEqual:@YES]); [self finish];
+        }];
+    }
+}
+// Extensions are loaded by the runner through the profile's Extensions.json and
+// Lite's --load-extension switch, exactly as a user-added extension.
+- (void)checkExtension {
+    double now = NSDate.date.timeIntervalSince1970;
+    if (_evaluatingExtension) return;
+    if (_stage > 300 && now - _settledAt > 15) {
+        _results[@"extensionTimeoutStage"] = @(_stage);
+        _results[@"extensionPageTitle"] = _extensionPage.title ?: @"";
+        _results[@"extensionPageError"] = _extensionPage.errorText ?: @"";
+        [self finish];
+        return;
+    }
+    if (_stage == 300 && !_normal.loading && [_normal.title isEqual:@"Lite Test Page"]) {
+        _stage = 301;
+        _settledAt = now;
+    } else if (_stage == 301) {
+        _evaluatingExtension = YES;
+        [_normal evaluateJavaScript:@"document.documentElement.dataset.liteExtension || null" completion:^(id value, BOOL success) {
+            self.evaluatingExtension = NO;
+            self.results[@"extensionContentScriptState"] = value ?: NSNull.null;
+            if (![value isEqual:@"worker"]) return;
+            self.results[@"extensionContentScript"] = @YES;
+            self.results[@"extensionWorkerMessaging"] = @YES;
+            self.stage = 302;
+            self.settledAt = NSDate.date.timeIntervalSince1970;
+            self.extensionPage = [[LTPage alloc] initWithID:@"extension-popup"
+                url:[NSString stringWithFormat:@"chrome-extension://%@/popup.html", self.extensionID] context:self.normalContext];
+            self.extensionPage.delegate = self;
+            self.extensionPage.visible = YES;
+            [self.extensionPage enableAutoResizeWithMinimum:NSMakeSize(25, 25) maximum:NSMakeSize(800, 600)];
+            self.extensionPage.container.frame = NSMakeRect(0, 0, 320, 200);
+            [self.window.contentView addSubview:self.extensionPage.container];
+            [self.extensionPage loadIfNeeded];
+        }];
+    } else if (_stage == 302 && !_extensionPage.loading && [_extensionPage.title isEqual:@"Lite Extension Popup"]) {
+        _evaluatingExtension = YES;
+        [_extensionPage evaluateJavaScript:@"(async()=>({id:chrome.runtime.id,stored:(await chrome.storage.local.get('pinged')).pinged===true}))()"
+            completion:^(id value, BOOL success) {
+                self.evaluatingExtension = NO;
+                self.results[@"extensionPageAPIs"] = @(success && [value[@"id"] isEqual:self.extensionID] && [value[@"stored"] isEqual:@YES]);
+                self.stage = 303;
+                self.settledAt = NSDate.date.timeIntervalSince1970;
+            }];
+    } else if (_stage == 303 && (NSEqualSizes(_extensionPage.preferredSize, NSMakeSize(240, 120)) || now - _settledAt > 3)) {
+        _results[@"extensionPopupSize"] = NSStringFromSize(_extensionPage.preferredSize);
+        _results[@"extensionPopupAutoResize"] = @(NSEqualSizes(_extensionPage.preferredSize, NSMakeSize(240, 120)));
+        [_extensionPage closeConfirmed];
+        _privatePage = [[LTPage alloc] initWithID:@"private" url:_origin context:_privateContext];
+        _privatePage.delegate = self;
+        _privatePage.visible = YES;
+        _privatePage.container.frame = NSMakeRect(450, 0, 450, 640);
+        [_window.contentView addSubview:_privatePage.container];
+        [_privatePage loadIfNeeded];
+        _stage = 304;
+        _settledAt = now;
+    } else if (_stage == 304 && !_privatePage.loading && [_privatePage.title isEqual:@"Lite Test Page"] && now - _settledAt > 2) {
+        _evaluatingExtension = YES;
+        [_privatePage evaluateJavaScript:@"document.documentElement.dataset.liteExtension || null" completion:^(id value, BOOL success) {
+            self.evaluatingExtension = NO;
+            self.results[@"extensionNotInPrivate"] = @(success && (!value || value == NSNull.null));
+            [self finish];
         }];
     }
 }
@@ -892,6 +966,7 @@ static LTSmoke *running;
     [_privatePage close];
     [_proxyPage close];
     [_downloadPage close];
+    [_extensionPage close];
     for (LTPage *p in _benchmarkPages)
         [p close];
     LTQuitWhenBrowsersClose();

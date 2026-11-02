@@ -1,4 +1,5 @@
 #import "LTModel.h"
+#import "LTExtensions.h"
 #include <math.h>
 #include <float.h>
 
@@ -140,6 +141,7 @@ BOOL LTValidURL(NSString *text) {
     NSURLComponents *u = [NSURLComponents componentsWithString:text];
     if ([@[ @"http", @"https" ] containsObject:u.scheme.lowercaseString])
         return u.host.length > 0 && !u.user.length && !u.password.length;
+    if ([u.scheme isEqual:@"chrome-extension"]) return LTValidExtensionID(u.host);
     return [text isEqual:@"about:blank"] || ([u.scheme isEqual:@"chrome"] && u.host.length > 0);
 }
 NSString *LTURLFromInput(NSString *input, NSString *provider) {

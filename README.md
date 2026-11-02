@@ -55,10 +55,15 @@ launched process. The Codex Run action uses the same script.
 - Background freezing/discard policy with guards for edited forms, media, capture,
   downloads, visible panes, and explicitly protected tabs.
 - Native PiP requests and background media controls for supported HTML5 media.
+- Manifest V3 Chrome extensions in regular windows: install from the Chrome Web
+  Store (CRX3 signatures verified) or from an unpacked folder. Content scripts,
+  service workers, messaging, storage, action popups and options pages work.
+  See the [supported subset](docs/extensions.md).
 
 ## Release boundaries
 
-This CEF embedding does **not** provide Chrome Web Store extensions, Google
+This CEF embedding does **not** provide the full Chrome extension API (Alloy-style
+pages have no Chrome tab strip; see [extensions](docs/extensions.md)), Google
 password sync, licensed Widevine/proprietary codecs, or PWA installation.
 Sparkle update delivery is implemented but disabled in local builds: production
 requires the publisher's verification key, signed feed and notarized complete
@@ -87,6 +92,7 @@ measured results and remaining qualification work.
 - [Keyboard shortcuts](docs/shortcuts.md)
 - [Verification record](docs/verification.md)
 - [Native content blocking](docs/content-blocking.md)
+- [Chrome extensions](docs/extensions.md)
 
 CEF, Chromium, uBlock Origin Lite, and Public Suffix List notices are included in the application Resources directory.
 Lite contains no account service, telemetry SDK, AI subsystem, or proprietary Arc

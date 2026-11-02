@@ -53,7 +53,9 @@ and hosted CI are **unrun**, not passed. No battery improvement is claimed.
 
 ## Deliberate capability boundaries
 
-- No extension loading or Chrome Web Store UI, sync service, PWA installation or
+- Manifest V3 extensions load from the Chrome Web Store (verified CRX3) or
+  unpacked folders, but only the subset that works with CEF Alloy-style pages
+  (see [extensions](extensions.md)). No sync service, PWA installation or
   licensed Widevine/proprietary-codec integration was added.
 - Supported login submissions already offer native Save/Update prompts. Lite's
   profile-scoped encrypted vault keeps key material separately in macOS Keychain;

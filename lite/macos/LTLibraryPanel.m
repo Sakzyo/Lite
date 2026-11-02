@@ -99,7 +99,7 @@
         @[ @"Browser task manager…", @"taskManager" ],
         @[ @"Content blocking…", @"contentBlocking" ],
         @[ @"New GitHub Live Folder…", @"githubFolder" ],
-        @[ @"Extensions and compatibility", @"extensions" ]
+        @[ @"Extensions…", @"extensions" ]
     ];
     for (NSArray *a in actions) {
         NSButton *b = [NSButton buttonWithTitle:a[0] target:self action:@selector(action:)];

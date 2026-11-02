@@ -15,6 +15,7 @@ python3 script/test_updates.py 2>&1 | tee test-results/release/updates.log
 python3 script/test_endurance.py 2>&1 | tee test-results/release/endurance-runner.log
 python3 script/package.py 2>&1 | tee test-results/release/package.log
 python3 script/test_browser.py 2>&1 | tee test-results/release/browser.log
+python3 script/test_extensions.py 2>&1 | tee test-results/release/extensions.log
 python3 script/test_native.py 2>&1 | tee test-results/release/native.log
 codesign --verify --deep --strict dist/Lite.app
 codesign -dv --verbose=4 dist/Lite.app 2>test-results/release/signature.log

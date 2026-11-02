@@ -47,6 +47,9 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, readonly) NSString *contextIdentifier;
 @property (nonatomic, readonly) NSArray<NSDictionary *> *permissionGrants;
 @property (nonatomic, copy, nullable) NSDictionary *sessionState;
+/// Content size reported by Chromium after -enableAutoResizeWithMinimum:maximum:.
+@property (nonatomic) NSSize preferredSize;
+- (void)enableAutoResizeWithMinimum:(NSSize)minimum maximum:(NSSize)maximum;
 - (void)revokePermissions;
 - (void)clearSiteDataWithCompletion:(void (^)(BOOL success, NSString *message))completion;
 - (void)captureSessionState:(void (^)(void))completion;

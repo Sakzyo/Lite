@@ -10,6 +10,8 @@
 #import "LTTaskManager.h"
 #import "LTUpdater.h"
 #import "LTDownloadHistory.h"
+#import "LTExtensionsPanel.h"
+#import "../model/LTExtensions.h"
 #import "../model/LTWebsiteData.h"
 #include "include/cef_app.h"
 #include "include/cef_application_mac.h"
@@ -22,7 +24,9 @@
 #include <fcntl.h>
 static NSString *profileRoot;
 static BOOL smokeTest = NO;
-static BOOL testProfile = NO, websiteDataCleared = NO, relaunchAfterClear = NO;
+static BOOL testProfile = NO, websiteDataCleared = NO, relaunchAfterClear = NO, relaunchRequested = NO;
+static LTExtensions *extensions;
+static std::string extensionSwitch;
 
 @interface LTAppDelegate : NSObject <NSApplicationDelegate>
 @property LTStore *store;
@@ -38,6 +42,7 @@ static BOOL testProfile = NO, websiteDataCleared = NO, relaunchAfterClear = NO;
 @property BOOL confirmingQuit;
 @property LTUpdater *updater;
 @property LTDownloadHistory *downloads;
+@property LTExtensionsPanel *extensionsPanel;
 - (void)start;
 - (void)quit;
 @end
@@ -105,6 +110,14 @@ static BOOL testProfile = NO, websiteDataCleared = NO, relaunchAfterClear = NO;
     _github = [[LTGitHub alloc] initWithStore:_store logins:_logins];
     _shortcuts = [[LTShortcuts alloc] initWithStore:_store menu:NSApp.mainMenu];
     _taskManager = [LTTaskManager new];
+    _extensionsPanel = [[LTExtensionsPanel alloc] initWithExtensions:extensions];
+    __weak typeof(self) weakSelf = self;
+    _extensionsPanel.openURL = ^(NSString *url) {
+        LTWindow *window = [weakSelf current];
+        if (!window || window.store.privateMode || window.mini) window = [weakSelf newWindow:NO mini:NO state:nil];
+        [window openURL:url];
+        [window.window makeKeyAndOrderFront:nil];
+    };
     [NSNotificationCenter.defaultCenter addObserver:self
                                            selector:@selector(warmIcons)
                                                name:LTStoreChanged
@@ -124,6 +137,8 @@ static BOOL testProfile = NO, websiteDataCleared = NO, relaunchAfterClear = NO;
                                              object:nil];
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(clearAllWebsiteData:)
         name:@"LTClearAllWebsiteData" object:nil];
+    [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(restart:)
+        name:@"LTRestart" object:nil];
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(backupFailed:)
         name:LTStoreBackupFailed object:_store];
     NSArray *restore = [_store.profile.windows copy];
@@ -192,6 +207,7 @@ static BOOL testProfile = NO, websiteDataCleared = NO, relaunchAfterClear = NO;
                                            logins:_logins];
     if (!privateMode) [w setDownloadHistory:_downloads];
     w.github = privateMode ? nil : _github;
+    w.extensions = privateMode ? nil : extensions;
     [_windows addObject:w];
     __weak typeof(self) weak = self;
     w.didClose = ^(LTWindow *closed) {
@@ -248,6 +264,10 @@ static BOOL testProfile = NO, websiteDataCleared = NO, relaunchAfterClear = NO;
         [_shortcuts present];
     else if ([n.object isEqual:@"taskManager"])
         [_taskManager present];
+    else if ([n.object isEqual:@"extensions"]) {
+        if (n.userInfo[@"install"]) [_extensionsPanel installFromWebStore:n.userInfo[@"install"]];
+        else [_extensionsPanel present];
+    }
     else if ([n.object isEqual:@"newPrivate"])
         [self newWindow:YES mini:NO state:nil];
     else
@@ -298,7 +318,7 @@ static BOOL testProfile = NO, websiteDataCleared = NO, relaunchAfterClear = NO;
     void (^finish)(void) = ^{
         if (![self saveWindows]) {
             self.confirmingQuit = NO;
-            relaunchAfterClear = NO;
+            relaunchAfterClear = relaunchRequested = NO;
             LTAlert([self current].window, @"Lite could not save this session", @"Every page remains open. Check available disk space and profile permissions, then try again.");
             return;
         }
@@ -335,6 +355,17 @@ static BOOL testProfile = NO, websiteDataCleared = NO, relaunchAfterClear = NO;
     [alert addButtonWithTitle:@"Clear and Restart"];
     if ([alert runModal] != NSAlertSecondButtonReturn) return;
     relaunchAfterClear = YES;
+    [self finishQuit:YES];
+}
+- (void)restart:(NSNotification *)notification {
+    if (_quitting || _confirmingQuit) return;
+    NSAlert *alert = [NSAlert new];
+    alert.messageText = @"Restart Lite to apply extension changes?";
+    alert.informativeText = @"Chromium loads extensions only when it starts. Lite closes every window, including private windows, and reopens your saved tabs. Active downloads end and unsaved website work is lost.";
+    [alert addButtonWithTitle:@"Cancel"];
+    [alert addButtonWithTitle:@"Restart"];
+    if ([alert runModal] != NSAlertSecondButtonReturn) return;
+    relaunchRequested = YES;
     [self finishQuit:YES];
 }
 - (void)cancelQuit {
@@ -400,6 +431,7 @@ static BOOL testProfile = NO, websiteDataCleared = NO, relaunchAfterClear = NO;
             @[ @"Enter Full Screen", @"fullScreen", @"" ],
             @[ @"Developer Tools", @"devTools", @"I" ],
             @[ @"Browser Task Manager", @"taskManager", @"" ],
+            @[ @"Extensions…", @"extensions", @"" ],
             @[ @"Content Blocking…", @"contentBlocking", @"" ],
             @[ @"Keyboard Shortcuts…", @"shortcuts", @"" ]
         ],
@@ -483,6 +515,13 @@ class BrowserApp : public CefApp, public CefBrowserProcessHandler {
     }
     void OnBeforeCommandLineProcessing(const CefString &type,
                                        CefRefPtr<CefCommandLine> line) override {
+        if (type.empty() && !extensionSwitch.empty()) {
+            // Keep any developer-supplied directories alongside the profile's extensions.
+            std::string paths = extensionSwitch;
+            if (line->HasSwitch("load-extension"))
+                paths = line->GetSwitchValue("load-extension").ToString() + "," + paths;
+            line->AppendSwitchWithValue("load-extension", paths);
+        }
         if (type.empty()) {
             line->AppendSwitch("disable-background-networking");
             line->AppendSwitch("disable-component-update");
@@ -531,6 +570,8 @@ int main(int argc, char **argv) {
             LTAlert(nil, @"Website-data deletion could not finish", clearError.localizedDescription ?: @"The pending reset was preserved. Resolve the file error and reopen Lite to retry. Chromium was not started.");
             return 1;
         }
+        extensions = [[LTExtensions alloc] initWithProfilePath:base];
+        extensionSwitch = extensions.launchSwitch.UTF8String;
         CefSettings settings;
         CefString(&settings.root_cache_path) =
             [base stringByAppendingPathComponent:@"Chromium"].UTF8String;
@@ -559,7 +600,7 @@ int main(int argc, char **argv) {
         LTStopBrowserTaskMonitoring();
         CefShutdown();
         close(profileLock);
-        if (relaunchAfterClear) {
+        if (relaunchAfterClear || relaunchRequested) {
             NSMutableArray *arguments = [NSMutableArray arrayWithObjects:@"-n", NSBundle.mainBundle.bundlePath, nil];
             if (testProfile) {
                 [arguments addObjectsFromArray:@[@"--args", [@"--lite-test-profile=" stringByAppendingString:profileRoot]]];
