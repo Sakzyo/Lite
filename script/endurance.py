@@ -19,7 +19,7 @@ import uuid
 from test_processes import stop_app
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-APP = ROOT/'dist/Lite.app'
+APP = ROOT/'dist/LiteTest.app'
 
 
 def run_phase(command, output, profile, timeout):

@@ -1,8 +1,10 @@
 #import "../model/LTLoginStore.h"
 #import "../model/LTGitHub.h"
 #import "../performance/LTPerformance.h"
+#ifdef LITE_TEST_BUILD
 #import "../tests/LTSmoke.h"
 #import "../tests/LTNativeSmoke.h"
+#endif
 #import "LTFaviconCache.h"
 #import "LTUI.h"
 #import "LTWindow.h"
@@ -23,8 +25,12 @@
 #include <sys/file.h>
 #include <fcntl.h>
 static NSString *profileRoot;
-static BOOL smokeTest = NO;
-static BOOL testProfile = NO, websiteDataCleared = NO, relaunchAfterClear = NO, relaunchRequested = NO;
+#ifdef LITE_TEST_BUILD
+static BOOL smokeTest = NO, testProfile = NO;
+#else
+static const BOOL testProfile = NO;
+#endif
+static BOOL websiteDataCleared = NO, relaunchAfterClear = NO, relaunchRequested = NO;
 static LTExtensions *extensions;
 static std::string extensionSwitch;
 
@@ -66,11 +72,13 @@ static std::string extensionSwitch;
     _windows = [NSMutableArray new];
     [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
     [self buildMenu];
+#ifdef LITE_TEST_BUILD
     if (smokeTest) {
         LTRunSmoke(@"http://127.0.0.1:18743/",
                    [profileRoot stringByAppendingPathComponent:@"smoke-results.json"]);
         return;
     }
+#endif
     NSString *base = profileRoot;
     NSError *e = nil;
     _store = [[LTStore alloc] initWithPath:[base stringByAppendingPathComponent:@"Lite.sqlite"]
@@ -183,11 +191,13 @@ static std::string extensionSwitch;
     if (_store.backupError) [self backupFailed:nil];
     if (websiteDataCleared) LTAlert(_windows.firstObject.window, historyClearError ? @"Website storage cleared; history deletion needs attention" : @"Website data cleared", historyClearError.localizedDescription ?: @"Cookies, HTTP cache, local storage, IndexedDB, service workers, Cache Storage, engine permissions and other Chromium profile storage were removed before the browser engine started. Bookmarks, organization and saved passwords were kept. Preserved damaged-profile copies remain untouched. Select a tab to load it again.");
     os_log_info(OS_LOG_DEFAULT, "Lite native browser started");
+#ifdef LITE_TEST_BUILD
     NSString *start = NSProcessInfo.processInfo.environment[@"LITE_START_URL"];
     if (start.length)
         [_windows.firstObject openURL:start];
     if (testProfile && [NSProcessInfo.processInfo.arguments containsObject:@"--lite-native-smoke"])
         LTRunNativeSmoke(_windows.firstObject, [profileRoot stringByAppendingPathComponent:@"native-results.json"], ^{ [self finishQuit:YES]; });
+#endif
 }
 - (void)warmIcons {
     [_icons prefetchNodes:_store.profile.nodes];
@@ -294,10 +304,12 @@ static std::string extensionSwitch;
 - (void)quit {
     if (_quitting || _confirmingQuit)
         return;
+#ifdef LITE_TEST_BUILD
     if (testProfile && [NSProcessInfo.processInfo.arguments containsObject:@"--lite-native-measure"]) {
         [self finishQuit:YES];
         return;
     }
+#endif
     if (LTLivingBrowserCount() > 1) {
         _confirmingQuit = YES;
         NSAlert *alert = [NSAlert new];
@@ -545,6 +557,7 @@ int main(int argc, char **argv) {
             NSProcessInfo.processInfo.environment[@"LITE_PROFILE_DIR"]
                 ?: [NSHomeDirectory()
                        stringByAppendingPathComponent:@"Library/Application Support/Lite"];
+#ifdef LITE_TEST_BUILD
         for (int i = 1; i < argc; i++) {
             NSString *arg = @(argv[i]);
             if ([arg hasPrefix:@"--lite-test-profile="]) {
@@ -554,6 +567,7 @@ int main(int argc, char **argv) {
             if ([arg isEqual:@"--lite-smoke"])
                 smokeTest = YES;
         }
+#endif
         profileRoot = base;
         NSError *directoryError = nil;
         if (![NSFileManager.defaultManager createDirectoryAtPath:base withIntermediateDirectories:YES
@@ -602,10 +616,12 @@ int main(int argc, char **argv) {
         close(profileLock);
         if (relaunchAfterClear || relaunchRequested) {
             NSMutableArray *arguments = [NSMutableArray arrayWithObjects:@"-n", NSBundle.mainBundle.bundlePath, nil];
+#ifdef LITE_TEST_BUILD
             if (testProfile) {
                 [arguments addObjectsFromArray:@[@"--args", [@"--lite-test-profile=" stringByAppendingString:profileRoot]]];
                 if ([NSProcessInfo.processInfo.arguments containsObject:@"--use-mock-keychain"]) [arguments addObject:@"--use-mock-keychain"];
             }
+#endif
             [NSTask launchedTaskWithLaunchPath:@"/usr/bin/open" arguments:arguments];
         }
         return 0;

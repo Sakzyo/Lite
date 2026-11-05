@@ -3,7 +3,7 @@
 import base64, hashlib, json, os, pathlib, platform, plistlib, signal, subprocess, sys, time, urllib.request, uuid
 from test_processes import stop_app
 root = pathlib.Path(__file__).resolve().parents[1]
-app = pathlib.Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else root/'dist/Lite.app'
+app = pathlib.Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else root/'dist/LiteTest.app'
 def interrupted(signum, frame):
     raise KeyboardInterrupt
 signal.signal(signal.SIGTERM, interrupted)

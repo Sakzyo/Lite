@@ -156,6 +156,7 @@ static void UpdateYouTubeGuard(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame
         entry.second->GetHost()->CloseBrowser(true);
     }
 }
+#ifdef LITE_TEST_BUILD
 - (BOOL)configureFixtureProxyForTesting {
     if (!_privateMode || ![NSProcessInfo.processInfo.arguments containsObject:@"--lite-smoke"]) return NO;
     auto value = CefValue::Create();
@@ -167,6 +168,7 @@ static void UpdateYouTubeGuard(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame
     CefString error;
     return _context->SetPreference("proxy", value, error);
 }
+#endif
 - (void)updateBlockingPreferences:(NSDictionary *)preferences {
     [_blocking updatePreferences:preferences];
     for (auto &entry : browsers) {
@@ -770,6 +772,7 @@ class Client : public CefClient,
     bool OnBeforeDownload(CefRefPtr<CefBrowser>, CefRefPtr<CefDownloadItem>,
                           const CefString &suggested,
                           CefRefPtr<CefBeforeDownloadCallback> cb) override {
+#ifdef LITE_TEST_BUILD
         if ([NSProcessInfo.processInfo.arguments containsObject:@"--lite-smoke"]) {
             for (NSString *argument in NSProcessInfo.processInfo.arguments) {
                 if (![argument hasPrefix:@"--lite-test-profile="]) continue;
@@ -780,6 +783,7 @@ class Client : public CefClient,
                 return true;
             }
         }
+#endif
         NSString *path = DownloadPath([NSHomeDirectory() stringByAppendingPathComponent:@"Downloads"], N(suggested));
         if (path) cb->Continue(C(path), true);
         return true;
@@ -1247,9 +1251,11 @@ static void CancelBrowserRequests(CefRefPtr<CefBrowser> browser) {
     if ([action isEqual:@"resume"])
         it->second->Resume();
 }
+#ifdef LITE_TEST_BUILD
 - (void)evaluateForTesting:(NSString *)expression completion:(void (^)(id, BOOL))completion {
     [self evaluateJavaScript:expression completion:completion];
 }
+#endif
 - (void)evaluateJavaScript:(NSString *)expression completion:(void (^)(id, BOOL))completion {
     if (!_browser) {
         completion(nil, NO);
