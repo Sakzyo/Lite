@@ -180,7 +180,11 @@ static BOOL CanUseLogin(LTPage *page, NSString *origin) {
                     NSString *script = LTLoginFillScript(entry, password);
                     [page evaluateJavaScript:script
                                   completion:^(id value, BOOL success) {
-                                    if ((!success || ![value isEqual:@YES]) && window.visible)
+                                    // The fill script's events are synthetic, so the page
+                                    // observer ignores them. Filled fields still need guarding.
+                                    if (success && [value isEqual:@YES])
+                                        page.dirty = YES;
+                                    else if (window.visible)
                                         LTAlert(
                                             window, @"Login was not filled",
                                             @"Use a visible login form on this website. Cross-site "

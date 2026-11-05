@@ -98,10 +98,21 @@ static BOOL YouTubeGuardPassed(NSDictionary *result, BOOL enabled) {
 @property NSString *extensionID;
 @property LTPage *extensionPage;
 @property BOOL evaluatingExtension;
+@property NSTimeInterval stageDeadline;
 - (void)begin;
 @end
 static LTSmoke *running;
 @implementation LTSmoke
+- (void)clickTrusted {
+    for (NSString *type in @[@"mousePressed", @"mouseReleased"])
+        [_normal sendDevToolsMethodForTesting:@"Input.dispatchMouseEvent" parameters:@{@"type": type, @"x": @20, @"y": @20, @"button": @"left", @"clickCount": @1}];
+}
+// A background application has no focused page, and text input needs one.
+- (void)typeTrustedText:(NSString *)text {
+    [_normal sendDevToolsMethodForTesting:@"Emulation.setFocusEmulationEnabled" parameters:@{@"enabled": @YES}];
+    [_normal sendDevToolsMethodForTesting:@"Input.insertText" parameters:@{@"text": text}];
+    [_normal sendDevToolsMethodForTesting:@"Emulation.setFocusEmulationEnabled" parameters:@{@"enabled": @NO}];
+}
 - (void)begin {
     _results = [NSMutableDictionary new];
     _results[@"processID"] = @(getpid());
@@ -248,11 +259,9 @@ static LTSmoke *running;
                           @(success && ![value[@"cookie"] containsString:@"liteSmoke"] &&
                             value[@"storage"] == NSNull.null);
                       self.stage = 6;
-                      [self.normal
-                          evaluateForTesting:@"document.querySelector('input').value='edited';"
-                                             @"document.querySelector('input').dispatchEvent(new "
-                                             @"Event('input',{bubbles:true}));true"
-                                  completion:^(id v, BOOL ok){
+                      [self.normal evaluateForTesting:@"document.querySelector('input').focus();true"
+                                  completion:^(id v, BOOL ok) {
+                                      [self typeTrustedText:@"edited"];
                                   }];
                     }];
     } else if (_stage == 6 && _normal.dirty) {
@@ -555,6 +564,45 @@ static LTSmoke *running;
         [_downloadPage close]; _stage = 148;
     } else if (_stage == 148 && !_downloadPage.alive) {
         _results[@"downloadClosureStopsMetadata"] = @(![_lastDownload[@"active"] boolValue] && ![_lastDownload[@"canResume"] boolValue] && !_downloadPage.downloading);
+        _stage = 180;
+        [_normal navigate:[_origin stringByAppendingString:@"lifecycle-probe"]];
+    } else if (_stage == 180 && !_normal.loading && [_normal.title isEqual:@"Lite lifecycle probe"]) {
+        _stage = 181;
+        // The page attacks the observer from its own scripts, with no real input.
+        // Let any resulting messages arrive before reading the flags.
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 800 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
+            self.results[@"lifecycleSelfProtectionRejected"] = @(!self.normal.dirty && !self.normal.audible && !self.normal.pictureInPicture);
+            [self.normal evaluateJavaScript:@"window.liteProbeResult" completion:^(id value, BOOL success) {
+                self.results[@"lifecycleProbe"] = value ?: @{};
+                self.results[@"lifecycleBridgeHidden"] = @(success && [value[@"mainNames"] isEqual:@[]] && [value[@"frameNames"] isEqual:@[]] && [value[@"bridgeType"] isEqual:@"undefined"]);
+                self.results[@"lifecycleAttacksExecuted"] = @(success && [value[@"finished"] isEqual:@YES] && [value[@"clickWasTrusted"] isEqual:@YES]);
+                self.results[@"lifecycleClosureUnreachable"] = @(success && [value[@"capturedListeners"] isEqual:@0] && [value[@"stackFunctions"] isEqual:@0]);
+                [self clickTrusted];
+                self.stage = 182;
+            }];
+        });
+    } else if (_stage == 182 && _normal.dirty) {
+        _results[@"lifecycleStrictCSP"] = @YES;
+        _normal.dirty = NO; _stage = 183;
+        [_normal evaluateJavaScript:@"liteProbePlay()" completion:^(id value, BOOL success) {
+            self.results[@"lifecycleMediaElementPlaying"] = @(success && [value isEqual:@YES]);
+        }];
+    } else if (_stage == 183 && _normal.audible && _results[@"lifecycleMediaElementPlaying"]) {
+        _normal.visible = NO; [_normal freeze:YES]; [_normal discard];
+        _results[@"lifecycleMediaElementProtected"] = @(_normal.alive && !_normal.frozen && [_results[@"lifecycleMediaElementPlaying"] boolValue]);
+        _normal.visible = YES; _stage = 184;
+        // liteProbePause also adds a non-media <video> that makes a naive check throw.
+        [_normal evaluateJavaScript:@"liteProbePause()" completion:^(id value, BOOL success) {}];
+    } else if (_stage == 184 && !_normal.audible) {
+        _results[@"lifecycleMediaElementReleased"] = @YES;
+        _stage = 185; _stageDeadline = NSDate.date.timeIntervalSince1970 + 8;
+        [_normal enterPictureInPicture];
+    } else if (_stage == 185 && (_normal.pictureInPicture || NSDate.date.timeIntervalSince1970 > _stageDeadline)) {
+        _results[@"lifecyclePictureInPictureProtected"] = @(_normal.pictureInPicture);
+        _stage = 186; _stageDeadline = NSDate.date.timeIntervalSince1970 + 8;
+        [_normal evaluateJavaScript:@"document.exitPictureInPicture().then(()=>true)" completion:^(id value, BOOL success) {}];
+    } else if (_stage == 186 && (!_normal.pictureInPicture || NSDate.date.timeIntervalSince1970 > _stageDeadline)) {
+        _results[@"lifecyclePictureInPictureReleased"] = @(!_normal.pictureInPicture);
         _stage = 149;
         [_normal navigate:[_origin stringByAppendingString:@"storage?permissions"]];
     } else if (_stage == 149 && !_normal.loading && [_normal.title isEqual:@"Lite storage test"]) {
@@ -572,16 +620,29 @@ static LTSmoke *running;
     } else if (_stage == 154 && !_normal.audible) {
         _results[@"webAudioProtectionReleased"] = @([_results[@"webAudioClosed"] boolValue]);
         _stage = 150;
-        [_normal evaluateJavaScript:@"document.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true}));true" completion:^(id value, BOOL success) {}];
+        [self clickTrusted];
     } else if (_stage == 150 && _normal.dirty) {
         _normal.visible = NO; [_normal freeze:YES]; [_normal discard];
         _results[@"pointerInteractionProtected"] = @(_normal.alive && !_normal.frozen);
         _normal.visible = YES; _normal.dirty = NO; _stage = 151;
-        [_normal evaluateJavaScript:@"document.dispatchEvent(new KeyboardEvent('keydown',{key:'a',bubbles:true}));true" completion:^(id value, BOOL success) {}];
+        [_normal sendDevToolsMethodForTesting:@"Input.dispatchKeyEvent" parameters:@{@"type": @"rawKeyDown", @"key": @"a", @"code": @"KeyA", @"windowsVirtualKeyCode": @65}];
+        [_normal sendDevToolsMethodForTesting:@"Input.dispatchKeyEvent" parameters:@{@"type": @"keyUp", @"key": @"a", @"code": @"KeyA", @"windowsVirtualKeyCode": @65}];
     } else if (_stage == 151 && _normal.dirty) {
         _results[@"keyboardInteractionProtected"] = @YES;
-        _normal.dirty = NO; _stage = 152;
-        [_normal evaluateJavaScript:@"document.dispatchEvent(new Event('change',{bubbles:true}));true" completion:^(id value, BOOL success) {}];
+        _normal.dirty = NO; _stage = 155;
+        [_normal evaluateJavaScript:@"(()=>{const field=document.createElement('input');document.body.append(field);field.focus();return true})()" completion:^(id value, BOOL success) {
+            [self typeTrustedText:@"edited"];
+        }];
+    } else if (_stage == 155 && _normal.dirty) {
+        _results[@"inputInteractionProtected"] = @YES;
+        _stage = 156;
+        // Clear the flag only after the edit's messages have all arrived, so the
+        // change event alone has to raise it again.
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 300 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
+            self.normal.dirty = NO;
+            self.stage = 152;
+            [self.normal evaluateJavaScript:@"document.activeElement.blur();true" completion:^(id value, BOOL success) {}];
+        });
     } else if (_stage == 152 && _normal.dirty) {
         _results[@"changeInteractionProtected"] = @YES;
         _stage = 160;

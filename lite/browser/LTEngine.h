@@ -85,6 +85,7 @@ NS_ASSUME_NONNULL_BEGIN
 #ifdef LITE_TEST_BUILD
 - (void)evaluateForTesting:(NSString *)expression
                 completion:(void (^)(id _Nullable value, BOOL success))completion;
+- (void)sendDevToolsMethodForTesting:(NSString *)method parameters:(NSDictionary *)parameters;
 #endif
 - (void)evaluateJavaScript:(NSString *)expression
                 completion:(void (^)(id _Nullable value, BOOL success))completion;

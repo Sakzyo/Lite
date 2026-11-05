@@ -1255,6 +1255,17 @@ static void CancelBrowserRequests(CefRefPtr<CefBrowser> browser) {
 - (void)evaluateForTesting:(NSString *)expression completion:(void (^)(id, BOOL))completion {
     [self evaluateJavaScript:expression completion:completion];
 }
+// CDP's Input domain enters through the browser process, so pages see trusted events.
+- (void)sendDevToolsMethodForTesting:(NSString *)method parameters:(NSDictionary *)parameters {
+    auto params = CefDictionaryValue::Create();
+    for (NSString *key in parameters) {
+        id value = parameters[key];
+        if ([value isKindOfClass:NSString.class]) params->SetString(C(key), C(value));
+        else if (CFGetTypeID((__bridge CFTypeRef)value) == CFBooleanGetTypeID()) params->SetBool(C(key), [value boolValue]);
+        else params->SetDouble(C(key), [value doubleValue]);
+    }
+    _browser->GetHost()->ExecuteDevToolsMethod(NextDevToolsID(), C(method), params);
+}
 #endif
 - (void)evaluateJavaScript:(NSString *)expression completion:(void (^)(id, BOOL))completion {
     if (!_browser) {

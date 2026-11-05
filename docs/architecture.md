@@ -60,6 +60,27 @@ It cannot access files, the organization database, permissions, navigation, or
 native application commands. Media actions use Chromium's existing page/media
 mechanisms. This is browser plumbing, not a user script/customization subsystem.
 
+The helper compiles the observer with `CefV8Context::Eval` before any page script
+runs and passes the native callback to it as an argument, so the callback never
+exists on `window`. The observer captures the builtins it needs and calls nothing a
+page can replace. A site cannot call the callback or fake a signal:
+
+- Interaction counts only for trusted events. `input` and `change` also need a user
+  gesture in the frame, because `element.click()` raises them as trusted events from
+  script. Paste and drop count without one, because Lite's menu routing keeps Command-V
+  from reaching the page as a `keydown`.
+- Media and Picture in Picture state come from the real elements and contexts, read
+  through the captured accessors. Forged events only cause a truthful re-check.
+- Lite's login fill dispatches synthetic events, so `LTPasswords` raises the guard
+  natively instead.
+
+Two limits remain, and both need main-world code to go away or an isolated world:
+
+- A site can still stay protected by really using media, such as a running silent
+  `AudioContext` or a playing muted video. Both raise the flag as designed.
+- `AudioContext` is still a `Proxy`, so `Function.prototype.toString` shows it as
+  `function () { [native code] }` instead of naming it. A site can detect that wrapper.
+
 Website popups retain Chromium's opener and request context, including private
 contexts. Downloads use CEF callbacks and the system save dialog. Permission
 decisions are explicit prompts; camera/microphone additionally require macOS TCC.
@@ -133,8 +154,8 @@ Becomes possible:
 - Session restore through `NavigationController::Restore`, including back/forward
   history after restart and discard of tabs with history.
 - Extension install, auto-update and enable/disable without restarting the engine.
-- Injected code in an isolated world, instead of page-visible globals such as
-  `__liteLifecycle`.
+- Injected code in an isolated world, instead of main-world code that a page can
+  detect, such as the `AudioContext` wrapper.
 - Request hooks that cover WebSockets.
 
 Becomes harder:
