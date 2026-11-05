@@ -32,6 +32,7 @@ def main():
     parser.add_argument('--nodes', type=int, default=2000)
     parser.add_argument('--duration', type=int, default=15)
     parser.add_argument('--mixed', action='store_true', help='Three separate origins: document, canvas and storage application fixtures')
+    parser.add_argument('--save-probe', action='store_true', help='Also measure main-thread gaps during saves in the running app; use with --nodes 10000')
     args = parser.parse_args()
     args.output.parent.mkdir(parents=True, exist_ok=True)
     profile = pathlib.Path(os.environ.get('LITE_TEST_PROFILE', ROOT / '.build' / ('native-measure-' + uuid.uuid4().hex[:8]))).resolve()
@@ -100,7 +101,7 @@ def main():
     started = time.monotonic()
     subprocess.run(['open', '-n', str(ROOT / 'dist/LiteTest.app'), '--stdout', str(profile/'stdout.log'),
                     '--stderr', str(profile/'stderr.log'), '--args', '--lite-test-profile='+str(profile),
-                    '--use-mock-keychain', '--lite-native-measure'], check=True)
+                    '--use-mock-keychain', '--lite-native-measure', *(['--lite-save-probe'] if args.save_probe else [])], check=True)
     pid = None
     result = dict(workload='native-three-origin-document-canvas-storage' if args.mixed else 'native-2000-pin-single-loopback-page', nodes=args.nodes,
                   profile=str(profile), architecture=os.uname().machine,
@@ -126,6 +127,14 @@ def main():
                       idleFixtureRequests=len(events)-request_start,
                       networkScope='fixture requests only; no system-wide traffic capture',
                       fixtureRequests=len(events))
+        if args.save_probe:
+            probe = profile / 'save-probe.json'
+            deadline = time.monotonic() + 300
+            while not probe.exists() and time.monotonic() < deadline:
+                time.sleep(.5)
+            if not probe.exists():
+                raise RuntimeError('The save probe did not finish within 5 minutes')
+            result['saveProbe'] = json.loads(probe.read_text())
     except Exception as error:
         result['error'] = str(error)
     finally:

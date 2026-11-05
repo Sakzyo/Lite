@@ -1,0 +1,804 @@
+{
+ "date": "2026-11-05",
+ "machine": "Apple Silicon, 10 cores, 32 GiB RAM",
+ "macOS": "26.5.2",
+ "store": {
+  "before": [
+   {
+    "results": [
+     {
+      "commit": {
+       "median_ms": 8.072312501099077,
+       "p95_ms": 8.607458334154217
+      },
+      "sorted_serialization": {
+       "median_ms": 7.376333333013463,
+       "p95_ms": 7.596458333864575
+      },
+      "open": {
+       "median_ms": 14.92739583227376,
+       "p95_ms": 15.292958334612194
+      },
+      "frame_probe": {
+       "ticks": 1632,
+       "mode": "synchronous",
+       "main_call": {
+        "median_ms": 20.897375001368346,
+        "p95_ms": 23.069458333338844
+       },
+       "saved_durably_after": {
+        "median_ms": 20.89622916901135,
+        "p95_ms": 23.068166665325407
+       },
+       "saves": 40,
+       "largest_main_thread_gap_ms": 25.045166665222496,
+       "gaps_over_budget": 36,
+       "frame_budget_ms": 16.666666666666668
+      },
+      "copy": {
+       "median_ms": 0.2426249993732199,
+       "p95_ms": 0.2505416669009719
+      },
+      "serialize": {
+       "median_ms": 3.1584791649947874,
+       "p95_ms": 3.225333333830349
+      },
+      "nodes": 2000,
+      "validate": {
+       "median_ms": 4.545416666587698,
+       "p95_ms": 4.616124999301974
+      }
+     },
+     {
+      "commit": {
+       "median_ms": 41.05474999960279,
+       "p95_ms": 43.07412499838392
+      },
+      "sorted_serialization": {
+       "median_ms": 37.074854166348814,
+       "p95_ms": 37.600458334054565
+      },
+      "open": {
+       "median_ms": 72.20004166811123,
+       "p95_ms": 72.99699999930453
+      },
+      "frame_probe": {
+       "ticks": 1152,
+       "mode": "synchronous",
+       "main_call": {
+        "median_ms": 44.185020835357136,
+        "p95_ms": 45.403749998513376
+       },
+       "saved_durably_after": {
+        "median_ms": 44.18466666720633,
+        "p95_ms": 45.40354166601901
+       },
+       "saves": 40,
+       "largest_main_thread_gap_ms": 58.559541666909354,
+       "gaps_over_budget": 39,
+       "frame_budget_ms": 16.666666666666668
+      },
+      "copy": {
+       "median_ms": 1.2083333331247559,
+       "p95_ms": 1.245249997737119
+      },
+      "serialize": {
+       "median_ms": 15.891041668510297,
+       "p95_ms": 16.38154166721506
+      },
+      "nodes": 10000,
+      "validate": {
+       "median_ms": 22.425354167353362,
+       "p95_ms": 22.73441666693543
+      }
+     }
+    ],
+    "workload": "20 durable commits editing one title, then 40 saves 100 ms apart on a live main run loop with a 2 ms tick; fixed synthetic pinned nodes; -O3"
+   },
+   {
+    "results": [
+     {
+      "commit": {
+       "median_ms": 8.200729165764642,
+       "p95_ms": 8.98741666605929
+      },
+      "sorted_serialization": {
+       "median_ms": 7.418354167384678,
+       "p95_ms": 7.961291667015757
+      },
+      "open": {
+       "median_ms": 14.871125000354368,
+       "p95_ms": 15.21258333377773
+      },
+      "frame_probe": {
+       "ticks": 1634,
+       "mode": "synchronous",
+       "main_call": {
+        "median_ms": 20.616541667550337,
+        "p95_ms": 22.736833332601236
+       },
+       "saved_durably_after": {
+        "median_ms": 20.6157083321159,
+        "p95_ms": 22.736374998203246
+       },
+       "saves": 40,
+       "largest_main_thread_gap_ms": 23.869000000559026,
+       "gaps_over_budget": 38,
+       "frame_budget_ms": 16.666666666666668
+      },
+      "copy": {
+       "median_ms": 0.2438541669107508,
+       "p95_ms": 0.2518333349144086
+      },
+      "serialize": {
+       "median_ms": 3.1565000008413335,
+       "p95_ms": 3.3297500012849923
+      },
+      "nodes": 2000,
+      "validate": {
+       "median_ms": 4.599312500431552,
+       "p95_ms": 4.654625001421664
+      }
+     },
+     {
+      "commit": {
+       "median_ms": 41.057937500227126,
+       "p95_ms": 42.58937499980675
+      },
+      "sorted_serialization": {
+       "median_ms": 36.92631249941769,
+       "p95_ms": 37.39966666762484
+      },
+      "open": {
+       "median_ms": 72.45016666638548,
+       "p95_ms": 73.43379166559316
+      },
+      "frame_probe": {
+       "ticks": 1137,
+       "mode": "synchronous",
+       "main_call": {
+        "median_ms": 44.554604166478384,
+        "p95_ms": 46.65104166633682
+       },
+       "saved_durably_after": {
+        "median_ms": 44.554270833032206,
+        "p95_ms": 46.65066666711937
+       },
+       "saves": 40,
+       "largest_main_thread_gap_ms": 56.18920833512675,
+       "gaps_over_budget": 39,
+       "frame_budget_ms": 16.666666666666668
+      },
+      "copy": {
+       "median_ms": 1.210708334838273,
+       "p95_ms": 1.2477916679927148
+      },
+      "serialize": {
+       "median_ms": 15.7777916683699,
+       "p95_ms": 16.30624999961583
+      },
+      "nodes": 10000,
+      "validate": {
+       "median_ms": 22.44566666740866,
+       "p95_ms": 22.674499999993714
+      }
+     }
+    ],
+    "workload": "20 durable commits editing one title, then 40 saves 100 ms apart on a live main run loop with a 2 ms tick; fixed synthetic pinned nodes; -O3"
+   },
+   {
+    "results": [
+     {
+      "commit": {
+       "median_ms": 8.35620833277062,
+       "p95_ms": 8.925375001126667
+      },
+      "sorted_serialization": {
+       "median_ms": 7.480270833184477,
+       "p95_ms": 7.751500001177192
+      },
+      "open": {
+       "median_ms": 14.986083331677946,
+       "p95_ms": 15.522500001679873
+      },
+      "frame_probe": {
+       "ticks": 1648,
+       "mode": "synchronous",
+       "main_call": {
+        "median_ms": 20.03535416770319,
+        "p95_ms": 21.34437499989872
+       },
+       "saved_durably_after": {
+        "median_ms": 20.034499999383115,
+        "p95_ms": 21.34387499972945
+       },
+       "saves": 40,
+       "largest_main_thread_gap_ms": 23.024041667667916,
+       "gaps_over_budget": 38,
+       "frame_budget_ms": 16.666666666666668
+      },
+      "copy": {
+       "median_ms": 0.2436875001876615,
+       "p95_ms": 0.2622083338792436
+      },
+      "serialize": {
+       "median_ms": 3.171437499986496,
+       "p95_ms": 3.252124999562511
+      },
+      "nodes": 2000,
+      "validate": {
+       "median_ms": 4.627041666026344,
+       "p95_ms": 4.720000000816071
+      }
+     },
+     {
+      "commit": {
+       "median_ms": 41.007770832948154,
+       "p95_ms": 42.73129166540457
+      },
+      "sorted_serialization": {
+       "median_ms": 36.863416666164994,
+       "p95_ms": 37.65125000063563
+      },
+      "open": {
+       "median_ms": 73.31904166676395,
+       "p95_ms": 74.36179166688817
+      },
+      "frame_probe": {
+       "ticks": 1157,
+       "mode": "synchronous",
+       "main_call": {
+        "median_ms": 44.059229165213765,
+        "p95_ms": 46.260125000117114
+       },
+       "saved_durably_after": {
+        "median_ms": 44.058895833586575,
+        "p95_ms": 46.25954166840529
+       },
+       "saves": 40,
+       "largest_main_thread_gap_ms": 56.83587500243448,
+       "gaps_over_budget": 39,
+       "frame_budget_ms": 16.666666666666668
+      },
+      "copy": {
+       "median_ms": 1.2033750008413335,
+       "p95_ms": 1.220000001922017
+      },
+      "serialize": {
+       "median_ms": 15.84579166592448,
+       "p95_ms": 16.35487500243471
+      },
+      "nodes": 10000,
+      "validate": {
+       "median_ms": 22.362437501215027,
+       "p95_ms": 22.583541667700047
+      }
+     }
+    ],
+    "workload": "20 durable commits editing one title, then 40 saves 100 ms apart on a live main run loop with a 2 ms tick; fixed synthetic pinned nodes; -O3"
+   }
+  ],
+  "after": [
+   {
+    "results": [
+     {
+      "commit": {
+       "median_ms": 8.62550000056217,
+       "p95_ms": 9.23283333395375
+      },
+      "sorted_serialization": {
+       "median_ms": 7.464979167707497,
+       "p95_ms": 7.648499999049818
+      },
+      "open": {
+       "median_ms": 15.375333332485752,
+       "p95_ms": 15.567875001579523
+      },
+      "frame_probe": {
+       "ticks": 2010,
+       "mode": "queued",
+       "main_call": {
+        "median_ms": 0.02285416667291429,
+        "p95_ms": 0.03387499964446761
+       },
+       "saved_durably_after": {
+        "median_ms": 22.463187497123727,
+        "p95_ms": 24.042875000304775
+       },
+       "saves": 40,
+       "largest_main_thread_gap_ms": 3.3564166660653427,
+       "gaps_over_budget": 0,
+       "frame_budget_ms": 16.666666666666668
+      },
+      "copy": {
+       "median_ms": 0.23583333313581534,
+       "p95_ms": 0.24750000011408702
+      },
+      "serialize": {
+       "median_ms": 3.23810416739434,
+       "p95_ms": 3.3720833343977574
+      },
+      "nodes": 2000,
+      "validate": {
+       "median_ms": 4.586041666698293,
+       "p95_ms": 4.635583332856186
+      }
+     },
+     {
+      "commit": {
+       "median_ms": 42.9525208328414,
+       "p95_ms": 44.706125001539476
+      },
+      "sorted_serialization": {
+       "median_ms": 37.178395832597744,
+       "p95_ms": 37.778500001877546
+      },
+      "open": {
+       "median_ms": 73.74897916633927,
+       "p95_ms": 75.29208333289716
+      },
+      "frame_probe": {
+       "ticks": 2021,
+       "mode": "queued",
+       "main_call": {
+        "median_ms": 0.009854167728917673,
+        "p95_ms": 0.014000001101521775
+       },
+       "saved_durably_after": {
+        "median_ms": 46.02272916781658,
+        "p95_ms": 48.791250002977904
+       },
+       "saves": 40,
+       "largest_main_thread_gap_ms": 2.9628333322762046,
+       "gaps_over_budget": 0,
+       "frame_budget_ms": 16.666666666666668
+      },
+      "copy": {
+       "median_ms": 1.1764791670429986,
+       "p95_ms": 1.213541669130791
+      },
+      "serialize": {
+       "median_ms": 16.144145833095536,
+       "p95_ms": 16.468291665660217
+      },
+      "nodes": 10000,
+      "validate": {
+       "median_ms": 22.380604166755802,
+       "p95_ms": 22.655083335848758
+      }
+     }
+    ],
+    "workload": "20 durable commits editing one title, then 40 saves 100 ms apart on a live main run loop with a 2 ms tick; fixed synthetic pinned nodes; -O3"
+   },
+   {
+    "results": [
+     {
+      "commit": {
+       "median_ms": 8.687312498295796,
+       "p95_ms": 9.252041665604338
+      },
+      "sorted_serialization": {
+       "median_ms": 7.507833333875169,
+       "p95_ms": 7.632124998053769
+      },
+      "open": {
+       "median_ms": 15.235249999022926,
+       "p95_ms": 15.467416666069767
+      },
+      "frame_probe": {
+       "ticks": 2006,
+       "mode": "queued",
+       "main_call": {
+        "median_ms": 0.021854166334378533,
+        "p95_ms": 0.03270833258284256
+       },
+       "saved_durably_after": {
+        "median_ms": 22.701145831888425,
+        "p95_ms": 24.104125001031207
+       },
+       "saves": 40,
+       "largest_main_thread_gap_ms": 10.403749998658895,
+       "gaps_over_budget": 0,
+       "frame_budget_ms": 16.666666666666668
+      },
+      "copy": {
+       "median_ms": 0.24702083464944735,
+       "p95_ms": 0.2631666648085229
+      },
+      "serialize": {
+       "median_ms": 3.1721249979455024,
+       "p95_ms": 3.2902499988267664
+      },
+      "nodes": 2000,
+      "validate": {
+       "median_ms": 4.6708541667612735,
+       "p95_ms": 4.8285416669386905
+      }
+     },
+     {
+      "commit": {
+       "median_ms": 42.710770832854905,
+       "p95_ms": 44.925375001184875
+      },
+      "sorted_serialization": {
+       "median_ms": 37.08104166616977,
+       "p95_ms": 37.54412499984028
+      },
+      "open": {
+       "median_ms": 73.7088333335123,
+       "p95_ms": 74.74079166422598
+      },
+      "frame_probe": {
+       "ticks": 2022,
+       "mode": "queued",
+       "main_call": {
+        "median_ms": 0.008625000191386789,
+        "p95_ms": 0.015666664694435894
+       },
+       "saved_durably_after": {
+        "median_ms": 45.96033333291416,
+        "p95_ms": 49.44695833182777
+       },
+       "saves": 40,
+       "largest_main_thread_gap_ms": 3.164249999827007,
+       "gaps_over_budget": 0,
+       "frame_budget_ms": 16.666666666666668
+      },
+      "copy": {
+       "median_ms": 1.2056666673743166,
+       "p95_ms": 1.2334166676737368
+      },
+      "serialize": {
+       "median_ms": 15.944583336022333,
+       "p95_ms": 16.285166664602002
+      },
+      "nodes": 10000,
+      "validate": {
+       "median_ms": 22.31187500001397,
+       "p95_ms": 22.771166666643694
+      }
+     }
+    ],
+    "workload": "20 durable commits editing one title, then 40 saves 100 ms apart on a live main run loop with a 2 ms tick; fixed synthetic pinned nodes; -O3"
+   },
+   {
+    "results": [
+     {
+      "commit": {
+       "median_ms": 8.743874999709078,
+       "p95_ms": 9.404541669937316
+      },
+      "sorted_serialization": {
+       "median_ms": 7.540166665421566,
+       "p95_ms": 7.754041667794809
+      },
+      "open": {
+       "median_ms": 15.312583333070506,
+       "p95_ms": 15.621541668224381
+      },
+      "frame_probe": {
+       "ticks": 2009,
+       "mode": "queued",
+       "main_call": {
+        "median_ms": 0.029479166187229566,
+        "p95_ms": 0.04041666761622764
+       },
+       "saved_durably_after": {
+        "median_ms": 22.485479166789446,
+        "p95_ms": 24.254666666820413
+       },
+       "saves": 40,
+       "largest_main_thread_gap_ms": 3.026958333066432,
+       "gaps_over_budget": 0,
+       "frame_budget_ms": 16.666666666666668
+      },
+      "copy": {
+       "median_ms": 0.2409791650279658,
+       "p95_ms": 0.24954166656243615
+      },
+      "serialize": {
+       "median_ms": 3.1841458312555915,
+       "p95_ms": 3.304541667603189
+      },
+      "nodes": 2000,
+      "validate": {
+       "median_ms": 4.636104167730082,
+       "p95_ms": 4.682541664806195
+      }
+     },
+     {
+      "commit": {
+       "median_ms": 42.935479166771984,
+       "p95_ms": 44.42804166683345
+      },
+      "sorted_serialization": {
+       "median_ms": 36.758770831511356,
+       "p95_ms": 37.28324999974575
+      },
+      "open": {
+       "median_ms": 73.86620833494817,
+       "p95_ms": 74.5992500014836
+      },
+      "frame_probe": {
+       "ticks": 2021,
+       "mode": "queued",
+       "main_call": {
+        "median_ms": 0.00866666596266441,
+        "p95_ms": 0.014624998584622517
+       },
+       "saved_durably_after": {
+        "median_ms": 45.70387499916251,
+        "p95_ms": 48.53112499768031
+       },
+       "saves": 40,
+       "largest_main_thread_gap_ms": 2.934624997578794,
+       "gaps_over_budget": 0,
+       "frame_budget_ms": 16.666666666666668
+      },
+      "copy": {
+       "median_ms": 1.1790000007749768,
+       "p95_ms": 1.2104999987059273
+      },
+      "serialize": {
+       "median_ms": 15.812395833563642,
+       "p95_ms": 16.331708335201256
+      },
+      "nodes": 10000,
+      "validate": {
+       "median_ms": 22.499354165120167,
+       "p95_ms": 22.829000001365785
+      }
+     }
+    ],
+    "workload": "20 durable commits editing one title, then 40 saves 100 ms apart on a live main run loop with a 2 ms tick; fixed synthetic pinned nodes; -O3"
+   }
+  ]
+ },
+ "app": {
+  "after": [
+   {
+    "launchToDOMReadySeconds": 1.0901952089989209,
+    "gracefulExit": true,
+    "nodes": 10000,
+    "kinds": [
+     {
+      "ticks": 1839,
+      "gapsOverBudget": 0,
+      "mainCallMedianMs": 0.01875000074505806,
+      "saves": 12,
+      "kind": "quiet",
+      "largestGapMs": 2.5023749992251396,
+      "savedDurablyMedianMs": 77.86916666477919
+     },
+     {
+      "ticks": 1833,
+      "gapsOverBudget": 0,
+      "mainCallMedianMs": 0.01629166677594185,
+      "saves": 12,
+      "kind": "organization",
+      "largestGapMs": 4.623041667044163,
+      "savedDurablyMedianMs": 79.09404166787863
+     },
+     {
+      "ticks": 1828,
+      "gapsOverBudget": 0,
+      "mainCallMedianMs": 0.016499999910593033,
+      "saves": 12,
+      "kind": "structure",
+      "largestGapMs": 5.823041666299105,
+      "savedDurablyMedianMs": 83.4776250012219
+     }
+    ],
+    "windowRefreshMedianMs": 0.38212500140070915
+   },
+   {
+    "launchToDOMReadySeconds": 1.0606194159990991,
+    "gracefulExit": true,
+    "nodes": 10000,
+    "kinds": [
+     {
+      "ticks": 1838,
+      "gapsOverBudget": 0,
+      "mainCallMedianMs": 0.02058333531022072,
+      "saves": 12,
+      "kind": "quiet",
+      "largestGapMs": 2.508708331733942,
+      "savedDurablyMedianMs": 77.61754166334867
+     },
+     {
+      "ticks": 1834,
+      "gapsOverBudget": 0,
+      "mainCallMedianMs": 0.017999999225139618,
+      "saves": 12,
+      "kind": "organization",
+      "largestGapMs": 4.6027083322405815,
+      "savedDurablyMedianMs": 78.39208333194256
+     },
+     {
+      "ticks": 1832,
+      "gapsOverBudget": 0,
+      "mainCallMedianMs": 0.01850000023841858,
+      "saves": 12,
+      "kind": "structure",
+      "largestGapMs": 5.783291667699814,
+      "savedDurablyMedianMs": 84.22904166579247
+     }
+    ],
+    "windowRefreshMedianMs": 0.3660416677594185
+   },
+   {
+    "launchToDOMReadySeconds": 0.8236112919985317,
+    "gracefulExit": true,
+    "nodes": 10000,
+    "kinds": [
+     {
+      "ticks": 1820,
+      "gapsOverBudget": 2,
+      "mainCallMedianMs": 0.02162500098347664,
+      "saves": 12,
+      "kind": "quiet",
+      "largestGapMs": 22.704874996095896,
+      "savedDurablyMedianMs": 77.33291666582227
+     },
+     {
+      "ticks": 1834,
+      "gapsOverBudget": 0,
+      "mainCallMedianMs": 0.019999999552965164,
+      "saves": 12,
+      "kind": "organization",
+      "largestGapMs": 4.836249999701977,
+      "savedDurablyMedianMs": 80.22879166528583
+     },
+     {
+      "ticks": 1831,
+      "gapsOverBudget": 0,
+      "mainCallMedianMs": 0.016374997794628143,
+      "saves": 12,
+      "kind": "structure",
+      "largestGapMs": 5.676458336412907,
+      "savedDurablyMedianMs": 83.32412499934435
+     }
+    ],
+    "windowRefreshMedianMs": 0.368583332747221
+   },
+   {
+    "launchToDOMReadySeconds": 1.286784040999919,
+    "gracefulExit": true,
+    "nodes": 2000,
+    "kinds": [
+     {
+      "ticks": 1815,
+      "gapsOverBudget": 0,
+      "mainCallMedianMs": 0.018416665494441986,
+      "saves": 12,
+      "kind": "quiet",
+      "largestGapMs": 3.7710416689515114,
+      "savedDurablyMedianMs": 29.837708335369825
+     },
+     {
+      "ticks": 1808,
+      "gapsOverBudget": 0,
+      "mainCallMedianMs": 0.01770833507180214,
+      "saves": 12,
+      "kind": "organization",
+      "largestGapMs": 6.071750000119209,
+      "savedDurablyMedianMs": 31.87787500023842
+     },
+     {
+      "ticks": 1796,
+      "gapsOverBudget": 0,
+      "mainCallMedianMs": 0.022166665643453598,
+      "saves": 12,
+      "kind": "structure",
+      "largestGapMs": 7.90104166790843,
+      "savedDurablyMedianMs": 33.35637500137091
+     }
+    ],
+    "windowRefreshMedianMs": 0.2669166699051857
+   },
+   {
+    "launchToDOMReadySeconds": 2.835319290999905,
+    "gracefulExit": true,
+    "nodes": 500,
+    "kinds": [
+     {
+      "ticks": 1804,
+      "gapsOverBudget": 0,
+      "mainCallMedianMs": 0.024583332240581512,
+      "saves": 12,
+      "kind": "quiet",
+      "largestGapMs": 2.5267083309590816,
+      "savedDurablyMedianMs": 9.984708331525326
+     },
+     {
+      "ticks": 1773,
+      "gapsOverBudget": 0,
+      "mainCallMedianMs": 0.023375000804662704,
+      "saves": 12,
+      "kind": "organization",
+      "largestGapMs": 10.496374998241663,
+      "savedDurablyMedianMs": 11.128708332777023
+     },
+     {
+      "ticks": 1762,
+      "gapsOverBudget": 0,
+      "mainCallMedianMs": 0.021166671067476273,
+      "saves": 12,
+      "kind": "structure",
+      "largestGapMs": 12.566208332777023,
+      "savedDurablyMedianMs": 13.317874997854233
+     }
+    ],
+    "windowRefreshMedianMs": 0.3267916664481163
+   }
+  ],
+  "before": [
+   {
+    "launchToDOMReadySeconds": 1.5421517079994373,
+    "gracefulExit": true,
+    "nodes": 2000,
+    "kinds": [
+     {
+      "ticks": 1794,
+      "gapsOverBudget": 11,
+      "mainCallMedianMs": 37.37566666677594,
+      "saves": 12,
+      "kind": "quiet",
+      "largestGapMs": 44.110208336263895,
+      "savedDurablyMedianMs": 37.373708330094814
+     },
+     {
+      "ticks": 1584,
+      "gapsOverBudget": 15,
+      "mainCallMedianMs": 391.7817500010133,
+      "saves": 12,
+      "kind": "organization",
+      "largestGapMs": 438.8226666674018,
+      "savedDurablyMedianMs": 391.78141666948795
+     },
+     {
+      "ticks": 1566,
+      "gapsOverBudget": 15,
+      "mainCallMedianMs": 393.8244583308697,
+      "saves": 12,
+      "kind": "structure",
+      "largestGapMs": 440.4319166652858,
+      "savedDurablyMedianMs": 393.823833335191
+     }
+    ],
+    "windowRefreshMedianMs": 338.60237499698997
+   }
+  ],
+  "before10000": {
+   "nodes": 10000,
+   "result": "No DOM-ready beacon within 240 seconds; the probe could not start",
+   "error": "Native page did not send DOM-ready beacon within 240 seconds"
+  },
+  "writerOnly": {
+   "note": "Background writer with the sidebar and favicon scan not yet fixed",
+   "launchToDOMReadySeconds": 20.153600583998923,
+   "nodes": 10000,
+   "kinds": [
+    {
+     "ticks": 1606,
+     "gapsOverBudget": 14,
+     "mainCallMedianMs": 0.021041668951511383,
+     "saves": 12,
+     "kind": "quiet",
+     "largestGapMs": 41.93566666543484,
+     "savedDurablyMedianMs": 105.14779167249799
+    },
+    {
+     "ticks": 900,
+     "gapsOverBudget": 12,
+     "mainCallMedianMs": 0.006250001490116119,
+     "saves": 12,
+     "kind": "organization",
+     "largestGapMs": 35281.25920833647,
+     "savedDurablyMedianMs": 16026.719458334148
+    }
+   ],
+   "windowRefreshMedianMs": 7877.722000002861
+  }
+ }
+}

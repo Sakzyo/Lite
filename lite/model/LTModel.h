@@ -43,7 +43,12 @@ FOUNDATION_EXPORT NSString *LTSearchURL(NSString *query, NSString *provider);
 + (nullable instancetype)fromJSON:(NSDictionary *)json error:(NSError **)error;
 - (NSDictionary *)JSON;
 - (LTProfile *)transactionCopy;
+// Builds lookups for a model that will no longer change. LTStore seals each model on its writer
+// before publishing it, so these are cheap on the main thread however long the sidebar is.
+- (void)seal;
 - (nullable LTNode *)node:(NSString *)identifier;
+// Every node in a Space, keyed by parent identifier ("" for the top level), in sidebar order.
+- (NSDictionary<NSString *, NSArray<LTNode *> *> *)childrenInSpace:(NSString *)space;
 - (nullable LTSpace *)space:(NSString *)identifier;
 - (NSArray<LTNode *> *)children:(NSString *)parent
                           space:(NSString *)space

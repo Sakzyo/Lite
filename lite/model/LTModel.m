@@ -259,7 +259,35 @@ NSString *LTSearchURL(NSString *query, NSString *provider) {
     return @{@"id" : _identifier, @"name" : _name, @"selected" : _selectedID};
 }
 @end
-@implementation LTProfile
+static NSComparisonResult CompareSiblings(LTNode *a, LTNode *b) {
+    if (a.order != b.order)
+        return a.order < b.order ? NSOrderedAscending : NSOrderedDescending;
+    return [a.identifier compare:b.identifier];
+}
+// Space identifier -> parent identifier -> sorted children, in one pass over the nodes.
+static NSDictionary *GroupChildren(NSArray<LTNode *> *nodes) {
+    NSMutableDictionary *spaces = [NSMutableDictionary new];
+    for (LTNode *n in nodes) {
+        NSMutableDictionary *parents = spaces[n.spaceID];
+        if (!parents)
+            spaces[n.spaceID] = parents = [NSMutableDictionary new];
+        NSMutableArray *siblings = parents[n.parentID];
+        if (!siblings)
+            parents[n.parentID] = siblings = [NSMutableArray new];
+        [siblings addObject:n];
+    }
+    for (NSString *space in spaces)
+        for (NSString *parent in spaces[space])
+            [spaces[space][parent] sortUsingComparator:^NSComparisonResult(LTNode *a, LTNode *b) {
+              return CompareSiblings(a, b);
+            }];
+    return spaces;
+}
+
+@implementation LTProfile {
+    NSDictionary<NSString *, LTNode *> *_nodeIndex;
+    NSDictionary *_childIndex;
+}
 - (instancetype)init {
     if ((self = [super init])) {
         _spaces = [NSMutableArray new];
@@ -338,7 +366,20 @@ NSString *LTSearchURL(NSString *query, NSString *provider) {
         @"windows" : _windows
     };
 }
+- (void)seal {
+    NSMutableDictionary *index = [NSMutableDictionary dictionaryWithCapacity:_nodes.count];
+    for (LTNode *n in _nodes)
+        index[n.identifier] = n;
+    _nodeIndex = index;
+    _childIndex = GroupChildren(_nodes);
+}
+- (NSDictionary<NSString *, NSArray<LTNode *> *> *)childrenInSpace:(NSString *)space {
+    NSDictionary *children = _childIndex ? _childIndex[space] : GroupChildren(_nodes)[space];
+    return children ?: @{};
+}
 - (LTNode *)node:(NSString *)identifier {
+    if (_nodeIndex)
+        return _nodeIndex[identifier];
     for (LTNode *n in _nodes)
         if ([n.identifier isEqual:identifier])
             return n;
@@ -357,9 +398,7 @@ NSString *LTSearchURL(NSString *query, NSString *provider) {
             (!kind || [n.kind isEqual:kind]))
             [a addObject:n];
     return [a sortedArrayUsingComparator:^NSComparisonResult(LTNode *a, LTNode *b) {
-      if (a.order != b.order)
-          return a.order < b.order ? NSOrderedAscending : NSOrderedDescending;
-      return [a.identifier compare:b.identifier];
+      return CompareSiblings(a, b);
     }];
 }
 - (LTSpace *)addSpace:(NSString *)name {

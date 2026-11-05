@@ -220,6 +220,64 @@ Only after the commit succeeds does the in-memory model change. SQLite uses WAL
 and `synchronous=FULL`. Schema version 1 is explicit; future unknown versions fail
 closed. A corrupt/unsupported profile is not silently overwritten.
 
+### Background writer
+
+Each store has one serial writer queue. Organization saves, visit recording, history
+deletion and recovery backups all run on it, so they reach the database in the order
+they were made. Copying, validating, serializing and committing all happen there.
+
+`commit:completion:` queues a save and returns at once. Its change block runs later, on
+the writer, against a copy of the last committed model, so it can touch only that copy
+and immutable values captured beforehand. It must not read `self`, AppKit objects or
+pages. Whatever a block captured is released on the main thread.
+
+`store.profile` holds committed state only. It changes on the main thread after
+`COMMIT` succeeds, so code must not expect to read a queued save back straight away.
+Work that needs the saved result goes in the completion, which runs on the main thread
+after the model updates, in submission order. Writes that finish together post one
+`LTStoreChanged`. A save that the writing window has already drawn, such as a page
+title, names that window with `quietFor:` so it can skip its redraw.
+
+History reads use a second, read-only connection. WAL lets them see the last commit
+while the writer is inside the next one, so the Command Bar never waits on a save. They
+do not show a visit that is still queued.
+
+`commit:error:` remains for launch and quit. It blocks until that save and everything
+queued before it finish, which costs a full save on the main thread.
+
+A published model is read-only, because the writer reads it to start the next save while the
+main thread reads it to draw. The writer seals each model before publishing it, which builds
+lookups for `node:` and `childrenInSpace:` so they cost the main thread nothing. Sealing is why
+a model must never be changed after it is published.
+
+**When a queued write fails.** The user may already have moved on, so a failure has to
+be safe at any later point:
+
+- The failed write is dropped. SQLite rolls back, and the model stays at the last commit.
+- Writes queued behind it still run. Each starts from the last commit, not from the
+  dropped write, and is validated on its own, so one that depended on the dropped write
+  either has no effect or fails validation by itself.
+- Nothing is retried. A failing disk would fail again, and a change block may not be safe
+  to run twice.
+- `LTStoreChanged` is posted anyway, so windows redraw from the committed model. A tab that
+  was closed comes back as an unloaded row, and a row that was added disappears.
+- The user gets one alert for a burst of failures, saying the unsaved change was undone. A
+  caller that passes a completion can handle the error itself: moving a tab shows its own
+  alert, and the Shortcuts panel shows the error inline.
+- Window layout saves and visit recording only log. They run constantly in the background,
+  and an alert for each would be noise.
+
+**Quit and crash.** Quitting finishes the queue, then saves window state and waits. If that
+save fails, or an earlier queued write fails, the quit stops with every page open, as a
+failed window save always has. After Chromium shuts down, `close` finishes anything pages
+wrote while closing, checkpoints the WAL and refuses further writes. It runs before the
+profile lock is released, so a new instance can never open a profile that still has writes
+in progress.
+
+A crash loses only what was still queued, normally a single save. Writes commit one at a
+time and in order, so the database is always a clean prefix of what was submitted, and WAL
+recovery on the next launch needs nothing from the app.
+
 Pinned URL and current navigated URL are distinct. Custom titles are distinct from
 page titles. Node IDs are stable UUIDs, independent of Arc IDs. Folder parent/Space
 relationships, cycles, duplicates, selected tabs, and URLs are validated together.

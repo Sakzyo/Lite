@@ -34,12 +34,18 @@ static void FillRounded(NSRect rect, CGFloat radius, NSColor *color, BOOL lifted
 }
 
 @interface LTSidebarCell : NSTableCellView
+@property NSArray *shown;
 @property NSButton *closeButton;
 @property NSLayoutConstraint *closeWidth;
 @property BOOL accessoryAlwaysVisible;
 @end
 @implementation LTSidebarCell
 @end
+// The fields of a node that a row draws. Page state has its own path through updateItem:. Folders
+// also draw Live Folder status from outside the node, so they always redraw.
+static NSArray *ShownFields(LTNode *n) {
+    return @[ n.displayTitle ?: @"", n.url ?: @"", n.kind ?: @"", n.favicon ?: @"" ];
+}
 
 // Arc-style rows: a rounded, lifted card for the selected tab and a soft hover wash.
 @interface LTSidebarRowView : NSTableRowView
@@ -209,6 +215,14 @@ static void FillRounded(NSRect rect, CGFloat radius, NSColor *color, BOOL lifted
     NSString *_selectedID;
     NSLayoutConstraint *_stackTop, *_stackTrailing, *_stackBottom;
     BOOL _refreshing;
+    // What the outline is showing. Its items can be older than the store's model, so read a node's
+    // fields from `_store.profile`. Weak, so that this does not make the main thread free old models.
+    __weak LTProfile *_treeProfile;
+    NSString *_treeSpace;
+    NSDictionary<NSString *, NSArray<LTNode *> *> *_treeGroups;
+    NSDictionary<NSString *, LTNode *> *_treeItems;
+    NSSet<NSString *> *_treeExpanded;
+    NSArray *_chrome;  // What the Favorites and Spaces views were last built from.
 }
 - (instancetype)initWithStore:(LTStore *)store header:(NSView *)header {
     if ((self = [super initWithFrame:NSZeroRect])) {
@@ -307,22 +321,15 @@ static void FillRounded(NSRect rect, CGFloat radius, NSColor *color, BOOL lifted
     [super layout];
     [_tree sizeLastColumnToFit];
 }
-- (void)commit:(void (^)(LTProfile *))block {
-    NSError *e = nil;
-    if (![_store commit:block error:&e])
-        LTAlert(self.window, @"Could not save", e.localizedDescription);
+// Queued, and `block` runs on the writer, so it must not read `self` or views.
+- (void)commit:(LTProfileChange)block {
+    [_store commit:block completion:nil];
 }
-- (void)refreshSpace:(NSString *)spaceID selected:(NSString *)selectedID {
-    BOOL selectionChanged = ![_selectedID isEqual:selectedID];
-    _refreshing = YES;
-    _spaceID = spaceID;
-    _selectedID = selectedID;
-    _spaceName.stringValue = [_store.profile space:spaceID].name ?: @"Space";
+- (void)rebuildFavorites:(NSArray *)favorites space:(NSString *)spaceID selected:(NSString *)selectedID {
     for (NSView *v in [_favorites.arrangedSubviews copy]) {
         [_favorites removeArrangedSubview:v];
         [v removeFromSuperview];
     }
-    NSArray *favorites = [_store.profile children:@"" space:@"" kind:@"favorite"];
     NSStackView *row = nil;
     for (NSUInteger i = 0; i < favorites.count; i++) {
         LTNode *n = favorites[i];
@@ -392,22 +399,62 @@ static void FillRounded(NSRect rect, CGFloat radius, NSColor *color, BOOL lifted
         [b.widthAnchor constraintEqualToConstant:26].active = YES;
         [b.heightAnchor constraintEqualToConstant:28].active = YES;
         __weak typeof(self) weak = self;
+        NSString *targetSpace = s.identifier;
         b.drop = ^(NSString *identifier) {
           [weak commit:^(LTProfile *p) {
             if ([[p node:identifier].kind isEqual:@"favorite"])
                 return;
-            [p moveNode:identifier space:s.identifier parent:@"" index:NSIntegerMax error:nil];
+            [p moveNode:identifier space:targetSpace parent:@"" index:NSIntegerMax error:nil];
           }];
         };
         [_spaces addArrangedSubview:b];
     }
-    [_tree reloadData];
-    [_tree expandItem:@"Pinned"];
-    [_tree expandItem:@"Today"];
-    for (LTNode *n in _store.profile.nodes)
-        if ([n.kind isEqual:@"folder"] && n.expanded && [n.spaceID isEqual:spaceID])
-            [_tree expandItem:n];
-    NSInteger rowIndex = [_tree rowForItem:[_store.profile node:selectedID]];
+}
+- (void)refreshSpace:(NSString *)spaceID selected:(NSString *)selectedID {
+    BOOL selectionChanged = ![_selectedID isEqual:selectedID];
+    _refreshing = YES;
+    _spaceID = spaceID;
+    _selectedID = selectedID;
+    _spaceName.stringValue = [_store.profile space:spaceID].name ?: @"Space";
+    NSArray *favorites = [_store.profile children:@"" space:@"" kind:@"favorite"];
+    // Most saves touch neither Favorites nor Spaces, and rebuilding those views forces a layout pass.
+    NSMutableArray *chrome = [NSMutableArray arrayWithObjects:spaceID ?: @"", selectedID ?: @"", nil];
+    for (LTNode *n in favorites)
+        [chrome addObjectsFromArray:@[ n.identifier, n.displayTitle ]];
+    for (LTSpace *s in _store.profile.spaces)
+        [chrome addObjectsFromArray:@[ s.identifier, s.name ]];
+    [chrome addObject:_store.profile.settings[@"spaceThemes"] ?: @{}];
+    if (![chrome isEqual:_chrome]) {
+        _chrome = chrome;
+        [self rebuildFavorites:favorites space:spaceID selected:selectedID];
+    }
+    BOOL shapeChanged = [self updateTree:spaceID];
+    if (shapeChanged) {
+        [_tree reloadData];
+        [_tree expandItem:@"Pinned"];
+        [_tree expandItem:@"Today"];
+        for (LTNode *n in _store.profile.nodes)
+            if ([n.kind isEqual:@"folder"] && n.expanded && [n.spaceID isEqual:spaceID])
+                [_tree expandItem:n];
+    } else {
+        // Rows out of view are built from the current model when they scroll in. Of those in view,
+        // only a row whose content changed is rebuilt, because rebuilding one is not cheap.
+        NSRange visible = [_tree rowsInRect:_tree.visibleRect];
+        NSMutableIndexSet *rows = [NSMutableIndexSet new];
+        for (NSUInteger index = visible.location; index < NSMaxRange(visible); index++) {
+            id item = [_tree itemAtRow:index];
+            if (![item isKindOfClass:LTNode.class])
+                continue;
+            LTNode *n = [_store.profile node:((LTNode *)item).identifier] ?: item;
+            LTSidebarCell *cell = [_tree viewAtColumn:0 row:index makeIfNecessary:NO];
+            if (![cell isKindOfClass:LTSidebarCell.class] || [n.kind isEqual:@"folder"] ||
+                ![cell.shown isEqual:ShownFields(n)])
+                [rows addIndex:index];
+        }
+        if (rows.count)
+            [_tree reloadDataForRowIndexes:rows columnIndexes:[NSIndexSet indexSetWithIndex:0]];
+    }
+    NSInteger rowIndex = [_tree rowForItem:_treeItems[selectedID]];
     if (rowIndex >= 0) {
         [_tree selectRowIndexes:[NSIndexSet indexSetWithIndex:rowIndex] byExtendingSelection:NO];
         if (selectionChanged)
@@ -425,28 +472,150 @@ static void FillRounded(NSRect rect, CGFloat radius, NSColor *color, BOOL lifted
                                                 accessibilityDescription:nil];
                 button.needsDisplay = YES;
             }
-    for (NSInteger row = 0; row < _tree.numberOfRows; row++) {
-        id item = [_tree itemAtRow:row];
-        if ([item isKindOfClass:LTNode.class] && [((LTNode *)item).identifier isEqual:identifier]) {
-            [_tree reloadDataForRowIndexes:[NSIndexSet indexSetWithIndex:row]
-                             columnIndexes:[NSIndexSet indexSetWithIndex:0]];
-            break;
-        }
+    NSInteger row = [_tree rowForItem:_treeItems[identifier]];
+    if (row >= 0)
+        [_tree reloadDataForRowIndexes:[NSIndexSet indexSetWithIndex:row]
+                         columnIndexes:[NSIndexSet indexSetWithIndex:0]];
+}
+// Rows are held in groups: one per folder, keyed by its identifier, and one per section.
+static NSString *const PinnedGroup = @"\1Pinned", *const TodayGroup = @"\1Today";
+static const NSUInteger MaxRowChanges = 64;
+static NSDictionary<NSString *, NSArray<LTNode *> *> *SidebarGroups(NSDictionary<NSString *, NSArray<LTNode *> *> *children) {
+    NSMutableDictionary *groups = [children mutableCopy];
+    NSMutableArray *pinned = [NSMutableArray new], *today = [NSMutableArray new];
+    for (LTNode *n in children[@""])
+        [[n.kind isEqual:@"temporary"] ? today : pinned addObject:n];
+    [groups removeObjectForKey:@""];
+    groups[PinnedGroup] = pinned;
+    groups[TodayGroup] = today;
+    return groups;
+}
+static BOOL SameRows(NSArray<LTNode *> *a, NSArray<LTNode *> *b) {
+    if (a.count != b.count)
+        return NO;
+    for (NSUInteger i = 0; i < a.count; i++)
+        if (![a[i].identifier isEqual:b[i].identifier])
+            return NO;
+    return YES;
+}
+// The outline asks for a node's children once per row, so the answer must be a lookup, and a full
+// reload costs time in proportion to the whole sidebar. So a save changes only what it has to. When
+// the rows are the same (a new title, a window position) the outline keeps its items and the rows on
+// screen redraw. When a few rows came or went (a new tab, a closed tab) only those change.
+// Returns YES when the outline has to reload.
+- (BOOL)updateTree:(NSString *)spaceID {
+    LTProfile *profile = _store.profile;
+    BOOL sameSpace = [spaceID isEqual:_treeSpace];
+    if (profile == _treeProfile && sameSpace)
+        return NO;
+    _treeProfile = profile;
+    NSDictionary *groups = SidebarGroups([profile childrenInSpace:spaceID]);
+    NSMutableSet<NSString *> *expanded = [NSMutableSet new];
+    for (NSString *key in groups)
+        for (LTNode *n in groups[key])
+            if (n.expanded && [n.kind isEqual:@"folder"])
+                [expanded addObject:n.identifier];
+    if (sameSpace && [self applyGroups:groups]) {
+        NSMutableSet *opened = [expanded mutableCopy], *closed = [_treeExpanded mutableCopy];
+        [opened minusSet:_treeExpanded];
+        [closed minusSet:expanded];
+        for (NSString *identifier in opened)
+            [_tree expandItem:_treeItems[identifier]];
+        // A folder that was removed has no item, and collapsing nil would mean the whole outline.
+        for (NSString *identifier in closed)
+            if (_treeItems[identifier])
+                [_tree collapseItem:_treeItems[identifier]];
+        _treeExpanded = expanded;
+        return NO;
     }
+    _treeSpace = spaceID;
+    _treeGroups = groups;
+    _treeExpanded = expanded;
+    NSMutableDictionary *items = [NSMutableDictionary new];
+    for (NSString *key in groups)
+        for (LTNode *n in groups[key])
+            items[n.identifier] = n;
+    _treeItems = items;
+    return YES;
+}
+// Returns NO, having changed nothing, when the difference is more than rows coming and going.
+- (BOOL)applyGroups:(NSDictionary<NSString *, NSArray<LTNode *> *> *)groups {
+    // The separator in the Today heading depends on Pinned being empty.
+    if ((_treeGroups[PinnedGroup].count == 0) != (groups[PinnedGroup].count == 0))
+        return NO;
+    NSMutableDictionary *merged = [_treeGroups mutableCopy];
+    NSMutableArray<LTNode *> *gone = [NSMutableArray new], *arrived = [NSMutableArray new];
+    NSMutableArray<NSArray *> *removals = [NSMutableArray new], *insertions = [NSMutableArray new];
+    NSMutableSet *keys = [NSMutableSet setWithArray:_treeGroups.allKeys];
+    [keys addObjectsFromArray:groups.allKeys];
+    for (NSString *key in keys) {
+        NSArray<LTNode *> *before = _treeGroups[key] ?: @[], *after = groups[key] ?: @[];
+        if (SameRows(before, after))
+            continue;
+        id parent = [key isEqual:PinnedGroup] ? @"Pinned" : [key isEqual:TodayGroup] ? @"Today" : _treeItems[key];
+        if (!parent)
+            return NO;
+        NSMutableSet *beforeIDs = [NSMutableSet setWithCapacity:before.count], *afterIDs = [NSMutableSet setWithCapacity:after.count];
+        for (LTNode *n in before)
+            [beforeIDs addObject:n.identifier];
+        for (LTNode *n in after)
+            [afterIDs addObject:n.identifier];
+        NSMutableIndexSet *removed = [NSMutableIndexSet new], *inserted = [NSMutableIndexSet new];
+        NSMutableArray<LTNode *> *rows = [NSMutableArray arrayWithCapacity:after.count];
+        for (NSUInteger i = 0; i < before.count; i++)
+            if (![afterIDs containsObject:before[i].identifier]) {
+                [removed addIndex:i];
+                [gone addObject:before[i]];
+            }
+        NSUInteger next = 0;
+        for (NSUInteger i = 0; i < after.count; i++) {
+            if (![beforeIDs containsObject:after[i].identifier]) {
+                [inserted addIndex:i];
+                [arrived addObject:after[i]];
+                [rows addObject:after[i]];
+                continue;
+            }
+            while ([removed containsIndex:next])
+                next++;
+            // A row that stayed keeps its item, which is how the outline knows it. One out of order is a move.
+            if (![before[next].identifier isEqual:after[i].identifier])
+                return NO;
+            [rows addObject:before[next++]];
+        }
+        merged[key] = rows;
+        if (removed.count)
+            [removals addObject:@[ parent, removed ]];
+        if (inserted.count)
+            [insertions addObject:@[ parent, inserted ]];
+    }
+    if (gone.count + arrived.count > MaxRowChanges)
+        return NO;
+    // A folder takes its subtree with it, and the row-by-row path does not follow that.
+    for (NSArray<LTNode *> *rows in @[ gone, arrived ])
+        for (LTNode *n in rows)
+            if (_treeGroups[n.identifier] || groups[n.identifier])
+                return NO;
+    NSMutableDictionary *items = [_treeItems mutableCopy];
+    for (LTNode *n in gone)
+        [items removeObjectForKey:n.identifier];
+    for (LTNode *n in arrived)
+        items[n.identifier] = n;
+    _treeGroups = merged;
+    _treeItems = items;
+    [_tree beginUpdates];
+    for (NSArray *change in removals)
+        [_tree removeItemsAtIndexes:change[1] inParent:change[0] withAnimation:NSTableViewAnimationEffectNone];
+    for (NSArray *change in insertions)
+        [_tree insertItemsAtIndexes:change[1] inParent:change[0] withAnimation:NSTableViewAnimationEffectNone];
+    [_tree endUpdates];
+    return YES;
 }
 - (NSArray *)children:(id)item {
     if (!item)
         return @[ @"Pinned", @"Today" ];
-    if ([item isKindOfClass:NSString.class]) {
-        NSArray *all = [_store.profile children:@"" space:_spaceID kind:nil];
-        NSMutableArray *a = [NSMutableArray new];
-        for (LTNode *n in all)
-            if ([item isEqual:@"Today"] ? [n.kind isEqual:@"temporary"]
-                                        : ![n.kind isEqual:@"temporary"])
-                [a addObject:n];
-        return a;
-    }
-    return [_store.profile children:((LTNode *)item).identifier space:_spaceID kind:nil];
+    if ([item isKindOfClass:NSString.class])
+        return _treeGroups[[item isEqual:@"Pinned"] ? PinnedGroup : TodayGroup] ?: @[];
+    return _treeGroups[((LTNode *)item).identifier] ?: @[];
 }
 - (NSInteger)outlineView:(NSOutlineView *)view numberOfChildrenOfItem:(id)item {
     return [self children:item].count;
@@ -579,6 +748,7 @@ static void FillRounded(NSRect rect, CGFloat radius, NSColor *color, BOOL lifted
         ]];
     }
     BOOL folder = [n.kind isEqual:@"folder"];
+    cell.shown = ShownFields(n);
     cell.accessoryAlwaysVisible = folder;
     cell.closeButton.identifier = n.identifier;
     cell.closeButton.action = folder ? @selector(toggleFolder:) : @selector(closeTab:);
@@ -620,7 +790,7 @@ static void FillRounded(NSRect rect, CGFloat radius, NSColor *color, BOOL lifted
 - (void)toggleFolder:(NSButton *)sender {
     LTNode *node = [_store.profile node:sender.identifier];
     if ([node.kind isEqual:@"folder"])
-        [self toggleItem:node];
+        [self toggleItem:_treeItems[node.identifier] ?: node];
 }
 - (void)toggleItem:(id)item {
     if ([_tree isItemExpanded:item])
@@ -637,7 +807,7 @@ static void FillRounded(NSRect rect, CGFloat radius, NSColor *color, BOOL lifted
         // Folders open in place like Arc; keep the active tab highlighted.
         if (_tree.clickedRow >= 0)
             [self toggleItem:item];
-        NSInteger selected = [_tree rowForItem:[_store.profile node:_selectedID]];
+        NSInteger selected = [_tree rowForItem:_treeItems[_selectedID]];
         if (selected >= 0)
             [_tree selectRowIndexes:[NSIndexSet indexSetWithIndex:selected] byExtendingSelection:NO];
         else
@@ -672,7 +842,7 @@ static void FillRounded(NSRect rect, CGFloat radius, NSColor *color, BOOL lifted
 - (id<NSPasteboardWriting>)outlineView:(NSOutlineView *)view pasteboardWriterForItem:(id)item {
     if (![item isKindOfClass:LTNode.class])
         return nil;
-    LTNode *n = item;
+    LTNode *n = [_store.profile node:((LTNode *)item).identifier] ?: item;
     NSPasteboardItem *p = [NSPasteboardItem new];
     [p setString:n.identifier forType:@"app.lite.sidebar-item"];
     if (n.url.length) {
@@ -697,6 +867,7 @@ static void FillRounded(NSRect rect, CGFloat radius, NSColor *color, BOOL lifted
     NSString *identifier = [info.draggingPasteboard stringForType:@"app.lite.sidebar-item"];
     NSString *parent = [item isKindOfClass:LTNode.class] ? ((LTNode *)item).identifier : @"";
     BOOL temporary = [item isEqual:@"Today"];
+    NSString *spaceID = _spaceID;
     if (identifier) {
         [self commit:^(LTProfile *p) {
           LTNode *n = [p node:identifier];
@@ -710,7 +881,7 @@ static void FillRounded(NSRect rect, CGFloat radius, NSColor *color, BOOL lifted
                   n.pinnedURL = n.url;
           }
           [p moveNode:identifier
-                space:self->_spaceID
+                space:spaceID
                parent:parent
                 index:index < 0 ? NSIntegerMax : index
                 error:nil];
@@ -725,7 +896,7 @@ static void FillRounded(NSRect rect, CGFloat radius, NSColor *color, BOOL lifted
       [p addNode:temporary ? @"temporary" : @"pinned"
            title:[NSURL URLWithString:url].host ?: url
              url:url
-           space:self->_spaceID
+           space:spaceID
           parent:parent];
     }];
     return YES;
@@ -773,8 +944,9 @@ static void FillRounded(NSRect rect, CGFloat radius, NSColor *color, BOOL lifted
     self.selected(b.identifier);
 }
 - (void)removeFavorite:(NSMenuItem *)i {
+    NSString *identifier = i.representedObject;
     [self commit:^(LTProfile *p) {
-      [p removeNode:i.representedObject];
+      [p removeNode:identifier];
     }];
 }
 - (void)switchSpace:(NSButton *)b {

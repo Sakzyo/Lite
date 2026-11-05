@@ -1,5 +1,10 @@
 # Profile persistence and recovery — 1 October 2026
 
+> **Superseded in part.** Saves have since moved to a serial background writer. The
+> statements below that saves are synchronous describe October 2026. See
+> [background writer](architecture.md#background-writer) and
+> [profile saves](performance.md#profile-saves). Recovery behavior is unchanged.
+
 ## Acceptance and implementation
 
 Persisted version-one profiles must either load with validated field types or return an error without an Objective-C startup exception. Validation now covers profile containers/version, Space identities, node strings/numbers/relationships, settings (including nested content-blocking, shortcut and GitHub settings), window geometry/split fields, and bounded scroll-session metadata. Numeric values must be finite; integer fields cannot contain fractions or booleans. Missing optional version-one fields remain compatible. Unsupported SQLite or profile JSON versions fail closed, including backup recovery, so a newer profile cannot be silently downgraded.
