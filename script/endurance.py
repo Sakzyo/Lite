@@ -55,6 +55,10 @@ def run_phase(command, output, profile, timeout):
     return status, cleanup
 
 
+def crash_reports(profile):
+    return sorted(str(path) for path in profile.glob('Chromium/*/*.dmp'))
+
+
 def save(path, value):
     temporary = path.with_suffix('.tmp')
     with temporary.open('w') as target:
@@ -107,6 +111,10 @@ def main():
                 report = json.loads(report_path.read_text())
                 if report.get('profile') == str(profile):
                     item['result'] = report
+            item['crashReports'] = crash_reports(profile)
+            if status == 0 and item['crashReports']:
+                status = item['returncode'] = 1
+                item['error'] = 'The phase crashed; see crashReports'
             if status == 0 and ('result' not in item or (name == 'metrics' and item['result'].get('gracefulExit') is not True)):
                 status = item['returncode'] = 1
                 item['error'] = 'The phase did not produce a successful report for its exact synthetic profile'

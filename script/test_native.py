@@ -32,7 +32,7 @@ REQUIRED = ['nativeMainWindow', 'nativeAccessibleNavigation', 'nativeFixtureSeed
             'nativePrivateClearClosesOldContext', 'nativePrivateClearFreshWindow',
             'nativePrivateClearStorageEmpty', 'nativePrivateClearPreservesRegularData',
             'nativeRegularWindowClosure', 'nativeTabClosure', 'nativeAuthenticationDialog',
-            'nativeAuthenticationSucceeded']
+            'nativeAuthenticationSucceeded', 'nativeCrashPromptDisclosure', 'nativeCrashPromptDefaultsToDecline']
 
 
 def main():
@@ -58,6 +58,15 @@ def main():
     (profile / 'Extensions').mkdir()
     (profile / 'Extensions/Extensions.json').write_text(json.dumps({'version': 1, 'extensions': [
         dict(id=extension_id, path=str(fixture), source='unpacked', enabled=True)]}))
+    # Synthetic reports: one to offer, one from a private run, one past retention.
+    now = time.time()
+    for folder, name, age in [('pending', 'offered', 3600), ('completed', 'private-run', 0), ('pending', 'expired', 8 * 86400)]:
+        (profile / 'Chromium' / folder).mkdir(parents=True, exist_ok=True)
+        dump = profile / 'Chromium' / folder / (name + '.dmp')
+        dump.write_text('synthetic-' + name)
+        os.utime(dump, (now - age, now - age))
+    (profile / 'PrivateSession.marker').touch()
+    os.utime(profile / 'PrivateSession.marker', (now - 60, now - 60))
     server = None
     output = profile / 'native-results.json'
     try:
@@ -72,7 +81,8 @@ def main():
                 raise RuntimeError('Native loopback fixture failed to start')
         subprocess.run(['open', '-n', str(app), '--stdout', str(profile / 'stdout.log'), '--stderr',
                         str(profile / 'stderr.log'), '--args', '--lite-test-profile=' + str(profile),
-                        '--lite-native-smoke', '--use-mock-keychain'], check=True)
+                        '--lite-native-smoke', '--use-mock-keychain',
+                        '--lite-crash-upload=http://127.0.0.1:18743/crash-upload'], check=True)
         deadline = time.monotonic() + 115
         while not output.exists() and time.monotonic() < deadline:
             time.sleep(.2)
@@ -94,11 +104,19 @@ def main():
             time.sleep(.1)
         if not result.get('gracefulExit'):
             failures.append('native test app did not exit gracefully')
+        with urllib.request.urlopen('http://127.0.0.1:18743/crash-uploads', timeout=5) as response:
+            uploads = json.load(response)
+        checks = {'nativeCrashUploadOnlyApprovedReport': len(uploads) == 1 and 'synthetic-offered' in uploads[0]['body'] and uploads[0]['contentType'].startswith('multipart/form-data'),
+                  'nativeCrashUploadNoCookies': bool(uploads) and not uploads[0]['cookie'],
+                  'nativeCrashReportsRemovedAfterHandling': not list(profile.glob('Chromium/*/*.dmp')),
+                  'nativePrivateSessionRecorded': (profile / 'PrivateSession.marker').exists()}
+        result.update(checks)
+        failures += [key for key, passed in checks.items() if not passed]
         result['failures'] = failures
         (ROOT / 'test-results').mkdir(exist_ok=True)
         (ROOT / 'test-results/native.json').write_text(json.dumps(result, indent=2) + '\n')
         print(json.dumps(result, indent=2))
-        print('FAIL: ' + ', '.join(failures) if failures else f'PASS: {len(REQUIRED)} actual native-window checks')
+        print('FAIL: ' + ', '.join(failures) if failures else f'PASS: {len(REQUIRED) + len(checks)} actual native-window checks')
         return bool(failures)
     finally:
         # A failed native regression must not leave synthetic renderers running.

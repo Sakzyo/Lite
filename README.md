@@ -55,6 +55,9 @@ launched process. The Codex Run action uses the same script.
 - Background freezing/discard policy with guards for edited forms, media, capture,
   downloads, visible panes, and explicitly protected tabs.
 - Native PiP requests and background media controls for supported HTML5 media.
+- Crash reports captured on this Mac and sent to Sentry only when you click Send after
+  a crash. Reports from sessions with a private window are never offered. See
+  [crash reporting](docs/crash-reporting.md).
 - Manifest V3 Chrome extensions in regular windows: install from the Chrome Web
   Store (CRX3 signatures verified) or from an unpacked folder. Content scripts,
   service workers, messaging, storage, action popups and options pages work.
@@ -93,8 +96,9 @@ measured results and remaining qualification work.
 - [Verification record](docs/verification.md)
 - [Native content blocking](docs/content-blocking.md)
 - [Chrome extensions](docs/extensions.md)
+- [Crash reporting](docs/crash-reporting.md)
 - [Roadmap](docs/roadmap.md)
 
 CEF, Chromium, uBlock Origin Lite, and Public Suffix List notices are included in the application Resources directory.
-Lite contains no account service, telemetry SDK, AI subsystem, or proprietary Arc
-assets. Arc names occur only when identifying an import source or imported data.
+Lite contains no account service, telemetry SDK, analytics, AI subsystem, or proprietary
+Arc assets. Consented crash reports are the only data Lite itself sends about the app. Arc names occur only when identifying an import source or imported data.

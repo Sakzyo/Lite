@@ -42,8 +42,12 @@ export LITE_NOTARY_PROFILE='lite-notary'
 export LITE_UPDATE_FEED_URL='https://your-host/arm64/appcast.xml'
 export LITE_UPDATE_PUBLIC_KEY='PUBLIC_BASE64_ED25519_KEY'
 export LITE_BUILD_NUMBER='2'
+export LITE_CRASH_UPLOAD_URL='https://your-org.ingest.sentry.io/api/PROJECT/minidump/?sentry_key=PUBLIC_KEY'
 python3 script/package.py --production
 ```
+
+`LITE_CRASH_UPLOAD_URL` is optional. Without it the release has no crash upload. See
+[crash reporting](crash-reporting.md).
 
 The identity is selected automatically only when exactly one valid Developer ID
 Application identity is available. `LITE_NOTARY_PROFILE` names credentials already
@@ -178,14 +182,14 @@ arm64 and macOS 15 Intel. The workflow is checked in but has not run on GitHub a
 part of this local session. Native VoiceOver/Full Keyboard Access and real signed
 upgrade acceptance are separate gates, not implied by CI success.
 
-Current focused checks: 20 native updater policy/parser checks and 17 Python tests pass.
+Current focused checks: 20 native updater policy/parser checks and 18 Python tests pass.
 The latter include real Sparkle signature verification of synthetic bytes and
 signed feed XML, tamper rejection, correct/mismatched SDKs, archive corruption,
 interrupted download/replacement, unsafe archive paths, simulated ENOSPC, and
 selecting and writing a new CEF pin from a synthetic release index.
 These do **not** prove Sparkle's complete installation recovery: that scenario
 requires exercising signed old/new applications with the prerequisites above.
-Seven runner tests also cover exact app/profile matching, timeout failure status,
+Eight runner tests also cover exact app/profile matching, timeout failure status,
 graceful cleanup and the forced-stop fallback; they do not replace browser runs.
 
 The native-window suite passed 35 checks with a graceful application exit. It

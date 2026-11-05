@@ -107,7 +107,7 @@
         [_content addArrangedSubview:b];
     }
     NSTextField *privacy = LTLabel(
-        @"Your browser data stays on this Mac.\nNo Lite account, analytics, or cloud services.", 12,
+        @"Your browser data stays on this Mac.\nNo Lite account or analytics. Crash reports are sent only if you choose to send them.", 12,
         NSFontWeightRegular);
     privacy.maximumNumberOfLines = 0;
     privacy.textColor = NSColor.secondaryLabelColor;

@@ -47,6 +47,17 @@ def release_configuration(info, feed, key, build):
     info.update(SUFeedURL=feed, SUPublicEDKey=key, LTUpdatesEnabled=True, CFBundleVersion=build)
 
 
+def crash_configuration(info, value):
+    """The consent dialog names Sentry, so a release must not send reports anywhere else."""
+    if not value:
+        return
+    url = urllib.parse.urlsplit(value)
+    host = url.hostname or ''
+    if url.scheme != 'https' or url.username or url.password or not (host == 'sentry.io' or host.endswith('.sentry.io')):
+        raise ValueError('LITE_CRASH_UPLOAD_URL must be an HTTPS sentry.io minidump endpoint')
+    info['LTCrashUploadURL'] = value
+
+
 def sign(path, identity, entitlements=None, production=False):
     args = ['codesign', '--force', '--sign', identity]
     if production:
@@ -100,6 +111,7 @@ def package(production=False, output=None, test=False):
         raise ValueError('Each release must contain one matching CEF architecture')
     if production:
         release_configuration(info, os.environ.get('LITE_UPDATE_FEED_URL'), os.environ.get('LITE_UPDATE_PUBLIC_KEY'), os.environ.get('LITE_BUILD_NUMBER'))
+        crash_configuration(info, os.environ.get('LITE_CRASH_UPLOAD_URL'))
         if not os.environ.get('LITE_NOTARY_PROFILE'):
             raise ValueError('Production requires LITE_NOTARY_PROFILE: an existing notarytool Keychain credential profile')
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -140,6 +152,7 @@ def package(production=False, output=None, test=False):
             shutil.copy2(ROOT / 'vendor/cef' / source, contents / 'Resources' / source)
         shutil.copy2(ROOT / 'vendor/sparkle/LICENSE', contents / 'Resources/Sparkle-LICENSE.txt')
         shutil.copy2(ROOT / 'vendor/cef/include/cef_version.h', contents / 'Resources/CEF-SDK.txt')
+        shutil.copy2(ROOT / 'resources/crash_reporter.cfg', contents / 'Resources/crash_reporter.cfg')
         shutil.copytree(ROOT / 'resources/ContentBlocking', contents / 'Resources/ContentBlocking')
         if (ROOT / 'resources/Lite.icns').exists():
             shutil.copy2(ROOT / 'resources/Lite.icns', contents / 'Resources/Lite.icns')

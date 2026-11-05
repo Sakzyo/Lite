@@ -4,6 +4,7 @@ import io
 import pathlib
 import signal
 import subprocess
+import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
@@ -12,6 +13,15 @@ import test_processes
 
 
 class EnduranceTests(unittest.TestCase):
+    def test_crash_reports_are_found_in_every_crashpad_directory(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            profile = pathlib.Path(temporary)
+            for folder in ['new', 'pending', 'completed']:
+                (profile/'Chromium'/folder).mkdir(parents=True)
+                (profile/'Chromium'/folder/'report.dmp').touch()
+            (profile/'Chromium/pending/report.meta').touch()
+            self.assertEqual(len(endurance.crash_reports(profile)), 3)
+
     def test_matching_excludes_other_apps_profiles_and_argument_prefixes(self):
         app, profile = pathlib.Path('/tmp/Lite.app'), pathlib.Path('/tmp/endurance-1')
         rows = '\n'.join([
