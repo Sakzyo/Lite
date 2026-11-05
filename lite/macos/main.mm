@@ -636,6 +636,8 @@ int main(int argc, char **argv) {
             }
             if ([arg isEqual:@"--lite-smoke"])
                 smokeTest = YES;
+            if ([arg hasPrefix:@"--lite-request-media-consent="])
+                return LTRequestMediaConsent([arg substringFromIndex:29]);
         }
 #endif
         profileRoot = base;

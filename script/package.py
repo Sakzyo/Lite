@@ -2,7 +2,9 @@
 """Stage, sign and verify a complete Lite bundle; production additionally notarizes.
 
 --test stages dist/LiteTest.app from the LiteTestApp target for the Chromium and
-native-window suites. It is never a distribution build.
+native-window suites. It is never a distribution build. LITE_TEST_SIGNING_IDENTITY
+optionally signs that bundle with a local identity, so macOS camera and microphone
+consent survives rebuilds; see docs/build-macos.md.
 """
 import argparse
 import base64
@@ -32,6 +34,33 @@ def signing_identity(requested):
     if len(choices) != 1:
         raise ValueError('Production requires one selected valid Developer ID Application identity; set LITE_SIGNING_IDENTITY when more than one is configured')
     return choices[0]
+
+
+def test_signing_identity(requested):
+    """Resolve the opt-in local identity for dist/LiteTest.app; ad hoc without one."""
+    if not requested:
+        return '-'
+    text = subprocess.check_output(['security', 'find-identity', '-p', 'codesigning'], text=True)
+    # Without -v the listing includes a self-signed identity, which is usable for
+    # signing but never trusted. Trust is not needed: macOS binds consent to the
+    # certificate hash, and an expired or revoked identity must not be used.
+    identities = re.findall(r'^\s*\d+\) ([A-F0-9]{40}) "([^"]+)"(?: \(CSSMERR_TP_NOT_TRUSTED\))?$', text, re.M)
+    choices = {digest for digest, name in identities if requested in (digest, name)}
+    if len(choices) != 1:
+        raise ValueError('LITE_TEST_SIGNING_IDENTITY must name exactly one usable code-signing identity; found ' + str(len(choices)) + '. If two share a name, use the SHA-1 hash from: security find-identity -p codesigning')
+    return choices.pop()
+
+
+def bundle_identity(production, test):
+    if production:
+        return signing_identity(os.environ.get('LITE_SIGNING_IDENTITY'))
+    return test_signing_identity(os.environ.get('LITE_TEST_SIGNING_IDENTITY')) if test else '-'
+
+
+def stable_requirement(app):
+    """An ad hoc designated requirement is a cdhash, which every rebuild changes."""
+    signature = subprocess.run(['codesign', '-d', '-r-', str(app)], capture_output=True, text=True, check=True)
+    return 'cdhash' not in signature.stdout + signature.stderr
 
 
 def release_configuration(info, feed, key, build):
@@ -100,7 +129,7 @@ def verify(app, production=False):
 def package(production=False, output=None, test=False):
     destination = (output or ROOT / ('dist/LiteTest.app' if test else 'dist/Lite.app')).resolve()
     executable = ROOT / ('.build/LiteTestApp' if test else '.build/Lite')
-    identity = signing_identity(os.environ.get('LITE_SIGNING_IDENTITY')) if production else '-'
+    identity = bundle_identity(production, test)
     info = plistlib.loads((ROOT / 'resources/Info.plist').read_bytes())
     info['LiteDistribution'] = 'Test' if test else 'DeveloperID' if production else 'Local'
     if test:
@@ -158,6 +187,8 @@ def package(production=False, output=None, test=False):
             shutil.copy2(ROOT / 'resources/Lite.icns', contents / 'Resources/Lite.icns')
         sign(app, identity, ROOT / 'resources/entitlements/browser.plist', production)
         verify(app, production)
+        if identity != '-' and not stable_requirement(app):
+            raise ValueError('The signed bundle still has a per-build designated requirement')
         if production:
             archive = pathlib.Path(temporary) / 'notarization.zip'
             run('ditto', '-c', '-k', '--keepParent', app, archive)
@@ -181,6 +212,8 @@ def package(production=False, output=None, test=False):
         partial.replace(archive)
         archive.with_suffix('.zip.sha256').write_text(digest(archive) + '  ' + archive.name + '\n')
         print('Developer ID signed, notarized, stapled, and verified:', archive)
+    elif identity != '-':
+        print('Test bundle (signed with the local test identity; not notarized):', destination)
     else:
         print('Local development bundle (ad hoc signed; not notarized):', destination)
     return destination

@@ -1,4 +1,5 @@
 #import "LTNativeSmoke.h"
+#import "LTWindowState.h"
 #import "../macos/LTTheme.h"
 #import "../macos/LTWindow.h"
 #import "../model/LTExtensions.h"
@@ -137,7 +138,11 @@ static LTNativeSmoke *runningNative;
     _started = NSDate.date.timeIntervalSince1970;
     [_owner openURL:@"http://127.0.0.1:18743/?native=primary" then:^{ self.primary = [self.owner activePage]; }];
     __weak typeof(self) weak = self;
-    _timer = [NSTimer scheduledTimerWithTimeInterval:.1 repeats:YES block:^(NSTimer *timer) { [weak tick]; }];
+    _timer = [NSTimer scheduledTimerWithTimeInterval:.1 repeats:YES block:^(NSTimer *timer) {
+        [weak tick];
+        typeof(self) strong = weak;
+        if (strong) LTSampleWindowState(strong.results, strong.owner.window);
+    }];
 }
 - (LTWindow *)additionalWindow:(BOOL)privateMode {
     for (NSWindow *window in NSApp.windows) {

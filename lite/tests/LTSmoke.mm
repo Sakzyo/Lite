@@ -1,4 +1,5 @@
 #import "LTSmoke.h"
+#import "LTWindowState.h"
 #import "../browser/LTEngine.h"
 #import "../macos/LTPasswords.h"
 #import "../performance/LTPerformance.h"
@@ -9,8 +10,9 @@
 static NSString *const StorageSeedScript = @"(async()=>{document.cookie='deleteMe=yes;path=/';localStorage.setItem('deleteMe','yes');sessionStorage.setItem('deleteMe','yes');let r=indexedDB.open('delete-me',1);await new Promise((ok,no)=>{r.onsuccess=()=>{r.result.close();ok()};r.onerror=no});await(await caches.open('delete-me')).put('/echo',new Response('cached'));await navigator.serviceWorker.register('/blocking-worker.js');await navigator.serviceWorker.ready;return true})()";
 static NSString *const StorageCheckScript = @"(async()=>({cookies:!document.cookie.includes('deleteMe'),local:localStorage.getItem('deleteMe')===null,session:sessionStorage.getItem('deleteMe')===null,indexedDB:!(await indexedDB.databases()).some(d=>d.name==='delete-me'),cache:!(await caches.keys()).includes('delete-me'),workers:(await navigator.serviceWorker.getRegistrations()).length===0}))()";
 static NSString *const MediaRequestScript = @"window.liteMediaResult=navigator.mediaDevices.getUserMedia({audio:true,video:true}).then(stream=>{window.liteMedia=stream;return {granted:true,kinds:stream.getTracks().map(t=>t.kind).sort(),live:stream.getTracks().every(t=>t.readyState==='live')}}).catch(error=>({granted:false,error:error.name}));true";
-// Chromium's capture needs macOS camera and microphone consent for this exact
-// (ad hoc) signature. Unattended machines cannot answer that system prompt.
+// Chromium's capture needs macOS camera and microphone consent for this signature:
+// the exact build when ad hoc signed, or every build of a stable local identity.
+// Unattended machines cannot answer that system prompt.
 static NSString *MediaAuthorization(AVMediaType type) {
     switch ([AVCaptureDevice authorizationStatusForMediaType:type]) {
         case AVAuthorizationStatusAuthorized: return @"authorized";
@@ -18,6 +20,23 @@ static NSString *MediaAuthorization(AVMediaType type) {
         case AVAuthorizationStatusRestricted: return @"restricted";
         default: return @"notDetermined";
     }
+}
+// The smoke suite's fake capture never reaches AVFoundation, so nothing else raises
+// the system prompt for a test bundle. The person at the Mac answers it; a status
+// that is already decided returns at once without a prompt.
+int LTRequestMediaConsent(NSString *output) {
+    __block BOOL answered = NO;
+    [AVCaptureDevice requestAccessForMediaType:AVMediaTypeVideo completionHandler:^(BOOL camera) {
+        [AVCaptureDevice requestAccessForMediaType:AVMediaTypeAudio completionHandler:^(BOOL microphone) {
+            dispatch_async(dispatch_get_main_queue(), ^{ answered = YES; });
+        }];
+    }];
+    NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:300];
+    while (!answered && deadline.timeIntervalSinceNow > 0)
+        [NSRunLoop.mainRunLoop runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:.2]];
+    NSDictionary *system = @{@"camera": MediaAuthorization(AVMediaTypeVideo), @"microphone": MediaAuthorization(AVMediaTypeAudio)};
+    NSData *json = [NSJSONSerialization dataWithJSONObject:system options:0 error:nil];
+    return [json writeToFile:output atomically:YES] ? 0 : 1;
 }
 static NSDictionary *ResourceSample(void) {
     NSMutableArray<NSNumber *> *pids = [NSMutableArray arrayWithObject:@(getpid())];
@@ -188,6 +207,7 @@ static LTSmoke *running;
     }
 }
 - (void)tick {
+    LTSampleWindowState(_results, _window);
     if (_stage != _lastReportedStage) {
         _lastReportedStage = _stage;
         NSData *progress = [NSJSONSerialization dataWithJSONObject:@{@"stage": @(_stage), @"url": _normal.url ?: @"", @"title": _normal.title ?: @"", @"error": _normal.errorText ?: @"", @"authPrompts": @(_authPrompts)} options:0 error:nil];
@@ -587,7 +607,7 @@ static LTSmoke *running;
         [_normal evaluateJavaScript:@"liteProbePlay()" completion:^(id value, BOOL success) {
             self.results[@"lifecycleMediaElementPlaying"] = @(success && [value isEqual:@YES]);
         }];
-    } else if (_stage == 183 && _normal.audible) {
+    } else if (_stage == 183 && _normal.audible && _results[@"lifecycleMediaElementPlaying"]) {
         _normal.visible = NO; [_normal freeze:YES]; [_normal discard];
         _results[@"lifecycleMediaElementProtected"] = @(_normal.alive && !_normal.frozen && [_results[@"lifecycleMediaElementPlaying"] boolValue]);
         _normal.visible = YES; _stage = 184;
