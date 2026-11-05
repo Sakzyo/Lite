@@ -72,6 +72,18 @@ class PackagePrivacyTests(unittest.TestCase):
             self.assertNotIn('SUFeedURL', info)
             self.assertNotIn('SUPublicEDKey', info)
 
+    def test_test_code_is_only_in_test_bundles(self):
+        markers = [b'LTSmoke', b'LTNativeSmoke', b'--lite-', b'LITE_START_URL', b'ForTesting']
+        main = (app/'Contents/MacOS/Lite').read_bytes()
+        if plistlib.loads((app/'Contents/Info.plist').read_bytes())['LiteDistribution'] == 'Test':
+            # A marker that vanished from the test build would make the release check meaningless.
+            self.assertEqual([marker for marker in markers if marker not in main], [])
+            return
+        binaries = [main] + [path.read_bytes() for path in (app/'Contents/Frameworks').glob('Lite Helper*.app/Contents/MacOS/*')]
+        self.assertEqual(len(binaries), 6)
+        for binary in binaries:
+            self.assertEqual([marker for marker in markers if marker in binary], [])
+
     def test_entitlements_do_not_weaken_library_validation(self):
         for path in (root/'resources/entitlements').glob('*.plist'):
             entitlements = plistlib.loads(path.read_bytes())

@@ -20,6 +20,8 @@ actual test evidence and remaining gates for every requested production area.
 - Native authentication and permission request handling, per-origin storage reset,
   full storage-partition reset on restart, bounded download history, quarantine
   verification, safe discard guards and bounded nonsensitive scroll metadata.
+- Test code and `--lite-*` flags build only into `dist/LiteTest.app`; packaging fails
+  if a release bundle contains them.
 - Actual native-window regression harness alongside the separate Chromium suite.
   See the readiness record for which checks passed; infrastructure alone is not
   proof that every release scenario is qualified.

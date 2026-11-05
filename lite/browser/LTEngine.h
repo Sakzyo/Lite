@@ -16,7 +16,9 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)updateBlockingPreferences:(nullable NSDictionary *)preferences;
 - (void)clearData;
 - (void)clearCookiesAndCacheWithCompletion:(void (^)(BOOL success, NSString *message))completion;
+#ifdef LITE_TEST_BUILD
 - (BOOL)configureFixtureProxyForTesting;
+#endif
 - (void)closeAllBrowsersConfirmed;
 @end
 @interface LTPage : NSObject
@@ -80,8 +82,10 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)togglePlayback;
 - (void)enterPictureInPicture;
 - (void)downloadAction:(NSString *)action identifier:(NSInteger)identifier;
+#ifdef LITE_TEST_BUILD
 - (void)evaluateForTesting:(NSString *)expression
                 completion:(void (^)(id _Nullable value, BOOL success))completion;
+#endif
 - (void)evaluateJavaScript:(NSString *)expression
                 completion:(void (^)(id _Nullable value, BOOL success))completion;
 @end

@@ -14,7 +14,7 @@
 ```
 
 The script sets a local module cache, enables the CEF sandbox, builds `Lite`,
-`LiteHelper`, `LiteCore`, and `LiteTests`, then runs CTest. `script/package.py`
+`LiteTestApp`, `LiteHelper`, `LiteCore`, and `LiteTests`, then runs CTest. `script/package.py`
 stages a real bundle at `dist/Lite.app` with the framework, five helper bundles,
 original Lite icon, URL registration, camera/microphone purpose strings, and
 third-party licenses. No other browser installation is used as a runtime.
@@ -53,9 +53,17 @@ An optional read-only local schema check prints counts, not browsing URLs:
 .build/LiteTests lite/tests/fixtures --check-arc
 ```
 
+`Lite` contains no test code. `LiteTestApp` is the same application built with
+`LITE_TEST_BUILD`, which adds `LTSmoke`, `LTNativeSmoke`, the `--lite-*` flags and
+`LITE_START_URL`. `script/package.py --test` stages it as `dist/LiteTest.app`, and the
+Chromium, extension, native-window, endurance and measurement scripts run that bundle
+by default. `script/test_package.py` fails if a release bundle contains those markers,
+and `script/test_release_binary.py` confirms a running release bundle ignores the flags.
+
 The bundled-engine harness uses loopback test pages and a disposable profile:
 
 ```sh
+python3 script/package.py --test
 python3 script/test_browser.py
 cat test-results/engine.json
 ```
@@ -63,8 +71,8 @@ cat test-results/engine.json
 The harness exercises Chromium web APIs, navigation, private storage isolation,
 independent page instances, form protection, freeze, discard, and restoration.
 It uses Chromium's test-only mock Keychain with synthetic pages; it does not
-access real cookie-encryption keys. Test options are never needed for ordinary
-browsing. Do not use the test profile or mock Keychain for personal browsing.
+access real cookie-encryption keys. Do not use the test bundle, test profile or mock
+Keychain for personal browsing.
 
 ## Keychain access in local builds
 

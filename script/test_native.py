@@ -39,7 +39,7 @@ def main():
     def interrupted(signum, frame):
         raise KeyboardInterrupt
     signal.signal(signal.SIGTERM, interrupted)
-    app = pathlib.Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else ROOT / 'dist/Lite.app'
+    app = pathlib.Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else ROOT / 'dist/LiteTest.app'
     profile = pathlib.Path(os.environ['LITE_TEST_PROFILE']).resolve() if os.environ.get('LITE_TEST_PROFILE') else ROOT / '.build' / ('native-test-' + uuid.uuid4().hex[:8])
     if profile.parent != ROOT / '.build' or not profile.name.startswith(('native-test-', 'endurance-')):
         raise ValueError('Native verification requires a fresh synthetic profile under .build')

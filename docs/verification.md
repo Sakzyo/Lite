@@ -8,6 +8,20 @@ supersede the current acceptance matrix.
 
 # Verification record — 22 September 2026
 
+## Test code removed from release binaries — 5 November 2026
+
+- `./script/verify_release.sh` **did not pass**. It stopped at the same three
+  `combinedMedia*` camera and microphone consent checks as the CEF 156 record below.
+- Everything before that step passed, including 8 of 8 CTest suites, 6 package tests
+  on each bundle, and the new runtime check of the release bundle. All other browser
+  checks passed against `dist/LiteTest.app`.
+- The steps the script did not reach were run by hand and passed: 5 extension checks,
+  41 native-window checks, `codesign --verify --deep --strict` on both bundles and
+  `git diff --check`.
+- `nm` found no smoke or `ForTesting` symbols in the release executable, and 275 in
+  the test executable. As a control, the runtime check fails when pointed at the test
+  bundle. `LITE_PROFILE_DIR` stays in release builds because it is not test-only.
+
 ## CEF 156 update — 5 November 2026
 
 Run on Apple Silicon with macOS 26.5.2, moving from CEF 154.0.23 to

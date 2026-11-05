@@ -14,10 +14,13 @@ ctest --test-dir .build --output-on-failure | tee test-results/release/ctest.log
 python3 script/test_updates.py 2>&1 | tee test-results/release/updates.log
 python3 script/test_endurance.py 2>&1 | tee test-results/release/endurance-runner.log
 python3 script/package.py 2>&1 | tee test-results/release/package.log
+python3 script/test_release_binary.py 2>&1 | tee test-results/release/release-binary.log
+python3 script/package.py --test 2>&1 | tee test-results/release/package-test.log
 python3 script/test_browser.py 2>&1 | tee test-results/release/browser.log
 python3 script/test_extensions.py 2>&1 | tee test-results/release/extensions.log
 python3 script/test_native.py 2>&1 | tee test-results/release/native.log
 codesign --verify --deep --strict dist/Lite.app
+codesign --verify --deep --strict dist/LiteTest.app
 codesign -dv --verbose=4 dist/Lite.app 2>test-results/release/signature.log
 if [[ "${1:-}" == --measure ]]; then
     python3 script/measure_native.py --duration 20 --output test-results/release/native-measurement.json

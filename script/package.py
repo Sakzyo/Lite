@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Stage, sign and verify a complete Lite bundle; production additionally notarizes."""
+"""Stage, sign and verify a complete Lite bundle; production additionally notarizes.
+
+--test stages dist/LiteTest.app from the LiteTestApp target for the Chromium and
+native-window suites. It is never a distribution build.
+"""
 import argparse
 import base64
 import json
@@ -82,12 +86,16 @@ def verify(app, production=False):
             raise ValueError('Production signing or hardened runtime is missing')
 
 
-def package(production=False, output=None):
-    destination = (output or ROOT / 'dist/Lite.app').resolve()
+def package(production=False, output=None, test=False):
+    destination = (output or ROOT / ('dist/LiteTest.app' if test else 'dist/Lite.app')).resolve()
+    executable = ROOT / ('.build/LiteTestApp' if test else '.build/Lite')
     identity = signing_identity(os.environ.get('LITE_SIGNING_IDENTITY')) if production else '-'
     info = plistlib.loads((ROOT / 'resources/Info.plist').read_bytes())
-    info['LiteDistribution'] = 'DeveloperID' if production else 'Local'
-    info['LTArchitecture'] = subprocess.check_output(['lipo', '-archs', str(ROOT / '.build/Lite')], text=True).strip()
+    info['LiteDistribution'] = 'Test' if test else 'DeveloperID' if production else 'Local'
+    if test:
+        # Keeps test runs out of the regular app's defaults domain.
+        info['CFBundleIdentifier'] += '.test'
+    info['LTArchitecture'] = subprocess.check_output(['lipo', '-archs', str(executable)], text=True).strip()
     if info['LTArchitecture'] not in ('arm64', 'x86_64'):
         raise ValueError('Each release must contain one matching CEF architecture')
     if production:
@@ -100,7 +108,7 @@ def package(production=False, output=None):
         contents = app / 'Contents'
         for part in ('MacOS', 'Frameworks', 'Resources'):
             (contents / part).mkdir(parents=True)
-        shutil.copy2(ROOT / '.build/Lite', contents / 'MacOS/Lite')
+        shutil.copy2(executable, contents / 'MacOS/Lite')
         (contents / 'Info.plist').write_bytes(plistlib.dumps(info))
         framework = contents / 'Frameworks/Chromium Embedded Framework.framework'
         shutil.copytree(ROOT / 'vendor/cef/Release/Chromium Embedded Framework.framework', framework, symlinks=True)
@@ -168,9 +176,12 @@ def package(production=False, output=None):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--production', action='store_true')
+    parser.add_argument('--test', action='store_true')
     parser.add_argument('--output', type=pathlib.Path)
     args = parser.parse_args()
+    if args.production and args.test:
+        parser.error('A test bundle cannot be a production build')
     try:
-        package(args.production, args.output)
+        package(args.production, args.output, args.test)
     except (ValueError, OSError, subprocess.CalledProcessError) as error:
         raise SystemExit(str(error))

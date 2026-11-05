@@ -98,7 +98,7 @@ def main():
     sampler = ROOT / '.build/resource_sample'
     subprocess.run(['cc', str(ROOT / 'script/resource_sample.c'), '-o', str(sampler)], check=True)
     started = time.monotonic()
-    subprocess.run(['open', '-n', str(ROOT / 'dist/Lite.app'), '--stdout', str(profile/'stdout.log'),
+    subprocess.run(['open', '-n', str(ROOT / 'dist/LiteTest.app'), '--stdout', str(profile/'stdout.log'),
                     '--stderr', str(profile/'stderr.log'), '--args', '--lite-test-profile='+str(profile),
                     '--use-mock-keychain', '--lite-native-measure'], check=True)
     pid = None
@@ -109,7 +109,7 @@ def main():
         if not ready.wait(40):
             raise RuntimeError('Native page did not send DOM-ready beacon within 40 seconds')
         result['launchToDOMReadySeconds'] = next(t for t, p in events if p == '/ready') - started
-        matches = app_pids(ROOT/'dist/Lite.app', profile)
+        matches = app_pids(ROOT/'dist/LiteTest.app', profile)
         pid = matches[0] if matches else None
         if not pid:
             raise RuntimeError('Test process missing')
@@ -129,7 +129,7 @@ def main():
     except Exception as error:
         result['error'] = str(error)
     finally:
-        cleanup = stop_app(ROOT/'dist/Lite.app', profile)
+        cleanup = stop_app(ROOT/'dist/LiteTest.app', profile)
         result['gracefulExit'] = cleanup['gracefulExit']
         if not cleanup['gracefulExit']:
             result['error'] = result.get('error', 'The test app required a forced stop instead of closing gracefully')

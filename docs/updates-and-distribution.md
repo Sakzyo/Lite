@@ -168,8 +168,9 @@ as real encrypted-cookie continuity evidence.
 ## Automated evidence
 
 `./script/verify_release.sh` builds Release, runs CTest (core, vault, blocking and
-new native regressions), SDK/update regressions, stages/verifies the app, and runs
-the separate Chromium suite, then the real native-window suite. Output is retained under `test-results/release/` and
+new native regressions), SDK/update regressions, stages/verifies the app, confirms the
+release bundle has no test code and ignores test flags, stages `dist/LiteTest.app`, and
+runs the separate Chromium suite, then the real native-window suite against that bundle. Output is retained under `test-results/release/` and
 `test-results/engine.json` and `test-results/native.json`. `--measure` also runs the disposable native-profile
 measurement harness; timing variation is reported, not automatically failed.
 `.github/workflows/release-verification.yml` runs this entry point on macOS 14
