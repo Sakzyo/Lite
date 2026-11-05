@@ -40,3 +40,12 @@ def stop_app(app, profile, timeout=10):
         except ProcessLookupError:
             pass
     return dict(processIDs=original, forcedProcessIDs=remaining, gracefulExit=not remaining)
+
+
+def window_failure(result):
+    """Name a test window another app interrupted; a caller adds this to failures, never replaces them."""
+    state = result.get('windowState') or {}
+    covered, inactive = state.get('covered', 0), state.get('inactive', 0)
+    if not covered and not inactive:
+        return None
+    return f"testWindowInterrupted(covered {covered}, inactive {inactive}, of {state.get('samples', 0)} samples)"

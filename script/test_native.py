@@ -13,7 +13,7 @@ import time
 import urllib.request
 import uuid
 
-from test_processes import stop_app
+from test_processes import stop_app, window_failure
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 REQUIRED = ['nativeMainWindow', 'nativeAccessibleNavigation', 'nativeFixtureSeeded',
@@ -112,6 +112,9 @@ def main():
                   'nativePrivateSessionRecorded': (profile / 'PrivateSession.marker').exists()}
         result.update(checks)
         failures += [key for key, passed in checks.items() if not passed]
+        if failures and window_failure(result):
+            failures.insert(0, window_failure(result))
+            print('NOTE: another app affected the test window. Run again with Lite left in front before treating this as a regression; see docs/build-macos.md.')
         result['failures'] = failures
         (ROOT / 'test-results').mkdir(exist_ok=True)
         (ROOT / 'test-results/native.json').write_text(json.dumps(result, indent=2) + '\n')

@@ -9,6 +9,7 @@ import hashlib
 import json
 from unittest import mock
 from package import bundle_identity, test_signing_identity
+from test_processes import window_failure
 
 root = pathlib.Path(__file__).resolve().parents[1]
 app = pathlib.Path(os.environ.get('LITE_PACKAGE_APP', root/'dist/Lite.app'))
@@ -113,6 +114,16 @@ class PackagePrivacyTests(unittest.TestCase):
                 description = info.get('NSBluetoothAlwaysUsageDescription')
                 self.assertIsInstance(description, str)
                 self.assertTrue(description.strip(), 'Bluetooth usage description must not be empty')
+
+
+class WindowFailureTests(unittest.TestCase):
+    def test_uninterrupted_or_missing_samples_name_nothing(self):
+        self.assertIsNone(window_failure({}))
+        self.assertIsNone(window_failure({'windowState': {'samples': 40}}))
+
+    def test_covered_or_inactive_window_is_named_with_its_counts(self):
+        self.assertEqual(window_failure({'windowState': {'samples': 40, 'covered': 30}}), 'testWindowInterrupted(covered 30, inactive 0, of 40 samples)')
+        self.assertEqual(window_failure({'windowState': {'samples': 40, 'inactive': 2}}), 'testWindowInterrupted(covered 0, inactive 2, of 40 samples)')
 
 
 class TestSigningIdentityTests(unittest.TestCase):

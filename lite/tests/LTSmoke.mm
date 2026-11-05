@@ -1,4 +1,5 @@
 #import "LTSmoke.h"
+#import "LTWindowState.h"
 #import "../browser/LTEngine.h"
 #import "../macos/LTPasswords.h"
 #import "../performance/LTPerformance.h"
@@ -206,6 +207,7 @@ static LTSmoke *running;
     }
 }
 - (void)tick {
+    LTSampleWindowState(_results, _window);
     if (_stage != _lastReportedStage) {
         _lastReportedStage = _stage;
         NSData *progress = [NSJSONSerialization dataWithJSONObject:@{@"stage": @(_stage), @"url": _normal.url ?: @"", @"title": _normal.title ?: @"", @"error": _normal.errorText ?: @"", @"authPrompts": @(_authPrompts)} options:0 error:nil];
