@@ -130,6 +130,12 @@ do not prompt again:
 LITE_TEST_SIGNING_IDENTITY='Lite Local Test Signing' ./script/verify_release.sh
 ```
 
+Leave the Mac alone while the test windows are showing. If another app's window covers
+Lite, the browser suite can stall until its 140-second budget ends and report a
+`timeout` with many failed checks, usually with `backgroundResume` among them. The
+native-window checks also need Lite to stay the active app. Run it again before
+treating that pattern as a regression.
+
 If two identities share the name, `script/package.py` stops rather than choosing one.
 Set `LITE_TEST_SIGNING_IDENTITY` to the SHA-1 hash from `security find-identity -p
 codesigning` instead. A new or different identity needs step 3 again, because consent
