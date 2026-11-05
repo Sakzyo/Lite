@@ -19,7 +19,7 @@ it was not built or run.
   `combinedMediaGranted`, `combinedMediaProtected` and `combinedMediaStopped`. These
   need macOS camera and microphone consent for the exact ad hoc build, which an
   unattended run cannot give. The same three checks failed on CEF 154 in every run.
-- Everything before that step passed: 8 of 8 CTest suites, 11 update tests, 7 endurance
+- Everything before that step passed: 8 of 8 CTest suites, 17 update tests, 7 endurance
   runner tests, 5 package tests, and all other browser checks.
 - The steps the script did not reach were run by hand and passed: 5 extension checks,
   41 native-window checks, `codesign --verify --deep --strict` and `git diff --check`.

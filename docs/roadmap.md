@@ -8,8 +8,8 @@ apply: meeting these goals does not by itself qualify Lite as a production brows
 
 ### Security and release
 
-- **Keep the engine current.** Lite is on CEF 156.0.15 / Chromium 156.0.8078.80. Add a
-  scheduled CI job that opens a pull request for each new stable CEF release.
+- **Keep the engine current.** Done: Lite is on CEF 156.0.15 / Chromium 156.0.8078.80,
+  and a scheduled CI job opens a pull request when a newer stable CEF release is out.
 - **Remove test code from the app.** `LTSmoke`, `LTNativeSmoke` and the `--lite-*`
   flags must not exist in a release binary.
 - **Hide lifecycle plumbing from pages.** Page scripts must not be able to reach

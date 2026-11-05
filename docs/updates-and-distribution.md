@@ -115,6 +115,18 @@ before making any feed public.
 
 ## Routine engine and emergency security release
 
+`.github/workflows/cef-update.yml` checks the
+[CEF release index](https://cef-builds.spotifycdn.com/index.html) every six hours. When
+a stable build newer than the pin exists for both architectures, `script/update_cef.py`
+updates `script/fetch_cef.py` and the job opens a pull request from a
+`cef-update/<version>` branch, then starts Release verification on it. A version whose
+pull request was closed is not proposed again. Only the newest release is proposed, so
+a release replaced before the next check gets no pull request of its own.
+
+GitHub runs scheduled workflows only from the default branch and disables them after
+60 days without repository activity. The job also needs **Allow GitHub Actions to
+create and approve pull requests** under the repository's Actions settings.
+
 1. Review upstream CEF/Chromium and Sparkle security releases. Update exact SDK pins
    and archive digests from upstream; retain the old released bundle for testing.
 2. Build each architecture separately with an increasing build number. Run the
@@ -165,10 +177,11 @@ arm64 and macOS 15 Intel. The workflow is checked in but has not run on GitHub a
 part of this local session. Native VoiceOver/Full Keyboard Access and real signed
 upgrade acceptance are separate gates, not implied by CI success.
 
-Current focused checks: 20 native updater policy/parser checks and 11 Python tests pass.
+Current focused checks: 20 native updater policy/parser checks and 17 Python tests pass.
 The latter include real Sparkle signature verification of synthetic bytes and
 signed feed XML, tamper rejection, correct/mismatched SDKs, archive corruption,
-interrupted download/replacement, unsafe archive paths, and simulated ENOSPC.
+interrupted download/replacement, unsafe archive paths, simulated ENOSPC, and
+selecting and writing a new CEF pin from a synthetic release index.
 These do **not** prove Sparkle's complete installation recovery: that scenario
 requires exercising signed old/new applications with the prerequisites above.
 Seven runner tests also cover exact app/profile matching, timeout failure status,

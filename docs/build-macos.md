@@ -30,7 +30,8 @@ the app. Other installations of Lite are not targeted.
 each architecture. HTTPS verifies transport; the digest detects archive damage.
 The archive is obtained from the CEF project's linked Spotify CDN. Archive paths
 and symlinks are checked before extraction. Updating the engine requires updating
-the version/digests and rebuilding/testing the complete bundle. Lite's reported
+the version/digests and rebuilding/testing the complete bundle;
+`script/update_cef.py` writes them from the CEF release index. Lite's reported
 Chromium version comes from the SDK's `cef_version.h` at configure time. Installed SDK
 identity, Mach-O architecture and file hashes are validated, with staged extraction
 and recoverable replacement. See [updates and distribution](updates-and-distribution.md)
