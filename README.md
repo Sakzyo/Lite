@@ -93,6 +93,7 @@ measured results and remaining qualification work.
 - [Verification record](docs/verification.md)
 - [Native content blocking](docs/content-blocking.md)
 - [Chrome extensions](docs/extensions.md)
+- [Roadmap](docs/roadmap.md)
 
 CEF, Chromium, uBlock Origin Lite, and Public Suffix List notices are included in the application Resources directory.
 Lite contains no account service, telemetry SDK, AI subsystem, or proprietary Arc
