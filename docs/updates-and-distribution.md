@@ -9,9 +9,8 @@ working public update service.
 ## Build dependencies
 
 Run `python3 script/fetch_cef.py` and `python3 script/fetch_sparkle.py` before CMake.
-CEF remains pinned to `154.0.23+g062ebe4+chromium-154.0.8037.17`. The CEF CDN supplies
-SHA-1 archive digests; these existing exact pins detect corrupted archives, and
-HTTPS authenticates transport. Sparkle's ZIP SHA-256 is pinned to the value in its
+`script/fetch_cef.py` holds the exact CEF pin. The CEF CDN supplies SHA-1 archive
+digests; these exact pins detect corrupted archives, and HTTPS authenticates transport. Sparkle's ZIP SHA-256 is pinned to the value in its
 [2.10.0 Package.swift](https://github.com/sparkle-project/Sparkle/blob/2.10.0/Package.swift).
 Review both dependency pins before shipping a security release.
 
@@ -136,12 +135,12 @@ storage, and private-window separation. Production updates retain bundle IDs,
 profile paths and the publisher's signing identity. Ad-hoc-to-ad-hoc checks do not
 prove stable Keychain authorization across a Developer ID upgrade.
 
-The pinned CEF public settings/header expose no supported macOS OSCrypt product
-namespace option. Its framework still references Chromium Safe Storage. Lite does
-not rename that item, copy its secret, weaken authorization, switch cookie
-providers, or use mock Keychain for ordinary browsing. A Lite-specific namespace
-is unavailable in this SDK. Adopting one would require an upstream-supported CEF
-option (or separately reviewed engine change) plus an explicit encrypted-cookie migration.
+CEF 156 adds `keychain_service_name` and `keychain_account_name` settings for the
+Keychain item OSCrypt uses. Lite leaves them empty, so it keeps using Chromium Safe
+Storage. Lite does not rename that item, copy its secret, weaken authorization,
+switch cookie providers, or use mock Keychain for ordinary browsing. Setting either
+value selects a different Keychain item, so adopting a Lite-specific namespace needs
+an explicit encrypted-cookie migration.
 The mandatory release gate is verified signed cookie/Keychain continuity with the
 supported configuration, not a speculative namespace change.
 Changing only the bundle display name cannot safely migrate existing cookies.

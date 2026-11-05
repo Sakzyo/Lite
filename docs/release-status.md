@@ -36,8 +36,10 @@ actual test evidence and remaining gates for every requested production area.
    installation recovery.
 3. **Keychain continuity:** test synthetic vault and encrypted cookies across at
    least two production-signed upgrades. Stock CEF still uses Chromium Safe
-   Storage; this bundled SDK exposes no supported Lite-specific namespace setting.
-   Authorization and cookie encryption remain enabled.
+   Storage by default. CEF 156 adds `keychain_service_name` and
+   `keychain_account_name` settings, which Lite does not set because changing them
+   without a cookie migration can make existing data unreadable. Authorization and
+   cookie encryption remain enabled.
 4. **Session capability:** CEF exposes navigation entries but cannot import a
    serialized stack into a new browser. Multi-entry/POST, history.state,
    sessionStorage, observed interaction and media protect tabs from automatic

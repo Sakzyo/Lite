@@ -9,7 +9,7 @@ AppKit windows, sidebar, dialogs, native menus
                  │
         LTWindow / LTPage interface
                  │
-   CEF 154, native windowed NSView hosting
+   CEF, native windowed NSView hosting
                  │
    Chromium subprocesses: Blink, V8, network, GPU
 ```
@@ -80,7 +80,9 @@ Lite's largest product gaps come from the host rather than from Lite's own code:
   auto-updated or changed without a restart.
 - CEF cannot import a serialized navigation stack, so back/forward history is lost
   across restarts and most tabs with real history cannot be discarded.
-- CEF exposes no supported way to change the Safe Storage Keychain namespace.
+- CEF 154, current when this was decided, exposed no supported way to change the
+  Safe Storage Keychain namespace. CEF 156 adds `keychain_service_name` and
+  `keychain_account_name` settings; Lite does not use them yet.
 - Stock CEF binaries have no proprietary codecs, so enabling them already requires
   a custom engine build.
 
@@ -133,7 +135,7 @@ Becomes possible:
 - Extension install, auto-update and enable/disable without restarting the engine.
 - Injected code in an isolated world, instead of page-visible globals such as
   `__liteLifecycle`.
-- A Lite-specific Keychain namespace, and request hooks that cover WebSockets.
+- Request hooks that cover WebSockets.
 
 Becomes harder:
 

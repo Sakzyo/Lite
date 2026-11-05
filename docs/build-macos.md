@@ -6,7 +6,7 @@
 - Xcode 16+ with the macOS SDK selected by `xcode-select`.
 - CMake 3.21+ and Python 3.12+.
 - About 1.5 GB for the SDK, build objects, and application. The first download is
-  roughly 132 MB for arm64 or 138 MB for Intel, before extraction.
+  roughly 135 MB for arm64 or 142 MB for Intel, before extraction.
 
 ```sh
 ./script/build_and_run.sh --build
@@ -30,7 +30,8 @@ the app. Other installations of Lite are not targeted.
 each architecture. HTTPS verifies transport; the digest detects archive damage.
 The archive is obtained from the CEF project's linked Spotify CDN. Archive paths
 and symlinks are checked before extraction. Updating the engine requires updating
-the version/digests and rebuilding/testing the complete bundle. Installed SDK
+the version/digests and rebuilding/testing the complete bundle. Lite's reported
+Chromium version comes from the SDK's `cef_version.h` at configure time. Installed SDK
 identity, Mach-O architecture and file hashes are validated, with staged extraction
 and recoverable replacement. See [updates and distribution](updates-and-distribution.md)
 for the Sparkle feed, routine engine-update process and emergency releases.
@@ -74,8 +75,8 @@ confirmed by a process sample waiting in `SecItemCopyMatching` during validation
 Complete any macOS authorization yourself; Lite does not read your login password,
 change Keychain access rules, or disable cookie encryption. A stable release
 signing identity and an application-specific Keychain namespace are release gates.
-The pinned SDK does not expose the latter setting; newer upstream CEF work is
-tracked in its [settings definition](https://github.com/chromiumembedded/cef/blob/master/include/internal/cef_types.h).
+CEF 156 adds settings for the latter, which Lite does not use yet; see
+[Keychain and cookie continuity](updates-and-distribution.md#keychain-and-cookie-continuity).
 
 ## Signing and distribution
 

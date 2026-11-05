@@ -204,8 +204,8 @@ static LTSmoke *running;
                      @"r=indexedDB.open('lite-smoke',1);r.onsuccess=()=>resolve(r.result);r."
                      @"onerror=()=>reject(r.error)});db.close();let w=await "
                      @"WebAssembly.instantiate(new Uint8Array([0,97,115,109,1,0,0,0]));return "
-                     @"{chromium:navigator.userAgent.includes('Chrome/"
-                     @"154'),dom:document.querySelector('h1').textContent==='Lite browser "
+                     @"{chromium:navigator.userAgent.includes('Chrome/" LITE_CHROMIUM_MAJOR
+                     @"'),dom:document.querySelector('h1').textContent==='Lite browser "
                      @"test',indexedDB:!!db,wasm:!!w,webgl:!!document.createElement('canvas')."
                      @"getContext('webgl2'),fetch:await(await "
                      @"fetch('/"

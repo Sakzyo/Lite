@@ -6,7 +6,7 @@
 
 NSString *const LTExtensionsChanged = @"LTExtensionsChanged";
 // Sent to the Web Store update service; keep in step with the pinned CEF SDK.
-static NSString *const ChromiumVersion = @"154.0.8037.17";
+static NSString *const ChromiumVersion = @LITE_CHROMIUM_VERSION;
 static const NSUInteger MaximumPackageSize = 256 * 1024 * 1024;
 
 static NSError *Failure(NSString *message) {
@@ -296,7 +296,7 @@ static NSDictionary *ManifestInfo(NSString *directory, NSString **problem) {
     NSDictionary *manifest = ReadJSON([directory stringByAppendingPathComponent:@"manifest.json"]);
     if (!manifest) { *problem = @"The folder has no valid manifest.json."; return nil; }
     if (![manifest[@"manifest_version"] isEqual:@3]) {
-        *problem = @"Lite runs Manifest V3 extensions. Chromium 154 no longer loads Manifest V2 extensions.";
+        *problem = @"Lite runs Manifest V3 extensions. Chromium no longer loads Manifest V2 extensions.";
         return nil;
     }
     if (manifest[@"theme"]) { *problem = @"Themes change Chrome’s own interface, which Lite does not use."; return nil; }

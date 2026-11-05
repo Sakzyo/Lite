@@ -113,7 +113,7 @@
     privacy.textColor = NSColor.secondaryLabelColor;
     [_content addArrangedSubview:privacy];
     NSTextField *about =
-        LTLabel([NSString stringWithFormat:@"Lite %@ · Chromium 154 · Native AppKit\n%@",
+        LTLabel([NSString stringWithFormat:@"Lite %@ · Chromium " LITE_CHROMIUM_MAJOR @" · Native AppKit\n%@",
                   [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"] ?: @"0.1",
                   [[NSBundle.mainBundle objectForInfoDictionaryKey:@"LiteDistribution"] isEqual:@"DeveloperID"] ? @"Developer ID distribution build" : @"Local development build"], 11,
                 NSFontWeightRegular);

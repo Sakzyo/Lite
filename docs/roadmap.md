@@ -3,14 +3,13 @@
 ## Lite 1.0 goals
 
 Lite is at version 0.1.0, so the next major version is 1.0. These goals were set on
-5 November 2026, and none has started. The [release gates](release-status.md) still
+5 November 2026. The [release gates](release-status.md) still
 apply: meeting these goals does not by itself qualify Lite as a production browser.
 
 ### Security and release
 
-- **Keep the engine current.** Move from Chromium 154.0.8037.17 to current CEF stable
-  (156.0.8078.80 when these goals were set). Add a scheduled CI job that opens a pull
-  request for each new stable CEF release.
+- **Keep the engine current.** Lite is on CEF 156.0.15 / Chromium 156.0.8078.80. Add a
+  scheduled CI job that opens a pull request for each new stable CEF release.
 - **Remove test code from the app.** `LTSmoke`, `LTNativeSmoke` and the `--lite-*`
   flags must not exist in a release binary.
 - **Hide lifecycle plumbing from pages.** Page scripts must not be able to reach
