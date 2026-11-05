@@ -8,6 +8,23 @@ supersede the current acceptance matrix.
 
 # Verification record — 22 September 2026
 
+## Background profile writer with media consent — 6 November 2026
+
+- `./script/verify_release.sh` **passed**, exit code 0, on `c213bee`, which merges this work
+  with stable test signing and the consent request. It was run with
+  `LITE_TEST_SIGNING_IDENTITY` set. This is the first run in which the `combinedMedia*`
+  checks passed: macOS reported camera and microphone `authorized`.
+- Every stage passed: 9 of 9 CTest suites, update, endurance and package tests, the
+  release-binary check, crash capture, 106 Chromium checks, 5 extension checks, 48
+  native-window checks, `codesign --verify --deep --strict` on both bundles and
+  `git diff --check`.
+- The run before it failed `test_browser.py` with a timeout. Another app covered the test
+  window for 520 of 688 samples. In the passing run the browser suite was never covered, and
+  the native suite was covered for 10 of 158 samples.
+- The fixture server logged one traceback from a client that disconnected during a 404. It
+  decided no check.
+- `--measure` was not used.
+
 ## Background profile writer — 5 November 2026
 
 - `./script/verify_release.sh` **did not pass**. It stopped at the same three
