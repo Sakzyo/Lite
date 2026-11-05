@@ -89,6 +89,52 @@ signing identity and an application-specific Keychain namespace are release gate
 CEF 156 adds settings for the latter, which Lite does not use yet; see
 [Keychain and cookie continuity](updates-and-distribution.md#keychain-and-cookie-continuity).
 
+## Camera and microphone consent
+
+`script/verify_release.sh` requires the `combinedMedia*` checks, which capture from
+Chromium's fake devices but still need macOS camera and microphone consent. macOS
+ties that consent to the code signature. For an ad-hoc bundle that means one exact
+build, so every rebuild starts over at `notDetermined`, the capture stages are
+skipped, and verification stops there. Hosted CI cannot answer the prompt and skips
+these three checks only when `CI=true`.
+
+To keep consent across rebuilds, sign the test bundle with a local identity. This is
+optional and applies only to `dist/LiteTest.app`: `dist/Lite.app` and production
+builds ignore `LITE_TEST_SIGNING_IDENTITY`, and hosted CI does not set it. It changes
+no entitlement, and the bundle stays without hardened runtime.
+
+One-time setup, which you do yourself:
+
+1. In Keychain Access choose **Keychain Access > Certificate Assistant > Create a
+   Certificate**. Set the name to `Lite Local Test Signing`, the identity type to
+   **Self-Signed Root** and the certificate type to **Code Signing**. Leave its trust
+   settings alone; signing does not need them.
+2. Sign the test bundle. If macOS asks whether `codesign` may use the new key, choose
+   **Always Allow**:
+
+   ```sh
+   export LITE_TEST_SIGNING_IDENTITY='Lite Local Test Signing'
+   python3 script/package.py --test
+   ```
+
+3. Ask for consent, then choose **Allow** at the camera and microphone prompts:
+
+   ```sh
+   python3 script/grant_test_media.py
+   ```
+
+After that, keep `LITE_TEST_SIGNING_IDENTITY` set when you run verification. Rebuilds
+do not prompt again:
+
+```sh
+LITE_TEST_SIGNING_IDENTITY='Lite Local Test Signing' ./script/verify_release.sh
+```
+
+If you deleted the identity, a new one needs step 3 again, because consent belongs to
+that certificate. Revoke consent at any time under **System Settings > Privacy &
+Security > Camera** and **Microphone**. Lite's tooling never edits macOS consent
+records or trust settings, and this certificate must not sign anything you distribute.
+
 ## Signing and distribution
 
 The default produced app is **ad-hoc signed for local development**, not Developer

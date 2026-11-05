@@ -7,6 +7,8 @@ import plistlib
 import unittest
 import hashlib
 import json
+from unittest import mock
+from package import bundle_identity, test_signing_identity
 
 root = pathlib.Path(__file__).resolve().parents[1]
 app = pathlib.Path(os.environ.get('LITE_PACKAGE_APP', root/'dist/Lite.app'))
@@ -111,6 +113,45 @@ class PackagePrivacyTests(unittest.TestCase):
                 description = info.get('NSBluetoothAlwaysUsageDescription')
                 self.assertIsInstance(description, str)
                 self.assertTrue(description.strip(), 'Bluetooth usage description must not be empty')
+
+
+class TestSigningIdentityTests(unittest.TestCase):
+    HASH = 'A' * 40
+    LISTING = ('Policy: Code Signing\n  Matching identities\n'
+               f'  1) {HASH} "Lite Local Test Signing" (CSSMERR_TP_NOT_TRUSTED)\n'
+               f'  2) {"B" * 40} "Old Identity" (CSSMERR_TP_CERT_EXPIRED)\n'
+               '     2 identities found\n\n  Valid identities only\n     0 valid identities found\n')
+
+    def resolve(self, requested, listing=None):
+        with mock.patch('subprocess.check_output', return_value=listing or self.LISTING):
+            return test_signing_identity(requested)
+
+    def test_unset_stays_ad_hoc(self):
+        self.assertEqual(test_signing_identity(None), '-')
+        self.assertEqual(test_signing_identity(''), '-')
+
+    def test_self_signed_identity_matches_by_name_or_hash(self):
+        self.assertEqual(self.resolve('Lite Local Test Signing'), self.HASH)
+        self.assertEqual(self.resolve(self.HASH), self.HASH)
+
+    def test_listing_an_identity_in_both_sections_is_not_ambiguous(self):
+        valid = f'  Valid identities only\n  1) {self.HASH} "Lite Local Test Signing"\n'
+        self.assertEqual(self.resolve('Lite Local Test Signing', self.LISTING + valid), self.HASH)
+
+    def test_unusable_or_ambiguous_identities_fail_rather_than_fall_back(self):
+        twin = f'  3) {"C" * 40} "Lite Local Test Signing" (CSSMERR_TP_NOT_TRUSTED)\n'
+        for requested, listing in [('Missing', None), ('Old Identity', None), ('Lite Local Test Signing', self.LISTING + twin)]:
+            with self.subTest(requested=requested), self.assertRaises(ValueError):
+                self.resolve(requested, listing)
+
+    def test_only_test_bundles_honor_the_test_identity(self):
+        with mock.patch.dict(os.environ, {'LITE_TEST_SIGNING_IDENTITY': 'Lite Local Test Signing'}):
+            self.assertEqual(bundle_identity(production=False, test=False), '-')
+            with mock.patch('package.test_signing_identity', return_value=self.HASH):
+                self.assertEqual(bundle_identity(production=False, test=True), self.HASH)
+            with mock.patch('package.signing_identity', return_value='release') as production:
+                self.assertEqual(bundle_identity(production=True, test=False), 'release')
+                production.assert_called_once_with(os.environ.get('LITE_SIGNING_IDENTITY'))
 
 
 if __name__ == '__main__':

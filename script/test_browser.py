@@ -131,7 +131,7 @@ try:
         required = [key for key in required if key not in skipped]
     failures = [key for key in required if result.get(key) is not True]
     if system_media and not media_consent and not skipped and 'combinedMediaGranted' in required:
-        print('NOTE: grant macOS camera and microphone access to this Lite build (systemMediaAuthorization: ' + json.dumps(system_media) + ')')
+        print('NOTE: this test bundle lacks macOS camera and microphone consent (systemMediaAuthorization: ' + json.dumps(system_media) + '). See "Camera and microphone consent" in docs/build-macos.md.')
     login_checks = ['loginFill', 'loginNoSubmit', 'loginCrossSiteRejected', 'loginNewPasswordRejected', 'loginHiddenRejected', 'loginWrongOriginRejected']
     login_checks += ['loginBridgeHidden', 'loginSubmissionUnsafeRejected', 'loginSubmissionCaptured', 'loginSubmissionPrivateRejected']
     if not blocking_only and not readiness_only:
