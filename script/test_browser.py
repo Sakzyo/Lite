@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run the staged application's Chromium integration tests in a unique profile."""
 import base64, hashlib, json, os, pathlib, platform, plistlib, signal, subprocess, sys, time, urllib.request, uuid
-from test_processes import stop_app
+from test_processes import stop_app, window_failure
 root = pathlib.Path(__file__).resolve().parents[1]
 app = pathlib.Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else root/'dist/LiteTest.app'
 def interrupted(signum, frame):
@@ -131,7 +131,7 @@ try:
         required = [key for key in required if key not in skipped]
     failures = [key for key in required if result.get(key) is not True]
     if system_media and not media_consent and not skipped and 'combinedMediaGranted' in required:
-        print('NOTE: grant macOS camera and microphone access to this Lite build (systemMediaAuthorization: ' + json.dumps(system_media) + ')')
+        print('NOTE: this test bundle lacks macOS camera and microphone consent (systemMediaAuthorization: ' + json.dumps(system_media) + '). See "Camera and microphone consent" in docs/build-macos.md.')
     login_checks = ['loginFill', 'loginNoSubmit', 'loginCrossSiteRejected', 'loginNewPasswordRejected', 'loginHiddenRejected', 'loginWrongOriginRejected']
     login_checks += ['loginBridgeHidden', 'loginSubmissionUnsafeRejected', 'loginSubmissionCaptured', 'loginSubmissionPrivateRejected']
     if not blocking_only and not readiness_only:
@@ -146,6 +146,9 @@ try:
         failures.append('timeout')
     if not blocking_only and not readiness_only and result.get('memory1',{}).get('processes',0) < 3:
         failures.append('incomplete Chromium process-family sample')
+    if failures and window_failure(result):
+        failures.insert(0, window_failure(result))
+        print('NOTE: another app affected the test window. Run again with Lite left in front before treating this as a regression; see docs/build-macos.md.')
     result['totalVerificationSeconds'] = time.monotonic() - started
     result['profile'] = str(profile)
     target = root/'test-results'
