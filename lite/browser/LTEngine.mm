@@ -1171,6 +1171,7 @@ static void CancelBrowserRequests(CefRefPtr<CefBrowser> browser) {
     params->SetString("state", freeze ? "frozen" : "active");
     _browser->GetHost()->ExecuteDevToolsMethod(NextDevToolsID(), "Page.setWebLifecycleState", params);
     _frozen = freeze;
+    [_delegate pageChanged:self];
 }
 - (void)find:(NSString *)text forward:(BOOL)forward next:(BOOL)next {
     if (_browser)

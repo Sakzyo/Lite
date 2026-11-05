@@ -48,6 +48,8 @@ static std::string extensionSwitch;
 @property id keyMonitor;
 @property BOOL quitting;
 @property BOOL confirmingQuit;
+@property BOOL quitWriteFailed;
+@property BOOL writeFailureShowing;
 @property LTUpdater *updater;
 @property LTDownloadHistory *downloads;
 @property LTExtensionsPanel *extensionsPanel;
@@ -151,6 +153,8 @@ static std::string extensionSwitch;
         name:@"LTRestart" object:nil];
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(backupFailed:)
         name:LTStoreBackupFailed object:_store];
+    [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(writeFailed:)
+        name:LTStoreWriteFailed object:nil];
     NSArray *restore = [_store.profile.windows copy];
     if (!restore.count)
         [self newWindow:NO mini:NO state:nil];
@@ -200,6 +204,8 @@ static std::string extensionSwitch;
         [_windows.firstObject openURL:start];
     if (testProfile && [NSProcessInfo.processInfo.arguments containsObject:@"--lite-native-smoke"])
         LTRunNativeSmoke(_windows.firstObject, [profileRoot stringByAppendingPathComponent:@"native-results.json"], ^{ [self finishQuit:YES]; });
+    if (testProfile && [NSProcessInfo.processInfo.arguments containsObject:@"--lite-save-probe"])
+        LTRunSaveProbe(_windows.firstObject, [profileRoot stringByAppendingPathComponent:@"save-probe.json"]);
 #endif
 }
 - (void)offerCrashReports {
@@ -259,12 +265,10 @@ static std::string extensionSwitch;
       if (!target)
           target = [weak newWindow:NO mini:NO state:@{@"space" : spaceID}];
       else {
-          NSError *error = nil;
-          [weak.store
-              commit:^(LTProfile *p) {
+          [weak.store commit:^(LTProfile *p) {
+            if ([p space:spaceID])
                 p.activeSpaceID = spaceID;
-              }
-               error:&error];
+          } completion:nil];
           [target performSelector:@selector(selectSpace:) withObject:spaceID];
       }
       [target openURL:url];
@@ -307,19 +311,32 @@ static std::string extensionSwitch;
     else
         [self newWindow:NO mini:NO state:nil];
 }
-- (BOOL)saveWindows {
-    if (!_store || _quitting)
-        return YES;
+- (NSMutableArray *)windowStates {
     NSMutableArray *states = [NSMutableArray new];
     for (LTWindow *w in _windows)
         if (!w.mini && !w.store.privateMode)
             [states addObject:w.restorationState];
-    NSError *e = nil;
-    if (![_store
-            commit:^(LTProfile *p) {
-              p.windows = states;
-            }
-             error:&e]) {
+    return states;
+}
+- (void)saveWindows {
+    if (!_store || _quitting)
+        return;
+    NSMutableArray *states = [self windowStates];
+    // Window layout saves in the background, so it logs instead of interrupting with an alert.
+    [_store commit:^(LTProfile *p) {
+      p.windows = states;
+    } completion:^(NSError *error) {
+      if (error) os_log_error(OS_LOG_DEFAULT, "Lite could not save window restoration metadata");
+    }];
+}
+// The last save before quitting. It waits, so every write queued before it is on disk when it returns.
+- (BOOL)saveWindowsAndWait {
+    if (!_store)
+        return YES;
+    [_store waitForWrites];
+    NSMutableArray *states = [self windowStates];
+    NSError *error = nil;
+    if (![_store commit:^(LTProfile *p) { p.windows = states; } error:&error]) {
         os_log_error(OS_LOG_DEFAULT, "Lite could not save window restoration metadata");
         return NO;
     }
@@ -352,7 +369,10 @@ static std::string extensionSwitch;
     NSArray<LTWindow *> *windows = [_windows copy];
     __block NSUInteger remaining = windows.count;
     void (^finish)(void) = ^{
-        if (![self saveWindows]) {
+        // saveWindowsAndWait delivers earlier failures too, and those count: the user has not seen them.
+        BOOL saved = [self saveWindowsAndWait];
+        if (!saved || self.quitWriteFailed) {
+            self.quitWriteFailed = NO;
             self.confirmingQuit = NO;
             relaunchAfterClear = relaunchRequested = NO;
             LTAlert([self current].window, @"Lite could not save this session", @"Every page remains open. Check available disk space and profile permissions, then try again.");
@@ -378,6 +398,32 @@ static std::string extensionSwitch;
     };
     if (!remaining) { finish(); return; }
     for (LTWindow *window in windows) [window captureSessionStates:^{ if (--remaining == 0) finish(); }];
+}
+// A write can fail after the user has moved on, and several queued writes can fail together. The
+// model is already back at the last commit, so this only has to say so, once per burst of failures.
+- (void)writeFailed:(NSNotification *)notification {
+    NSError *error = notification.userInfo[LTStoreWriteErrorKey];
+    if (_quitting) {
+        os_log_error(OS_LOG_DEFAULT, "Lite could not save a change while quitting");
+        return;
+    }
+    if (_confirmingQuit && notification.object == _store) {
+        _quitWriteFailed = YES;
+        return;
+    }
+    if (_writeFailureShowing) return;
+    NSAlert *alert = [NSAlert new];
+    alert.messageText = @"Lite could not save your last change";
+    alert.informativeText = [error.localizedDescription stringByAppendingString:@"\n\nLite is showing your last saved state. Any change that was not saved has been undone."];
+    [alert addButtonWithTitle:@"OK"];
+    NSWindow *window = [self current].window;
+    _writeFailureShowing = YES;
+    if (window && !window.attachedSheet)
+        [alert beginSheetModalForWindow:window completionHandler:^(NSModalResponse response) { self.writeFailureShowing = NO; }];
+    else {
+        [alert runModal];
+        _writeFailureShowing = NO;
+    }
 }
 - (void)backupFailed:(NSNotification *)notification {
     if (_store.backupError) LTAlert([self current].window, @"The recovery backup could not be refreshed", _store.backupError.localizedDescription);
@@ -633,6 +679,7 @@ int main(int argc, char **argv) {
         if (!CefInitialize(CefMainArgs(argc, argv), settings, new BrowserApp, nullptr))
             return CefGetExitCode();
         LTAppDelegate *delegate = [LTAppDelegate new];
+        LTStore *store = nil;
         NSApp.delegate = delegate;
         signal(SIGTERM, SIG_IGN);
         dispatch_source_t termination = dispatch_source_create(DISPATCH_SOURCE_TYPE_SIGNAL, SIGTERM,
@@ -643,6 +690,7 @@ int main(int argc, char **argv) {
         dispatch_resume(termination);
         [delegate performSelectorOnMainThread:@selector(start) withObject:nil waitUntilDone:NO];
         CefRunMessageLoop();
+        store = delegate.store;
         [delegate.icons shutdown];
         if (delegate.keyMonitor) [NSEvent removeMonitor:delegate.keyMonitor];
         dispatch_source_cancel(termination);
@@ -650,6 +698,8 @@ int main(int argc, char **argv) {
         delegate = nil;
         LTStopBrowserTaskMonitoring();
         CefShutdown();
+        // Pages closing during shutdown can still save. The profile lock must outlive the last write.
+        [store close];
         close(profileLock);
         if (relaunchAfterClear || relaunchRequested) {
             NSMutableArray *arguments = [NSMutableArray arrayWithObjects:@"-n", NSBundle.mainBundle.bundlePath, nil];

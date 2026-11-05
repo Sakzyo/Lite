@@ -164,6 +164,7 @@ int main(int argc, char **argv) {
         CHECK(store.profile.spaces.count == 2 && store.profile.nodes.count == 1,
               "SQLite session survives reopen");
         [store recordVisit:@"https://example.org" title:@"Example"];
+        [store waitForWrites];
         CHECK([store history:@"example" limit:10].count == 1, "history search");
         [store deleteHistoryURL:@"https://example.org"];
         CHECK([store history:@"" limit:10].count == 0, "delete history");
@@ -479,6 +480,7 @@ int main(int argc, char **argv) {
         for (int i = 0; i < 35; i++)
             [store recordVisit:[NSString stringWithFormat:@"https://recent.example/%d", i]
                          title:[NSString stringWithFormat:@"Exact History extended %d", i]];
+        [store waitForWrites];
         NSArray *exactHistory = [store history:@"Exact History" limit:30 exact:YES];
         CHECK(exactHistory.count == 1 &&
                   [exactHistory.firstObject[@"url"] isEqual:@"https://old.example/exact"],

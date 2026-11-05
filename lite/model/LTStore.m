@@ -1,11 +1,16 @@
 #import "LTStore.h"
 #import <sqlite3.h>
+#import <os/lock.h>
+#import <os/log.h>
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <errno.h>
 NSNotificationName const LTStoreChanged = @"LTStoreChanged";
 NSNotificationName const LTStoreBackupFailed = @"LTStoreBackupFailed";
+NSNotificationName const LTStoreWriteFailed = @"LTStoreWriteFailed";
+NSString *const LTStoreWriteErrorKey = @"LTStoreWriteError";
+NSString *const LTStoreChangeQuietObserverKey = @"LTStoreChangeQuietObserver";
 static const NSUInteger MaxProfileBytes = 64 * 1024 * 1024;
 static const NSTimeInterval BackupInterval = 60;
 static NSString *DatabasePath(NSString *path) {
@@ -123,10 +128,40 @@ static NSString *AvailableBackup(NSString *path) {
     return nil;
 }
 
+// One queued write. It crosses from the writer to the main thread through the outbox. The caller's
+// blocks are cleared on the main thread, because whatever they captured (a window, a page) must not
+// be released on the writer.
+@class LTStoreWrite;
+@interface LTStoreWrite : NSObject {
+@public
+    LTProfileChange change;
+    BOOL (^operation)(LTStoreWrite *write, NSError **error);
+    LTStoreCompletion completion;
+    id quietObserver;
+    BOOL waiting;  // A caller is blocked on this write and takes its result directly.
+    LTProfile *committed;
+    NSError *error;
+    BOOL backupAttempted;
+    NSError *backupError;
+}
+@end
+@implementation LTStoreWrite
+@end
+
 @implementation LTStore {
+    dispatch_queue_t _writer;
+    // Writer only, apart from init and close, which cannot overlap a write.
     sqlite3 *_db;
-    NSString *_path;
+    LTProfile *_committed;
     NSTimeInterval _lastBackup;
+    // Main thread only.
+    sqlite3 *_reader;
+    NSMutableArray<LTStoreWrite *> *_finished;
+    BOOL _closed;
+    // Guards the handover of finished writes from the writer to the main thread.
+    os_unfair_lock _outboxLock;
+    NSMutableArray<LTStoreWrite *> *_outbox;
+    NSString *_path;
 }
 + (BOOL)recoveryAvailableAtPath:(NSString *)path {
     return AvailableBackup(DatabasePath(path)) != nil;
@@ -194,6 +229,11 @@ static NSString *AvailableBackup(NSString *path) {
 }
 - (instancetype)initWithPath:(NSString *)path error:(NSError **)error {
     if ((self = [super init])) {
+        _writer = dispatch_queue_create("app.lite.profile-writer",
+            dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL, QOS_CLASS_USER_INITIATED, 0));
+        _outboxLock = OS_UNFAIR_LOCK_INIT;
+        _outbox = [NSMutableArray new];
+        _finished = [NSMutableArray new];
         path = DatabasePath(path);
         _privateMode = path == nil;
         _path = [path copy];
@@ -214,6 +254,7 @@ static NSString *AvailableBackup(NSString *path) {
             sqlite3_close(read);
             if (!_profile) return nil;
         } else _profile = LTProfile.fresh;
+        _committed = _profile;
         if (path && ![fm createDirectoryAtPath:path.stringByDeletingLastPathComponent withIntermediateDirectories:YES
                                     attributes:@{NSFilePosixPermissions:@0700} error:error]) return nil;
         if (sqlite3_open_v2(path ? path.fileSystemRepresentation : ":memory:", &_db,
@@ -241,17 +282,34 @@ static NSString *AvailableBackup(NSString *path) {
         }
         // Persist a fresh profile immediately so an interrupted first launch cannot leave an empty schema.
         if (!exists && ![self commit:^(LTProfile *profile) {} error:error]) return nil;
+        // WAL gives this connection the last commit while the writer is inside the next one.
+        if (path) {
+            if (!OpenReadOnly(path, &_reader)) {
+                StoreError(error, @"Lite could not open its database for reading.");
+                return nil;
+            }
+            sqlite3_busy_timeout(_reader, 250);
+        }
         for (LTNode *node in _profile.nodes)
             if ([node.kind isEqual:@"folder"]) node.expanded = NO;
-        if (exists) [self updateBackup];
+        [_profile seal];
+        if (exists) {
+            NSError *failure = nil;
+            if ([self updateBackup:&failure]) {
+                _backupError = failure;
+                if (failure) [NSNotificationCenter.defaultCenter postNotificationName:LTStoreBackupFailed object:self];
+            }
+        }
     }
     return self;
 }
 - (void)dealloc {
+    if (_reader) sqlite3_close(_reader);
     if (_db) sqlite3_close(_db);
 }
-- (void)updateBackup {
-    if (!_path || NSDate.date.timeIntervalSince1970 - _lastBackup < BackupInterval) return;
+// Returns NO if the once-a-minute limit skipped the refresh; a failed attempt fills `failure`.
+- (BOOL)updateBackup:(NSError **)failure {
+    if (!_path || NSDate.date.timeIntervalSince1970 - _lastBackup < BackupInterval) return NO;
     NSString *backup = [_path stringByAppendingString:@".backup"];
     NSString *previous = [_path stringByAppendingString:@".backup.previous"];
     NSString *pending = [_path stringByAppendingString:@".backup.pending"];
@@ -282,17 +340,15 @@ static NSString *AvailableBackup(NSString *path) {
     }
     if (ok) ok = rename(pending.fileSystemRepresentation, backup.fileSystemRepresentation) == 0 &&
         SyncPath(_path.stringByDeletingLastPathComponent, YES);
-    if (!ok) {
-        _backupError = error ?: LTError(@"Your current profile was saved, but its recovery backup could not be updated. Check free disk space and folder permissions.");
-        [NSNotificationCenter.defaultCenter postNotificationName:LTStoreBackupFailed object:self];
-    } else _backupError = nil;
+    if (!ok) *failure = error ?: LTError(@"Your current profile was saved, but its recovery backup could not be updated. Check free disk space and folder permissions.");
     // Also throttle failed attempts to avoid repeated disk work and alerts under disk pressure.
     _lastBackup = NSDate.date.timeIntervalSince1970;
     if (RegularFile(pending)) [fm removeItemAtPath:pending error:nil];
+    return YES;
 }
-- (BOOL)commit:(void (^)(LTProfile *))change error:(NSError **)error {
-    LTProfile *candidate = [_profile transactionCopy];
-    change(candidate);
+// Runs on the writer. Saves are serial, so each one starts from the last commit and never from a
+// write that is still queued. That is why a failure drops one write and not those behind it.
+- (BOOL)persist:(LTProfile *)candidate error:(NSError **)error {
     if (![candidate validate:error]) return NO;
     NSData *json = [NSJSONSerialization dataWithJSONObject:candidate.JSON options:0 error:error];
     if (!json || json.length > MaxProfileBytes) return StoreError(error, @"Lite could not serialize the profile within its size limit. Your previous data is intact.");
@@ -311,37 +367,190 @@ static NSString *AvailableBackup(NSString *path) {
         sqlite3_exec(_db, "ROLLBACK", NULL, NULL, NULL);
         return StoreError(error, @"Lite could not save. Your previous data is intact; check available disk space.");
     }
-    _profile = candidate;
-    [self updateBackup];
-    [NSNotificationCenter.defaultCenter postNotificationName:LTStoreChanged object:self];
     return YES;
 }
-- (void)recordVisit:(NSString *)url title:(NSString *)title {
-    if (_privateMode || ![url hasPrefix:@"http"])
+- (void)perform:(LTStoreWrite *)write {
+    @autoreleasepool {
+        NSError *error = nil;
+        @try {
+            if (write->operation) {
+                if (!write->operation(write, &error)) write->error = error ?: LTError(@"Lite could not finish this change.");
+            } else {
+                LTProfile *candidate = [_committed transactionCopy];
+                write->change(candidate);
+                if ([self persist:candidate error:&error]) {
+                    [candidate seal];
+                    _committed = write->committed = candidate;
+                    NSError *backupError = nil;
+                    write->backupAttempted = [self updateBackup:&backupError];
+                    write->backupError = backupError;
+                } else write->error = error ?: LTError(@"Lite could not save. Your previous data is intact.");
+            }
+        } @catch (NSException *exception) {
+            // Nothing reached the database. The candidate is discarded and the writer keeps running.
+            os_log_error(OS_LOG_DEFAULT, "Lite stopped a profile change that raised %{public}@", exception.name);
+            write->error = LTError(@"Lite could not apply this change. Your previous data is intact.");
+        }
+    }
+    os_unfair_lock_lock(&_outboxLock);
+    [_outbox addObject:write];
+    os_unfair_lock_unlock(&_outboxLock);
+    if (!write->waiting) dispatch_async(dispatch_get_main_queue(), ^{ [self publishFinishedWrites]; });
+}
+// Main thread. Delivers results in submission order. Several writes that finished together are one
+// LTStoreChanged, so a burst of saves costs one redraw.
+- (void)publishFinishedWrites {
+    os_unfair_lock_lock(&_outboxLock);
+    NSArray<LTStoreWrite *> *batch = _outbox;
+    _outbox = [NSMutableArray new];
+    os_unfair_lock_unlock(&_outboxLock);
+    if (batch.count) {
+        LTProfile *latest = nil;
+        NSMutableArray *retired = [NSMutableArray new];
+        BOOL changed = NO, quiet = YES, backupAttempted = NO;
+        NSError *backupError = nil;
+        id quietObserver = batch.firstObject->quietObserver;
+        for (LTStoreWrite *write in batch) {
+            if (write->committed) {
+                if (latest) [retired addObject:latest];
+                latest = write->committed;
+                write->committed = nil;
+            }
+            BOOL profileWrite = write->operation == nil;
+            // A failed write redraws too: windows may be showing what they asked for, not what saved.
+            if (profileWrite && (latest || (write->error && !write->waiting))) changed = YES;
+            if (!profileWrite || write->error || write->quietObserver != quietObserver) quiet = NO;
+            if (write->backupAttempted) {
+                backupAttempted = YES;
+                backupError = write->backupError;
+            }
+        }
+        if (latest) {
+            [retired addObject:_profile];
+            _profile = latest;
+        }
+        // A 10,000-node model is slow to free, so the writer does that as well.
+        if (retired.count) {
+            CFTypeRef owned = CFBridgingRetain(retired);
+            dispatch_async(_writer, ^{ CFRelease(owned); });
+        }
+        retired = nil;
+        if (backupAttempted) _backupError = backupError;
+        [_finished addObjectsFromArray:batch];
+        if (changed)
+            [NSNotificationCenter.defaultCenter postNotificationName:LTStoreChanged object:self
+                userInfo:quiet && quietObserver ? @{LTStoreChangeQuietObserverKey : quietObserver} : nil];
+        if (backupError) [NSNotificationCenter.defaultCenter postNotificationName:LTStoreBackupFailed object:self];
+    }
+    // A completion may save and wait, which comes back here. Popping keeps delivery in order.
+    while (_finished.count) {
+        LTStoreWrite *write = _finished.firstObject;
+        [_finished removeObjectAtIndex:0];
+        LTStoreCompletion completion = write->completion;
+        NSError *error = write->error;
+        write->completion = nil;
+        write->change = nil;
+        write->operation = nil;
+        write->quietObserver = nil;
+        if (write->waiting) continue;
+        if (completion) completion(error);
+        else if (error) [self reportWriteFailure:error];
+    }
+}
+- (void)reportWriteFailure:(NSError *)error {
+    [NSNotificationCenter.defaultCenter postNotificationName:LTStoreWriteFailed object:self
+                                                    userInfo:@{LTStoreWriteErrorKey : error}];
+}
+- (void)enqueue:(LTStoreWrite *)write {
+    if (_closed) {
+        os_log_error(OS_LOG_DEFAULT, "Lite refused a profile write after closing its database");
+        LTStoreCompletion completion = write->completion;
+        if (completion) dispatch_async(dispatch_get_main_queue(), ^{ completion(LTError(@"Lite is closing, so this change was not saved.")); });
         return;
-    sqlite3_stmt *s = NULL;
-    sqlite3_prepare_v2(_db,
-                       "INSERT INTO history(url,title,visited) VALUES(?,?,?) ON CONFLICT(url) DO "
-                       "UPDATE SET title=excluded.title,visited=excluded.visited",
-                       -1, &s, NULL);
-    sqlite3_bind_text(s, 1, url.UTF8String, -1, SQLITE_TRANSIENT);
-    sqlite3_bind_text(s, 2, title.UTF8String, -1, SQLITE_TRANSIENT);
-    sqlite3_bind_double(s, 3, NSDate.date.timeIntervalSince1970);
-    sqlite3_step(s);
-    sqlite3_finalize(s);
+    }
+    dispatch_async(_writer, ^{ [self perform:write]; });
+}
+- (BOOL)waitFor:(LTStoreWrite *)write error:(NSError **)error {
+    if (_closed) return StoreError(error, @"Lite is closing, so this change was not saved.");
+    write->waiting = YES;
+    dispatch_sync(_writer, ^{ [self perform:write]; });
+    NSError *failure = write->error;
+    [self publishFinishedWrites];
+    if (failure && error) *error = failure;
+    return failure == nil;
+}
+- (void)commit:(LTProfileChange)change completion:(LTStoreCompletion)completion {
+    [self commit:change quietFor:nil completion:completion];
+}
+- (void)commit:(LTProfileChange)change quietFor:(id)observer completion:(LTStoreCompletion)completion {
+    LTStoreWrite *write = [LTStoreWrite new];
+    write->change = [change copy];
+    write->quietObserver = observer;
+    write->completion = [completion copy];
+    [self enqueue:write];
+}
+- (BOOL)commit:(LTProfileChange)change error:(NSError **)error {
+    LTStoreWrite *write = [LTStoreWrite new];
+    write->change = [change copy];
+    return [self waitFor:write error:error];
+}
+- (void)waitForWrites {
+    if (_closed) return;
+    dispatch_sync(_writer, ^{});
+    [self publishFinishedWrites];
+}
+- (void)close {
+    if (_closed) return;
+    _closed = YES;
+    // The reader goes first so the writer is the last connection, which checkpoints and empties the WAL.
+    if (_reader) sqlite3_close(_reader);
+    _reader = NULL;
+    dispatch_sync(_writer, ^{
+        if (self->_db) sqlite3_close(self->_db);
+        self->_db = NULL;
+    });
+    os_unfair_lock_lock(&_outboxLock);
+    [_outbox removeAllObjects];
+    os_unfair_lock_unlock(&_outboxLock);
+    [_finished removeAllObjects];
+}
+- (void)recordVisit:(NSString *)url title:(NSString *)title {
+    if (_privateMode || _closed || ![url hasPrefix:@"http"])
+        return;
+    url = [url copy];
+    title = [title copy];
+    // The visit happened now, whenever the writer reaches it.
+    double visited = NSDate.date.timeIntervalSince1970;
+    dispatch_async(_writer, ^{
+        sqlite3_stmt *s = NULL;
+        int rc = sqlite3_prepare_v2(self->_db,
+                                    "INSERT INTO history(url,title,visited) VALUES(?,?,?) ON CONFLICT(url) DO "
+                                    "UPDATE SET title=excluded.title,visited=excluded.visited",
+                                    -1, &s, NULL);
+        if (rc == SQLITE_OK) {
+            sqlite3_bind_text(s, 1, url.UTF8String, -1, SQLITE_TRANSIENT);
+            sqlite3_bind_text(s, 2, title.UTF8String, -1, SQLITE_TRANSIENT);
+            sqlite3_bind_double(s, 3, visited);
+            rc = sqlite3_step(s);
+        }
+        sqlite3_finalize(s);
+        if (rc != SQLITE_DONE) os_log_error(OS_LOG_DEFAULT, "Lite could not record a visit (SQLite %d)", rc);
+    });
 }
 - (NSArray<NSDictionary *> *)history:(NSString *)query limit:(NSInteger)limit {
     return [self history:query limit:limit exact:NO];
 }
 - (NSArray<NSDictionary *> *)history:(NSString *)query limit:(NSInteger)limit exact:(BOOL)exact {
     NSMutableArray *rows = [NSMutableArray new];
+    // Private windows never record history, and their in-memory database has no second connection.
+    if (!_reader) return rows;
     sqlite3_stmt *s = NULL;
     const char *sql =
         exact ? "SELECT url,title,visited FROM history WHERE url=? OR title=? ORDER BY visited "
                 "DESC LIMIT ?"
               : "SELECT url,title,visited FROM history WHERE instr(lower(url),lower(?))>0 "
                 "OR instr(lower(title),lower(?))>0 ORDER BY visited DESC LIMIT ?";
-    sqlite3_prepare_v2(_db, sql, -1, &s, NULL);
+    sqlite3_prepare_v2(_reader, sql, -1, &s, NULL);
     sqlite3_bind_text(s, 1, query.UTF8String, -1, SQLITE_TRANSIENT);
     sqlite3_bind_text(s, 2, query.UTF8String, -1, SQLITE_TRANSIENT);
     sqlite3_bind_int(s, 3, (int)limit);
@@ -353,10 +562,7 @@ static NSString *AvailableBackup(NSString *path) {
     sqlite3_finalize(s);
     return rows;
 }
-- (void)clearHistorySince:(double)time {
-    [self clearHistorySince:time error:nil];
-}
-- (BOOL)refreshBackupsAfterHistoryDeletion:(NSError **)error {
+- (BOOL)refreshBackupsAfterHistoryDeletion:(LTStoreWrite *)write error:(NSError **)error {
     if (!_path) return YES;
     // A later recovery must not resurrect deliberately deleted browsing history.
     // Damaged-original archives belong to the user and are never silently removed.
@@ -369,33 +575,63 @@ static NSString *AvailableBackup(NSString *path) {
     if (!SyncPath(_path.stringByDeletingLastPathComponent, YES))
         return StoreError(error, @"History was removed, but deletion of its old recovery backups could not be flushed. Retry after checking disk space.");
     _lastBackup = 0;
-    [self updateBackup];
-    if (_backupError) { if (error) *error = _backupError; return NO; }
+    NSError *backupError = nil;
+    write->backupAttempted = [self updateBackup:&backupError];
+    write->backupError = backupError;
+    if (backupError) { if (error) *error = backupError; return NO; }
     return YES;
 }
+- (LTStoreWrite *)clearHistoryWrite:(double)time {
+    LTStoreWrite *write = [LTStoreWrite new];
+    write->operation = ^BOOL(LTStoreWrite *current, NSError **error) {
+        sqlite3_stmt *s = NULL;
+        int rc = sqlite3_prepare_v2(self->_db, "DELETE FROM history WHERE visited>=?", -1, &s, NULL);
+        if (rc == SQLITE_OK) {
+            sqlite3_bind_double(s, 1, time);
+            rc = sqlite3_step(s);
+        }
+        sqlite3_finalize(s);
+        if (rc != SQLITE_DONE) return StoreError(error, @"Lite could not finish deleting history. Check disk space and try again; deletion is not complete.");
+        return [self refreshBackupsAfterHistoryDeletion:current error:error];
+    };
+    return write;
+}
+- (LTStoreWrite *)deleteHistoryWrite:(NSString *)url {
+    url = [url copy];
+    LTStoreWrite *write = [LTStoreWrite new];
+    write->operation = ^BOOL(LTStoreWrite *current, NSError **error) {
+        sqlite3_stmt *s = NULL;
+        int rc = sqlite3_prepare_v2(self->_db, "DELETE FROM history WHERE url=?", -1, &s, NULL);
+        if (rc == SQLITE_OK) {
+            sqlite3_bind_text(s, 1, url.UTF8String, -1, SQLITE_TRANSIENT);
+            rc = sqlite3_step(s);
+        }
+        sqlite3_finalize(s);
+        if (rc != SQLITE_DONE) return StoreError(error, @"Lite could not finish deleting this history entry. Check disk space and try again.");
+        return [self refreshBackupsAfterHistoryDeletion:current error:error];
+    };
+    return write;
+}
+- (void)clearHistorySince:(double)time {
+    [self clearHistorySince:time error:nil];
+}
 - (BOOL)clearHistorySince:(double)time error:(NSError **)error {
-    sqlite3_stmt *s = NULL;
-    int rc = sqlite3_prepare_v2(_db, "DELETE FROM history WHERE visited>=?", -1, &s, NULL);
-    if (rc == SQLITE_OK) {
-        sqlite3_bind_double(s, 1, time);
-        rc = sqlite3_step(s);
-    }
-    sqlite3_finalize(s);
-    if (rc != SQLITE_DONE) return StoreError(error, @"Lite could not finish deleting history. Check disk space and try again; deletion is not complete.");
-    return [self refreshBackupsAfterHistoryDeletion:error];
+    return [self waitFor:[self clearHistoryWrite:time] error:error];
+}
+- (void)clearHistorySince:(double)time completion:(LTStoreCompletion)completion {
+    LTStoreWrite *write = [self clearHistoryWrite:time];
+    write->completion = [completion copy];
+    [self enqueue:write];
 }
 - (void)deleteHistoryURL:(NSString *)url {
     [self deleteHistoryURL:url error:nil];
 }
 - (BOOL)deleteHistoryURL:(NSString *)url error:(NSError **)error {
-    sqlite3_stmt *s = NULL;
-    int rc = sqlite3_prepare_v2(_db, "DELETE FROM history WHERE url=?", -1, &s, NULL);
-    if (rc == SQLITE_OK) {
-        sqlite3_bind_text(s, 1, url.UTF8String, -1, SQLITE_TRANSIENT);
-        rc = sqlite3_step(s);
-    }
-    sqlite3_finalize(s);
-    if (rc != SQLITE_DONE) return StoreError(error, @"Lite could not finish deleting this history entry. Check disk space and try again.");
-    return [self refreshBackupsAfterHistoryDeletion:error];
+    return [self waitFor:[self deleteHistoryWrite:url] error:error];
+}
+- (void)deleteHistoryURL:(NSString *)url completion:(LTStoreCompletion)completion {
+    LTStoreWrite *write = [self deleteHistoryWrite:url];
+    write->completion = [completion copy];
+    [self enqueue:write];
 }
 @end

@@ -188,7 +188,7 @@
     NSMutableDictionary *_sessions;
     BOOL _deferPages, _confirmingClose, _closedWindow;
     NSMutableDictionary *_visitKeys;
-    BOOL _metadataChange, _closingWindow, _restoring, _splitPending, _addressMode;
+    BOOL _closingWindow, _restoring, _splitPending, _addressMode;
     BOOL _verticalSplit;
     double _splitRatio;
     NSTimer *_saveTimer;
@@ -580,15 +580,27 @@
                                        return event;
                                      }];
 }
-- (void)commit:(void (^)(LTProfile *))block {
-    NSError *e = nil;
-    if (![_store commit:block error:&e])
-        LTAlert(self.window, @"Could not save", e.localizedDescription);
+// Saves are queued, and `block` runs on the writer. Capture what it needs before calling; never read
+// `self` or AppKit state inside it. Use then: for anything that needs the saved result in the model.
+- (void)commit:(LTProfileChange)block {
+    [_store commit:block completion:nil];
+}
+- (void)commit:(LTProfileChange)block then:(void (^)(void))next {
+    LTStore *store = _store;
+    __weak typeof(self) weak = self;
+    [store commit:block completion:^(NSError *error) {
+      if (error) {
+          [store reportWriteFailure:error];
+          return;
+      }
+      typeof(self) owner = weak;
+      if (owner && !owner->_closedWindow) next();
+    }];
 }
 - (void)storeChanged:(NSNotification *)note {
     if (_closedWindow) return;
     [_context updateBlockingPreferences:_store.profile.settings[@"contentBlocking"]];
-    if (!_metadataChange)
+    if (note.userInfo[LTStoreChangeQuietObserverKey] != self)
         [self refresh];
 }
 - (void)refresh {
@@ -694,13 +706,17 @@
     if (![_secondaryID isEqual:identifier])
         _activeID = identifier;
     _focusedID = identifier;
-    _metadataChange = YES;
-    [self commit:^(LTProfile *p) {
-      p.activeSpaceID = self->_spaceID;
-      [p space:self->_spaceID].selectedID = identifier;
-      [p node:identifier].lastUsed = NSDate.date.timeIntervalSince1970;
-    }];
-    _metadataChange = NO;
+    NSString *spaceID = _spaceID;
+    double used = NSDate.date.timeIntervalSince1970;
+    [_store commit:^(LTProfile *p) {
+      // A write queued ahead of this one may have removed either of them.
+      LTNode *selected = [p node:identifier];
+      if (!selected || ![p space:spaceID])
+          return;
+      p.activeSpaceID = spaceID;
+      [p space:spaceID].selectedID = identifier;
+      selected.lastUsed = used;
+    } quietFor:self completion:nil];
     [self refresh];
     [[self activePage] focus];
     [self scheduleSave];
@@ -712,11 +728,15 @@
     _activeID = [_store.profile space:identifier].selectedID;
     _secondaryID = @"";
     [self commit:^(LTProfile *p) {
-      p.activeSpaceID = identifier;
+      if ([p space:identifier])
+          p.activeSpaceID = identifier;
     }];
     [self scheduleSave];
 }
 - (void)openURL:(NSString *)url {
+    [self openURL:url then:nil];
+}
+- (void)openURL:(NSString *)url then:(void (^)(void))next {
     if (!LTValidURL(url))
         url = LTURLFromInput(url, _store.profile.settings[@"search"]);
     if (_mini) {
@@ -729,18 +749,20 @@
         _activeID = identifier;
         [_pageMap[identifier] navigate:url];
         [self displayPages];
+        if (next)
+            next();
         return;
     }
     __block NSString *identifier;
+    NSString *spaceID = _spaceID;
+    NSString *title = [NSURL URLWithString:url].host ?: @"New Tab";
     [self commit:^(LTProfile *p) {
-      identifier = [p addNode:@"temporary"
-                        title:[NSURL URLWithString:url].host ?: @"New Tab"
-                          url:url
-                        space:self->_spaceID
-                       parent:@""]
-                       .identifier;
+      identifier = [p addNode:@"temporary" title:title url:url space:spaceID parent:@""].identifier;
+    } then:^{
+      [self selectTab:identifier];
+      if (next)
+          next();
     }];
-    [self selectTab:identifier];
 }
 - (void)updateNavigation {
     LTPage *p = [self activePage];
@@ -793,14 +815,21 @@
         if (n &&
             (![n.url isEqual:page.url] || (page.title.length && ![n.title isEqual:page.title])) &&
             LTValidURL(page.url)) {
-            _metadataChange = YES;
-            [self commit:^(LTProfile *p) {
-              LTNode *n = [p node:page.identifier];
-              n.url = page.url;
-              if (page.title.length)
-                  n.title = page.title;
+            NSString *identifier = page.identifier, *url = page.url, *title = page.title;
+            LTStore *store = _store;
+            __weak typeof(self) weak = self;
+            [store commit:^(LTProfile *p) {
+              LTNode *n = [p node:identifier];
+              n.url = url;
+              if (title.length)
+                  n.title = title;
+            } quietFor:self completion:^(NSError *error) {
+              typeof(self) owner = weak;
+              if (error)
+                  [store reportWriteFailure:error];
+              else if (owner && !owner->_closedWindow)
+                  [owner->_sidebar updateItem:identifier];
             }];
-            _metadataChange = NO;
         }
     }
     NSString *visit = [page.url stringByAppendingString:page.title];
@@ -889,8 +918,9 @@
           __block NSString *sid;
           [self commit:^(LTProfile *p) {
             sid = [p addSpace:name].identifier;
+          } then:^{
+            [self selectSpace:sid];
           }];
-          [self selectSpace:sid];
         });
     } else if ([command isEqual:@"githubFolder"] || [command isEqual:@"editGitHubFolder"]) {
         [self configureGitHubFolder:[command isEqual:@"editGitHubFolder"] ? identifier : nil];
@@ -911,8 +941,9 @@
     } else if ([command isEqual:@"renameSpace"]) {
         LTAskName(self.window, @"Rename Space", [_store.profile space:_spaceID].name,
                   ^(NSString *name) {
+                    NSString *sid = self->_spaceID;
                     [self commit:^(LTProfile *p) {
-                      [p space:self->_spaceID].name = name;
+                      [p space:sid].name = name;
                     }];
                   });
     } else if ([command isEqual:@"deleteSpace"]) {
@@ -944,8 +975,9 @@
     } else if ([command isEqual:@"newFolder"] || [command isEqual:@"folderInside"]) {
         NSString *parent = [command isEqual:@"folderInside"] ? identifier : @"";
         LTAskName(self.window, @"New Folder", @"", ^(NSString *name) {
+          NSString *sid = self->_spaceID;
           [self commit:^(LTProfile *p) {
-            [p addNode:@"folder" title:name url:@"" space:self->_spaceID parent:parent];
+            [p addNode:@"folder" title:name url:@"" space:sid parent:parent];
           }];
         });
     } else if ([command isEqual:@"pinTab"] && node) {
@@ -971,8 +1003,9 @@
           }];
         });
     } else if ([command isEqual:@"favorite"] && node) {
+        NSString *title = node.displayTitle, *url = node.url;
         [self commit:^(LTProfile *p) {
-          [p addNode:@"favorite" title:node.displayTitle url:node.url space:@"" parent:@""];
+          [p addNode:@"favorite" title:title url:url space:@"" parent:@""];
         }];
     } else if ([command isEqual:@"duplicate"] && node)
         [self openURL:node.url];
@@ -1009,12 +1042,13 @@
             LTNode *n = [LTNode fromJSON:j];
             n.parentID = @"";
             n.spaceID = _spaceID;
-            if ([_store.profile node:n.identifier])
-                n.identifier = LTUUID();
             [self commit:^(LTProfile *p) {
+              if ([p node:n.identifier])
+                  n.identifier = LTUUID();
               [p.nodes addObject:n];
+            } then:^{
+              [self selectTab:n.identifier];
             }];
-            [self selectTab:n.identifier];
         }
     } else if ([command isEqual:@"splitRight"] || [command isEqual:@"splitDown"]) {
         if (!_activeID.length)
@@ -1201,7 +1235,7 @@
             return;
         }
         __block NSString *folderID = identifier;
-        BOOL saved = [self.store commit:^(LTProfile *profile) {
+        [self.store commit:^(LTProfile *profile) {
             if (identifier && ![profile node:identifier]) return;
             if (!folderID) {
                 LTNode *folder = [profile addNode:@"folder" title:@"GitHub Pull Requests" url:@"" space:space parent:@""];
@@ -1213,9 +1247,10 @@
             NSMutableDictionary *folders = [profile.settings[@"githubLiveFolders"] mutableCopy] ?: [NSMutableDictionary new];
             folders[folderID] = configuration;
             profile.settings[@"githubLiveFolders"] = folders;
-        } error:&error];
-        if (!saved) LTAlert(self.window, @"Could not save Live Folder", error.localizedDescription);
-        else [self.github refreshFolder:folderID];
+        } completion:^(NSError *saveError) {
+            if (saveError) LTAlert(self.window, @"Could not save Live Folder", saveError.localizedDescription);
+            else [self.github refreshFolder:folderID];
+        }];
     }];
     [alert.window makeFirstResponder:user];
 }
@@ -1257,12 +1292,15 @@
         _secondaryID = @"";
     } else if ([_secondaryID isEqual:identifier])
         _secondaryID = @"";
+    BOOL temporary = [n.kind isEqual:@"temporary"];
+    NSString *spaceID = _spaceID, *activeID = _activeID;
     [self commit:^(LTProfile *p) {
-      if ([n.kind isEqual:@"temporary"])
+      if (temporary)
           [p removeNode:identifier];
-      [p space:self->_spaceID].selectedID = self->_activeID;
+      if (!activeID.length || [p node:activeID])
+          [p space:spaceID].selectedID = activeID;
     }];
-    if ([n.kind isEqual:@"temporary"])
+    if (temporary)
         [_pageMap removeObjectForKey:identifier];
     [self displayPages];
     [self scheduleSave];
@@ -1308,8 +1346,8 @@
               completionHandler:^(NSModalResponse r) {
                 if (r == NSAlertFirstButtonReturn) {
                     NSString *destination = ids[popup.indexOfSelectedItem];
-                    NSError *e = nil;
-                    BOOL ok = [self->_store
+                    NSString *spaceID = self->_spaceID;
+                    [self->_store
                         commit:^(LTProfile *p) {
                           LTNode *n = [p node:identifier];
                           if (folder && [n.kind isEqual:@"temporary"]) {
@@ -1317,14 +1355,15 @@
                               n.pinnedURL = n.url;
                           }
                           [p moveNode:identifier
-                                space:folder ? self->_spaceID : destination
+                                space:folder ? spaceID : destination
                                parent:folder ? destination : @""
                                 index:NSIntegerMax
                                 error:nil];
                         }
-                         error:&e];
-                    if (!ok)
-                        LTAlert(self.window, @"Move failed", e.localizedDescription);
+                        completion:^(NSError *e) {
+                          if (e)
+                              LTAlert(self.window, @"Move failed", e.localizedDescription);
+                        }];
                 }
               }];
 }
@@ -1344,8 +1383,9 @@
                     return;
                 [self commit:^(LTProfile *p) {
                   [LTImporter merge:result into:p];
+                } then:^{
+                  [self selectSpace:result.profile.activeSpaceID];
                 }];
-                [self selectSpace:result.profile.activeSpaceID];
               }];
 }
 - (void)readArc:(NSURL *)url {
@@ -1865,20 +1905,22 @@
     [alert addButtonWithTitle:@"Apply and Reload"];
     [alert addButtonWithTitle:@"Cancel"];
     [alert beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse response) {
-        if (response != NSAlertFirstButtonReturn) return;
+        BOOL siteSettable = site.enabled, siteDisabled = site.state == NSControlStateValueOn;
+        BOOL blockingOn = enabled.state == NSControlStateValueOn, cosmeticOn = cosmetic.state == NSControlStateValueOn;
         [self commit:^(LTProfile *profile) {
             NSMutableDictionary *updated = [profile.settings[@"contentBlocking"] mutableCopy] ?: [NSMutableDictionary new];
             NSMutableSet *sites = [NSMutableSet setWithArray:updated[@"disabledSites"] ?: @[]];
-            if (site.enabled) {
-                if (site.state == NSControlStateValueOn) [sites addObject:host];
+            if (siteSettable) {
+                if (siteDisabled) [sites addObject:host];
                 else [sites removeObject:host];
             }
-            updated[@"disabled"] = @(enabled.state != NSControlStateValueOn);
-            updated[@"cosmeticDisabled"] = @(cosmetic.state != NSControlStateValueOn);
+            updated[@"disabled"] = @(!blockingOn);
+            updated[@"cosmeticDisabled"] = @(!cosmeticOn);
             updated[@"disabledSites"] = [sites.allObjects sortedArrayUsingSelector:@selector(compare:)];
             profile.settings[@"contentBlocking"] = updated;
+        } then:^{
+            [page reload];
         }];
-        [page reload];
     }];
 }
 - (void)findNext:(id)s {

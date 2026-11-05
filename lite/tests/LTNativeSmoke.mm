@@ -24,6 +24,30 @@ static NSView *Label(NSWindow *window, NSString *label) {
         if ([view.accessibilityLabel isEqual:label]) return view;
     return nil;
 }
+static NSArray *SidebarRows(NSOutlineView *tree) {
+    NSMutableArray *rows = [NSMutableArray new];
+    for (NSInteger row = 0; row < tree.numberOfRows; row++) {
+        id item = [tree itemAtRow:row];
+        [rows addObject:[item isKindOfClass:LTNode.class] ? ((LTNode *)item).identifier : item];
+    }
+    return rows;
+}
+static void AppendExpected(NSMutableArray *rows, NSArray<LTNode *> *nodes, NSDictionary *children) {
+    for (LTNode *node in nodes) {
+        [rows addObject:node.identifier];
+        if (node.expanded && children[node.identifier]) AppendExpected(rows, children[node.identifier], children);
+    }
+}
+static NSArray *ExpectedRows(LTProfile *profile, NSString *space) {
+    NSDictionary *children = [profile childrenInSpace:space];
+    NSArray *top = children[@""] ?: @[];
+    NSPredicate *temporary = [NSPredicate predicateWithBlock:^BOOL(LTNode *node, id unused) { return [node.kind isEqual:@"temporary"]; }];
+    NSMutableArray *rows = [NSMutableArray arrayWithObject:@"Pinned"];
+    AppendExpected(rows, [top filteredArrayUsingPredicate:[NSCompoundPredicate notPredicateWithSubpredicate:temporary]], children);
+    [rows addObject:@"Today"];
+    AppendExpected(rows, [top filteredArrayUsingPredicate:temporary], children);
+    return rows;
+}
 static NSButton *Button(NSWindow *window, NSString *title) {
     for (NSView *view in Views(window.contentView))
         if ([view isKindOfClass:NSButton.class] && [((NSButton *)view).title isEqual:title])
@@ -95,6 +119,9 @@ static BOOL SameRect(NSRect a, NSRect b) {
 @property NSInteger stage;
 @property NSTimeInterval started;
 @property NSTimeInterval next;
+@property NSArray<LTProfileChange> *sidebarChanges;
+@property NSUInteger sidebarStep;
+@property NSUInteger sidebarBaseline;
 - (void)begin;
 @end
 static LTNativeSmoke *runningNative;
@@ -109,8 +136,7 @@ static LTNativeSmoke *runningNative;
 - (void)begin {
     _results = [NSMutableDictionary dictionaryWithDictionary:@{@"processID": @(getpid()), @"scope": @"actual LTWindow AppKit and CEF integration"}];
     _started = NSDate.date.timeIntervalSince1970;
-    [_owner openURL:@"http://127.0.0.1:18743/?native=primary"];
-    _primary = [_owner activePage];
+    [_owner openURL:@"http://127.0.0.1:18743/?native=primary" then:^{ self.primary = [self.owner activePage]; }];
     __weak typeof(self) weak = self;
     _timer = [NSTimer scheduledTimerWithTimeInterval:.1 repeats:YES block:^(NSTimer *timer) {
         [weak tick];
@@ -176,12 +202,16 @@ static LTNativeSmoke *runningNative;
             [_primary evaluateForTesting:@"document.cookie='nativeRegular=yes;path=/';localStorage.setItem('nativeRegular','yes');window.onbeforeunload=()=>true;true"
                 completion:^(id value, BOOL success) {
                     [self record:@"nativeFixtureSeeded" passed:success && [value boolValue]];
-                    [self.owner openURL:@"http://127.0.0.1:18743/second?native=secondary"];
-                    self.secondary = [self.owner activePage];
-                    [self advance:1 delay:.2];
+                    [self.owner openURL:@"http://127.0.0.1:18743/second?native=secondary" then:^{
+                        self.secondary = [self.owner activePage];
+                        [self advance:70 delay:.2];
+                    }];
                 }];
             break;
         }
+        case 70:
+            [self advance:90 delay:0];
+            [self checkSidebar]; break;
         case 1:
             if (_secondary.loading || !_secondary.alive) return;
             [_owner selectTab:_primary.identifier];
@@ -309,18 +339,24 @@ static LTNativeSmoke *runningNative;
                 [self.owner performCommand:@"newWindow"]; [self advance:15 delay:.2];
             }]; break;
         }
-        case 15:
+        case 15: {
             _other = [self additionalWindow:NO];
             [self record:@"nativeMultipleRegularWindows" passed:_other && _other.store == _owner.store];
-            [_other openURL:@"http://127.0.0.1:18743/storage"];
-            _otherPage = [_other activePage];
-            [_owner performCommand:@"newPrivate"]; [self advance:16 delay:.2]; break;
-        case 16:
+            [self advance:90 delay:0];
+            [_other openURL:@"http://127.0.0.1:18743/storage" then:^{
+                self.otherPage = [self.other activePage];
+                [self.owner performCommand:@"newPrivate"]; [self advance:16 delay:.2];
+            }]; break;
+        }
+        case 16: {
             _privateWindow = [self additionalWindow:YES];
             [self record:@"nativePrivateWindow" passed:_privateWindow && _privateWindow.store != _owner.store && [_privateWindow.window.title containsString:@"Private"]];
             [self record:@"nativeExtensionsHiddenInPrivate" passed:!_privateWindow.extensions && Label(_privateWindow.window, @"Extensions").hidden];
-            [_privateWindow openURL:@"http://127.0.0.1:18743/storage"];
-            _privatePage = [_privateWindow activePage]; [self advance:17 delay:.2]; break;
+            [self advance:90 delay:0];
+            [_privateWindow openURL:@"http://127.0.0.1:18743/storage" then:^{
+                self.privatePage = [self.privateWindow activePage]; [self advance:17 delay:.2];
+            }]; break;
+        }
         case 17: {
             if (_otherPage.loading || _privatePage.loading || !_privatePage.alive) return;
             [self advance:90 delay:0];
@@ -347,11 +383,14 @@ static LTNativeSmoke *runningNative;
             [self record:@"nativeRegularWindowClosure" passed:!_other.window.visible && _primary.alive && _secondary.alive];
             [_owner.window makeKeyAndOrderFront:nil]; [_owner selectTab:_primary.identifier];
             [_owner performCommand:@"closeTab"]; [self advance:20 delay:.2]; break;
-        case 20:
+        case 20: {
             if (_primary.alive) return;
             [self record:@"nativeTabClosure" passed:[_owner.store.profile node:_primary.identifier] == nil && _secondary.alive];
-            [_owner openURL:@"http://127.0.0.1:18743/auth-basic"];
-            _authPage = [_owner activePage]; [self advance:21 delay:.2]; break;
+            [self advance:90 delay:0];
+            [_owner openURL:@"http://127.0.0.1:18743/auth-basic" then:^{
+                self.authPage = [self.owner activePage]; [self advance:21 delay:.2];
+            }]; break;
+        }
         case 21: {
             NSWindow *sheet = _owner.window.attachedSheet;
             NSTextField *username = (NSTextField *)Label(sheet, @"Authentication username");
@@ -389,8 +428,10 @@ static LTNativeSmoke *runningNative;
             LTWindow *fresh = [self additionalWindow:YES];
             [self record:@"nativePrivateClearFreshWindow" passed:fresh && fresh != _privateWindow && fresh.store != _privateWindow.store];
             _privateWindow = fresh;
-            [_privateWindow openURL:@"http://127.0.0.1:18743/storage"];
-            _privatePage = [_privateWindow activePage]; [self advance:27 delay:.2]; break;
+            [self advance:90 delay:0];
+            [_privateWindow openURL:@"http://127.0.0.1:18743/storage" then:^{
+                self.privatePage = [self.privateWindow activePage]; [self advance:27 delay:.2];
+            }]; break;
         }
         case 27: {
             if (_privatePage.loading || !_privatePage.alive) return;
@@ -405,6 +446,56 @@ static LTNativeSmoke *runningNative;
         }
         default: break;
     }
+}
+// Each save below reaches the outline as no change, a row-level change or a full reload. Afterwards
+// the outline's real rows must match the model exactly, in order.
+- (void)checkSidebar {
+    LTStore *store = _owner.store;
+    NSString *space = store.profile.activeSpaceID;
+    NSUInteger baseline = store.profile.nodes.count;
+    NSString *first = @"sidebar-pin", *second = @"sidebar-temporary", *folder = @"sidebar-folder", *child = @"sidebar-child", *late = @"sidebar-late";
+    LTNode *(^add)(LTProfile *, NSString *, NSString *, NSString *) = ^LTNode *(LTProfile *p, NSString *identifier, NSString *kind, NSString *parent) {
+        LTNode *node = [p addNode:kind title:identifier url:[kind isEqual:@"folder"] ? @"" : @"https://example.invalid/" space:space parent:parent];
+        node.identifier = identifier;
+        return node;
+    };
+    NSArray<LTProfileChange> *changes = @[
+        ^(LTProfile *p) { add(p, second, @"temporary", @""); },
+        ^(LTProfile *p) { add(p, first, @"pinned", @""); },
+        ^(LTProfile *p) { [p node:first].customTitle = @"Renamed"; },
+        ^(LTProfile *p) { LTNode *n = [p node:second]; n.kind = @"pinned"; n.pinnedURL = n.url; },
+        ^(LTProfile *p) { [p moveNode:second space:space parent:@"" index:0 error:nil]; },
+        ^(LTProfile *p) { add(p, folder, @"folder", @""); add(p, child, @"pinned", folder); },
+        ^(LTProfile *p) { [p node:folder].expanded = YES; },
+        ^(LTProfile *p) { add(p, late, @"pinned", folder); },
+        ^(LTProfile *p) { [p removeNode:child]; },
+        ^(LTProfile *p) { [p node:folder].expanded = NO; },
+        ^(LTProfile *p) { [p moveNode:first space:space parent:folder index:0 error:nil]; },
+        ^(LTProfile *p) { [p removeNode:first]; },
+        ^(LTProfile *p) { [p removeNode:late]; [p node:folder].expanded = YES; },
+        ^(LTProfile *p) { [p removeNode:folder]; },
+        ^(LTProfile *p) { [p removeNode:second]; },
+    ];
+    _sidebarChanges = changes;
+    _sidebarStep = 0;
+    _sidebarBaseline = baseline;
+    [self nextSidebarChange];
+}
+- (void)nextSidebarChange {
+    LTStore *store = _owner.store;
+    if (_sidebarStep == _sidebarChanges.count) {
+        [self record:@"nativeSidebarFollowsSaves" passed:!_results[@"nativeSidebarFirstMismatch"] && store.profile.nodes.count == _sidebarBaseline];
+        [self advance:1 delay:.2];
+        return;
+    }
+    NSOutlineView *tree = (NSOutlineView *)Label(_owner.window, @"Sidebar tabs and folders");
+    NSUInteger step = _sidebarStep++;
+    [store commit:_sidebarChanges[step] completion:^(NSError *error) {
+        NSArray *rows = SidebarRows(tree), *expected = ExpectedRows(store.profile, store.profile.activeSpaceID);
+        if ((error || ![rows isEqual:expected]) && !self.results[@"nativeSidebarFirstMismatch"])
+            self.results[@"nativeSidebarFirstMismatch"] = @{@"step": @(step), @"error": error.localizedDescription ?: @"", @"rows": rows, @"expected": expected};
+        [self nextSidebarChange];
+    }];
 }
 - (void)finish {
     [_timer invalidate]; _timer = nil;
@@ -429,4 +520,92 @@ void LTRunNativeSmoke(LTWindow *window, NSString *output, void (^finished)(void)
     runningNative = [LTNativeSmoke new];
     runningNative.owner = window; runningNative.output = output; runningNative.finished = finished;
     [runningNative begin];
+}
+
+// Measures saves in the running app: real windows observe the store, and a 2 ms timer on the main
+// run loop shows every period the main thread could not have drawn or handled input.
+@interface LTWindow (SaveProbe)
+- (void)refresh;
+@end
+@interface LTSaveProbe : NSObject
+@end
+@implementation LTSaveProbe {
+    LTWindow *_window;
+    NSString *_output;
+    NSMutableArray<NSDictionary *> *_kinds;
+    NSMutableArray *_gaps, *_calls, *_durable;
+    NSArray<NSString *> *_kindNames;
+    NSTimer *_ticks;
+    double _lastTick;
+    int _kind, _saves, _finished;
+}
+static const int ProbeSavesPerKind = 12;
+static double ProbeNow(void) { return NSProcessInfo.processInfo.systemUptime * 1000; }
+- (instancetype)initWithWindow:(LTWindow *)window output:(NSString *)output {
+    if ((self = [super init])) {
+        _window = window;
+        _output = output;
+        _kinds = [NSMutableArray new];
+        _kindNames = @[@"quiet", @"organization", @"structure"];
+        _ticks = [NSTimer timerWithTimeInterval:.002 target:self selector:@selector(tick:) userInfo:nil repeats:YES];
+        [NSRunLoop.currentRunLoop addTimer:_ticks forMode:NSRunLoopCommonModes];
+        [self startKind];
+    }
+    return self;
+}
+- (void)tick:(NSTimer *)timer {
+    double now = ProbeNow();
+    if (_lastTick > 0) [_gaps addObject:@(now - _lastTick)];
+    _lastTick = now;
+}
+- (void)startKind {
+    _gaps = [NSMutableArray new]; _calls = [NSMutableArray new]; _durable = [NSMutableArray new];
+    _saves = _finished = 0;
+    [self performSelector:@selector(save) withObject:nil afterDelay:.3];
+}
+- (void)save {
+    BOOL quiet = _kind == 0, structure = _kind == 2;
+    int index = _saves++;
+    NSString *title = [NSString stringWithFormat:@"Probe %d", index];
+    NSString *spaceID = _window.store.profile.activeSpaceID;
+    double start = ProbeNow();
+    [_window.store commit:^(LTProfile *p) {
+        if (!structure) p.nodes.lastObject.customTitle = title;
+        else if ([p.nodes.lastObject.kind isEqual:@"temporary"]) [p removeNode:p.nodes.lastObject.identifier];
+        else [p addNode:@"temporary" title:title url:@"https://example.invalid/" space:spaceID parent:@""];
+    }
+                 quietFor:quiet ? _window : nil
+               completion:^(NSError *error) {
+        [self->_durable addObject:@(ProbeNow() - start)];
+        if (++self->_finished == ProbeSavesPerKind) [self finishKind];
+    }];
+    [_calls addObject:@(ProbeNow() - start)];
+    if (_saves < ProbeSavesPerKind) [self performSelector:@selector(save) withObject:nil afterDelay:.3];
+}
+- (void)finishKind {
+    NSArray *sorted = [_gaps sortedArrayUsingSelector:@selector(compare:)], *calls = [_calls sortedArrayUsingSelector:@selector(compare:)];
+    NSArray *durable = [_durable sortedArrayUsingSelector:@selector(compare:)];
+    NSUInteger over = 0;
+    for (NSNumber *gap in sorted) if (gap.doubleValue > 1000.0 / 60) over++;
+    [_kinds addObject:@{@"kind": _kindNames[_kind], @"saves": @(ProbeSavesPerKind), @"gapsOverBudget": @(over), @"ticks": @(sorted.count),
+                        @"largestGapMs": sorted.lastObject ?: @0, @"mainCallMedianMs": calls[calls.count / 2],
+                        @"savedDurablyMedianMs": durable[durable.count / 2]}];
+    if (++_kind < (int)_kindNames.count) { [self startKind]; return; }
+    [_ticks invalidate];
+    NSMutableArray *refreshes = [NSMutableArray new];
+    for (int i = 0; i < 5; i++) {
+        double start = ProbeNow();
+        [_window refresh];
+        [refreshes addObject:@(ProbeNow() - start)];
+    }
+    [refreshes sortUsingSelector:@selector(compare:)];
+    NSDictionary *result = @{@"nodes": @(_window.store.profile.nodes.count), @"kinds": _kinds, @"windowRefreshMedianMs": refreshes[2]};
+    [[NSJSONSerialization dataWithJSONObject:result options:NSJSONWritingPrettyPrinted error:nil] writeToFile:_output atomically:YES];
+}
+@end
+void LTRunSaveProbe(LTWindow *window, NSString *output) {
+    static LTSaveProbe *probe;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 4 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+        probe = [[LTSaveProbe alloc] initWithWindow:window output:output];
+    });
 }

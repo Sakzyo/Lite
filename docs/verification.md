@@ -8,6 +8,52 @@ supersede the current acceptance matrix.
 
 # Verification record — 22 September 2026
 
+## Background profile writer with media consent — 6 November 2026
+
+- `./script/verify_release.sh` **passed**, exit code 0, on `c213bee`, which merges this work
+  with stable test signing and the consent request. It was run with
+  `LITE_TEST_SIGNING_IDENTITY` set. This is the first run in which the `combinedMedia*`
+  checks passed: macOS reported camera and microphone `authorized`.
+- Every stage passed: 9 of 9 CTest suites, update, endurance and package tests, the
+  release-binary check, crash capture, 106 Chromium checks, 5 extension checks, 48
+  native-window checks, `codesign --verify --deep --strict` on both bundles and
+  `git diff --check`.
+- The run before it failed `test_browser.py` with a timeout. Another app covered the test
+  window for 520 of 688 samples. In the passing run the browser suite was never covered, and
+  the native suite was covered for 10 of 158 samples.
+- The fixture server logged one traceback from a client that disconnected during a 404. It
+  decided no check.
+- `--measure` was not used.
+
+## Background profile writer — 5 November 2026
+
+- `./script/verify_release.sh` **did not pass**. It stopped at the same three
+  `combinedMedia*` camera and microphone consent checks as the records below. The script
+  exits there, so it did not reach its extension, native, signing or `git diff --check` steps.
+- Everything before that step passed: 9 of 9 CTest suites, update tests, endurance runner
+  tests, package tests on each bundle, the release-binary check and `test_crash_capture.py`.
+  In `test_browser.py`, the three consent checks were its only failures.
+- The steps the script did not reach were run by hand and passed: 5 extension checks,
+  48 native-window checks (three runs in a row), `codesign --verify --deep --strict` on both
+  bundles and `git diff --check`.
+- `LiteProfileTests`: **198 passed**, 47 of them new, ten runs in a row. They cover write
+  ordering, a commit held open inside its fsync while the main thread keeps working, failures
+  from injected disk faults, validation and raised exceptions, `close`, and a child process
+  killed with SIGKILL partway through its queue, which must leave an exact prefix of its writes.
+- `LiteCoreTests` with `--check-icons`: **106 passed**, including the background favicon scan.
+- ThreadSanitizer reported no races across `LiteProfileTests`. It was run by hand and is not
+  part of the script.
+- New native check `nativeSidebarFollowsSaves` compares the real outline's rows to the model
+  after each of 15 saves, covering no change, row changes, expansion and full reloads.
+- **Native focus:** `test_native.py` needs window focus and port 18743 to itself. Run alongside
+  another session's GUI tests, it failed focus checks and `nativeCrashUploadOnlyApprovedReport`.
+  Those failures stopped when the machine was quiet.
+- Measurements: [profile saves](performance.md#profile-saves).
+- **Not exercised:** an alert for a failed write as a user sees it. The tests prove the
+  notification is posted and the model and disk are correct, but no test shows the alert in a
+  window. Also not exercised: a physically full disk, power loss, and hardware other than one
+  Apple Silicon Mac.
+
 ## Crash reporting — 5 November 2026
 
 - `./script/verify_release.sh` **did not pass**. It stopped at the same three

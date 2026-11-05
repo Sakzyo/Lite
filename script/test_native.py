@@ -20,7 +20,7 @@ REQUIRED = ['nativeMainWindow', 'nativeAccessibleNavigation', 'nativeFixtureSeed
             'nativeExtensionsPanel', 'nativeExtensionPopup', 'nativeExtensionPopupClosed', 'nativeExtensionsHiddenInPrivate',
             'nativeSplitPrimaryFocused', 'nativeSplitFocusForward', 'nativeSplitFocusBackward',
             'nativeSidebarCollapsed', 'nativeFullScreenChrome', 'nativeFullScreenRestored',
-            'nativeSidebarRevealed', 'nativeCommandShortcutAndNames',
+            'nativeSidebarRevealed', 'nativeSidebarFollowsSaves', 'nativeCommandShortcutAndNames',
             'nativeCommandArrowNavigation', 'nativeCommandEscape', 'nativeSettingsAccessibleControls',
             'nativeDownloadsAccessibleControls', 'nativeWindowCloseDialog',
             'nativeWindowCancelPreservesEveryPage', 'nativeBeforeUnloadDialog',

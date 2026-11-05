@@ -15,8 +15,8 @@ actual test evidence and remaining gates for every requested production area.
   paths, explicit entitlements, final extracted-artifact checks, local verification
   entry point and checked-in CI workflow.
 - Validated persisted data, bounded durable recovery backups, explicit native
-  Restore Backup UI and preservation of damaged originals. Profile writes retain
-  SQLite FULL durability with less serialization work.
+  Restore Backup UI and preservation of damaged originals. Profile writes run on a
+  serial background writer and retain SQLite FULL durability.
 - Native authentication and permission request handling, per-origin storage reset,
   full storage-partition reset on restart, bounded download history, quarantine
   verification, safe discard guards and bounded nonsensitive scroll metadata.

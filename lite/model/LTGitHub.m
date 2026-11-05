@@ -207,11 +207,11 @@ void LTApplyGitHubPullRequests(LTProfile *profile, NSString *folderID, NSArray<N
             return;
         }
         NSSet *open = owner.openIDs ? owner.openIDs() : [NSSet set];
-        if (![owner->_store commit:^(LTProfile *profile) { LTApplyGitHubPullRequests(profile, identifier, pulls, open); } error:&error]) {
-            [owner setStatus:error.localizedDescription folder:identifier]; return;
-        }
-        [owner->_statuses removeObjectForKey:identifier];
-        [NSNotificationCenter.defaultCenter postNotificationName:@"LTGitHubChanged" object:owner];
+        [owner->_store commit:^(LTProfile *profile) { LTApplyGitHubPullRequests(profile, identifier, pulls, open); } completion:^(NSError *saveError) {
+            if (saveError) { [owner setStatus:saveError.localizedDescription folder:identifier]; return; }
+            [owner->_statuses removeObjectForKey:identifier];
+            [NSNotificationCenter.defaultCenter postNotificationName:@"LTGitHubChanged" object:owner];
+        }];
     }];
     _tasks[identifier] = task;
     [task resume];

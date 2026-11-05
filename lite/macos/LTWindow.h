@@ -19,6 +19,8 @@
 - (void)setDownloadHistory:(LTDownloadHistory *)history;
 - (void)captureSessionStates:(void (^)(void))completion;
 - (void)openURL:(NSString *)url;
+// `next` runs once the tab exists and is selected. Saves are queued, so that is not before this returns.
+- (void)openURL:(NSString *)url then:(nullable void (^)(void))next;
 - (void)performCommand:(NSString *)command;
 - (NSDictionary *)restorationState;
 - (void)showOnboarding;

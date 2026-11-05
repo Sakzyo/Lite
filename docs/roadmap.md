@@ -36,9 +36,13 @@ apply: meeting these goals does not by itself qualify Lite as a production brows
 
 ### Performance
 
-- **Move profile writes off the main thread.** Use a serial background writer for
-  visit recording and organization saves. A 10,000-node save must no longer miss the
-  frame budget.
+- **Move profile writes off the main thread.** Done: visit recording, organization
+  saves, history deletion and recovery backups run on a serial background writer. At
+  10,000 nodes a save costs the main thread about 0.02 ms, and renames and opening or
+  closing a tab stayed within the frame budget in the running app. Changes that reload the
+  whole sidebar, such as switching Spaces or reordering rows, still take about 50 ms. See
+  [profile saves](performance.md#profile-saves) and
+  [background writer](architecture.md#background-writer).
 
 ### Content blocking
 

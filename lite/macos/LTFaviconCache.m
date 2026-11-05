@@ -53,6 +53,8 @@ static NSData *Thumbnail(NSData *data) {
     NSCache<NSString *, NSImage *> *_images;
     NSMapTable<NSString *, NSImage *> *_sources;
     NSMutableSet<NSString *> *_attempted;
+    NSArray<LTNode *> *_nodesToScan;
+    BOOL _scanning;
     NSMutableArray<NSMutableDictionary *> *_pending;
     NSMutableDictionary<NSNumber *, NSMutableDictionary *> *_active;
     NSURLSession *_session;
@@ -138,26 +140,51 @@ static NSData *Thumbnail(NSData *data) {
     [_sources setObject:image forKey:origin];
     [self savePNG:Thumbnail(image.TIFFRepresentation) origin:origin];
 }
+// This runs after every profile change, and parsing each node's URL is too slow for the main thread
+// on a long sidebar. Nodes are read-only once published, so a background scan can read them. Changes
+// that arrive during a scan collapse into one more scan of the newest nodes.
 - (void)prefetchNodes:(NSArray<LTNode *> *)nodes {
     if (_stopped)
         return;
-    for (LTNode *node in nodes) {
-        NSString *origin = LTFaviconOrigin(node.url);
-        if (!origin || [_attempted containsObject:origin])
-            continue;
-        [_attempted addObject:origin];
-        NSDictionary *attributes =
-            [NSFileManager.defaultManager attributesOfItemAtPath:[self pathForOrigin:origin]
-                                                           error:nil];
-        if (attributes && [attributes[NSFileModificationDate] timeIntervalSinceNow] > -30 * 86400)
-            continue;
-        NSString *icon = LTFaviconOrigin(node.favicon)
-                             ? node.favicon
-                             : [origin stringByAppendingString:@"/favicon.ico"];
-        [_pending addObject:[@{@"origin" : origin, @"url" : icon, @"page" : node.url, @"stage" : @0}
-                                mutableCopy]];
-    }
-    [self pump];
+    _nodesToScan = nodes;
+    if (!_scanning)
+        [self scanNodes];
+}
+- (void)scanNodes {
+    NSArray<LTNode *> *nodes = _nodesToScan;
+    _nodesToScan = nil;
+    _scanning = YES;
+    NSSet<NSString *> *attempted = [_attempted copy];
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+      NSMutableSet *origins = [NSMutableSet new];
+      NSMutableArray *jobs = [NSMutableArray new];
+      for (LTNode *node in nodes) {
+          NSString *origin = LTFaviconOrigin(node.url);
+          if (!origin || [attempted containsObject:origin] || [origins containsObject:origin])
+              continue;
+          [origins addObject:origin];
+          NSDictionary *attributes =
+              [NSFileManager.defaultManager attributesOfItemAtPath:[self pathForOrigin:origin]
+                                                             error:nil];
+          if (attributes && [attributes[NSFileModificationDate] timeIntervalSinceNow] > -30 * 86400)
+              continue;
+          NSString *icon = LTFaviconOrigin(node.favicon)
+                               ? node.favicon
+                               : [origin stringByAppendingString:@"/favicon.ico"];
+          [jobs addObject:[@{@"origin" : origin, @"url" : icon, @"page" : node.url, @"stage" : @0}
+                              mutableCopy]];
+      }
+      dispatch_async(dispatch_get_main_queue(), ^{
+        self->_scanning = NO;
+        if (self->_stopped)
+            return;
+        [self->_attempted unionSet:origins];
+        [self->_pending addObjectsFromArray:jobs];
+        if (self->_nodesToScan)
+            [self scanNodes];
+        [self pump];
+      });
+    });
 }
 - (void)pump {
     if (_stopped)

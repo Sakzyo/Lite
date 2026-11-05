@@ -144,25 +144,27 @@ static NSString *Label(NSDictionary *binding) {
             _status.stringValue = [NSString stringWithFormat:@"Already used by “%@”. Change or clear that shortcut first.", item.title];
             return;
         }
-    NSError *error = nil;
-    if (![_store commit:^(LTProfile *profile) {
+    NSString *command = selected.representedObject;
+    [_store commit:^(LTProfile *profile) {
         NSMutableDictionary *saved = [profile.settings[@"shortcuts"] mutableCopy] ?: [NSMutableDictionary new];
-        saved[selected.representedObject] = binding;
+        saved[command] = binding;
         profile.settings[@"shortcuts"] = saved;
-    } error:&error]) { _status.stringValue = error.localizedDescription; return; }
-    [self apply];
-    [self selection:nil];
+    } completion:^(NSError *error) {
+        if (error) { self->_status.stringValue = error.localizedDescription; return; }
+        [self apply];
+        [self selection:nil];
+    }];
 }
 - (void)clear:(id)sender { [self save:LTNormalizeShortcut(@"", 0)]; }
 - (void)reset:(id)sender { [self save:_defaults[_items[_commands.indexOfSelectedItem].representedObject]]; }
 - (void)resetAll:(id)sender {
     _recording = NO;
     LTConfirm(self.window, @"Restore all default shortcuts?", @"Your custom shortcuts will be removed.", @"Restore Defaults", ^{
-        NSError *error = nil;
-        if (![self->_store commit:^(LTProfile *profile) { [profile.settings removeObjectForKey:@"shortcuts"]; } error:&error])
-            LTAlert(self.window, @"Could not save shortcuts", error.localizedDescription);
-        [self apply];
-        [self selection:nil];
+        [self->_store commit:^(LTProfile *profile) { [profile.settings removeObjectForKey:@"shortcuts"]; } completion:^(NSError *error) {
+            if (error) LTAlert(self.window, @"Could not save shortcuts", error.localizedDescription);
+            [self apply];
+            [self selection:nil];
+        }];
     });
 }
 - (void)windowWillClose:(NSNotification *)note {

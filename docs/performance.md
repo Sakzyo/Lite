@@ -86,6 +86,84 @@ Remaining qualification includes long idle runs, mixed-site workloads, multiple
 Spaces, media/capture, pressure testing, cold launch, energy use, and equivalent
 baseline browsers on the same hardware.
 
+## Profile saves
+
+Profile writes run on a [serial background writer](architecture.md#background-writer), so
+a save costs the main thread about 0.02 ms however large the profile is. The budget is
+16.7 ms, one frame at 60 Hz. Measured on 5 November 2026 on Apple Silicon with 10 cores and
+32 GiB RAM, macOS 26.5.2, Release builds. Raw results:
+[arm64 JSON](benchmarks/2026-11-05-profile-saves-arm64.json).
+
+Each table counts periods when the main thread could not have drawn or handled input.
+
+**The store alone.** 40 saves, 100 ms apart, of 10,000 nodes, with no UI attached. Figures
+are from three alternating before and after runs.
+
+| | Before | After |
+| ---: | ---: | ---: |
+| Main-thread time per save, median | 44.1 ms | 0.009 ms |
+| Largest main-thread gap | 56 to 59 ms | 2.9 to 3.2 ms |
+| Saves that missed the budget | 39 of 40 | 0 of 40 |
+| Time until the save is durable, median | 44.1 ms | 46 ms |
+
+A save takes as long to become durable as it did. It no longer holds the main thread while
+it does. Copying the model takes 1.2 ms of a 10,000-node save, validating 22 ms and
+serializing 16 ms, which is why all of it moved and not only the SQLite commit.
+
+**The running app.** `LiteTest.app` with a real window, 12 saves of each kind, 300 ms apart.
+A quiet save changes a page title. A rename changes a row. A tab change adds or removes one.
+Each figure is the number of gaps over budget, then the largest gap.
+
+| Nodes | Build | Quiet | Rename | Tab change | Launch to first page |
+| ---: | --- | ---: | ---: | ---: | ---: |
+| 2,000 | Before | 11, 44 ms | 15, 439 ms | 15, 440 ms | 1.5 s |
+| 2,000 | After | 0, 3.8 ms | 0, 6.1 ms | 0, 7.9 ms | 1.3 s |
+| 10,000 | Before | not measurable | not measurable | not measurable | over 240 s |
+| 10,000 | After | 0 to 2, 2.5 to 22.7 ms | 0, 4.6 to 4.8 ms | 0, 5.7 to 5.8 ms | 0.8 to 1.1 s |
+
+The earlier build never loaded its first page at 10,000 nodes within 240 seconds, so saves
+could not be measured there. The 10,000-node row above covers three runs. Two gaps in
+one quiet window were over budget. The probe records everything on the main thread during
+that window, not only saves, and that one was not traced to a cause. The largest gap in every
+rename and tab-change window was within budget.
+
+Moving writes alone did not meet the goal. With only the writer in place, a rename at 10,000
+nodes still froze the app, because redrawing the sidebar took 7.9 seconds and launch took 20.
+Three more changes were needed:
+
+- The sidebar sorted the whole list once for every row, which is quadratic. It now uses
+  lookups that the writer builds before it publishes a model. `refresh` at 10,000 nodes went
+  from 7,878 ms to 0.4 ms.
+- The sidebar now changes only what a save changed: nothing when no row's content differs,
+  one row when one row came or went, and only the visible rows whose content differs.
+- The favicon scan ran over every URL on the main thread after each save. It now runs in the
+  background.
+
+### What is still slow
+
+- **Changes that reload the whole sidebar** still walk every row, which was about 50 ms at
+  10,000 nodes in one Space. These are switching Spaces, reordering rows, moving or deleting a
+  folder that has children, a change of more than 64 rows such as an import, and Pinned
+  becoming empty or no longer empty. A GitHub Live Folder refresh that reorders its rows is
+  one of these.
+- **Opening a profile** still validates it on the main thread: 74 ms at 10,000 nodes.
+- **Quitting** waits for the queue and for one last save on the main thread, by design.
+- These figures come from one machine. Older hardware, a slow disk, a physically full volume
+  and power loss have not been measured.
+
+### Reproduce
+
+```sh
+clang -O3 -DNDEBUG -fobjc-arc -framework Foundation -framework Security \
+  script/profile_benchmark.m .build/libLiteCore.a -lsqlite3 -o /private/tmp/lite-profile-benchmark
+/private/tmp/lite-profile-benchmark
+python3 script/package.py --test
+python3 script/measure_native.py --nodes 10000 --duration 2 --save-probe --output /private/tmp/saves.json
+```
+
+The benchmark also compiles against the earlier synchronous store. The "before" app figures
+came from the starting commit with the same probe added, using its synchronous API.
+
 ## Current readiness measurements
 
 The [1 October 2026 record](readiness-2026-10-01.md) contains the current baseline,

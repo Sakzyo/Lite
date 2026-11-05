@@ -123,22 +123,16 @@
     [_content addArrangedSubview:[NSView new]];
 }
 - (void)setting:(NSPopUpButton *)b {
-    NSError *e = nil;
-    if (![_store
-            commit:^(LTProfile *p) {
-              p.settings[b.identifier] = b.titleOfSelectedItem;
-            }
-             error:&e])
-        LTAlert(self.window, @"Could not save", e.localizedDescription);
+    NSString *setting = b.identifier, *value = b.titleOfSelectedItem;
+    [_store commit:^(LTProfile *p) {
+      p.settings[setting] = value;
+    } completion:nil];
 }
 - (void)externalMini:(NSButton *)b {
-    NSError *e = nil;
-    if (![_store
-            commit:^(LTProfile *p) {
-              p.settings[@"externalMini"] = @(b.state == NSControlStateValueOn);
-            }
-             error:&e])
-        LTAlert(self.window, @"Could not save", e.localizedDescription);
+    BOOL enabled = b.state == NSControlStateValueOn;
+    [_store commit:^(LTProfile *p) {
+      p.settings[@"externalMini"] = @(enabled);
+    } completion:nil];
 }
 - (void)action:(NSButton *)b {
     [self.window orderOut:nil];
@@ -212,9 +206,10 @@
 - (void)delete:(id)s {
     NSDictionary *r = [self selection];
     if (r) {
-        NSError *error = nil;
-        if (![_store deleteHistoryURL:r[@"url"] error:&error]) LTAlert(self.window, @"Could not finish deleting history", error.localizedDescription);
-        [self refresh];
+        [_store deleteHistoryURL:r[@"url"] completion:^(NSError *error) {
+            if (error) LTAlert(self.window, @"Could not finish deleting history", error.localizedDescription);
+            [self refresh];
+        }];
     }
 }
 - (void)clear:(id)s {
@@ -231,10 +226,10 @@
                     double delta = range.indexOfSelectedItem == 0   ? 3600
                                    : range.indexOfSelectedItem == 1 ? 86400
                                                                     : DBL_MAX;
-                    NSError *error = nil;
-                    if (![self->_store clearHistorySince:NSDate.date.timeIntervalSince1970 - delta error:&error])
-                        LTAlert(self.window, @"Could not finish clearing history", error.localizedDescription);
-                    [self refresh];
+                    [self->_store clearHistorySince:NSDate.date.timeIntervalSince1970 - delta completion:^(NSError *error) {
+                        if (error) LTAlert(self.window, @"Could not finish clearing history", error.localizedDescription);
+                        [self refresh];
+                    }];
                 }
               }];
 }
