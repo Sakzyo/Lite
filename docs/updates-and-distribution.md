@@ -9,9 +9,8 @@ working public update service.
 ## Build dependencies
 
 Run `python3 script/fetch_cef.py` and `python3 script/fetch_sparkle.py` before CMake.
-CEF remains pinned to `154.0.23+g062ebe4+chromium-154.0.8037.17`. The CEF CDN supplies
-SHA-1 archive digests; these existing exact pins detect corrupted archives, and
-HTTPS authenticates transport. Sparkle's ZIP SHA-256 is pinned to the value in its
+`script/fetch_cef.py` holds the exact CEF pin. The CEF CDN supplies SHA-1 archive
+digests; these exact pins detect corrupted archives, and HTTPS authenticates transport. Sparkle's ZIP SHA-256 is pinned to the value in its
 [2.10.0 Package.swift](https://github.com/sparkle-project/Sparkle/blob/2.10.0/Package.swift).
 Review both dependency pins before shipping a security release.
 
@@ -116,6 +115,18 @@ before making any feed public.
 
 ## Routine engine and emergency security release
 
+`.github/workflows/cef-update.yml` checks the
+[CEF release index](https://cef-builds.spotifycdn.com/index.html) every six hours. When
+a stable build newer than the pin exists for both architectures, `script/update_cef.py`
+updates `script/fetch_cef.py` and the job opens a pull request from a
+`cef-update/<version>` branch, then starts Release verification on it. A version whose
+pull request was closed is not proposed again. Only the newest release is proposed, so
+a release replaced before the next check gets no pull request of its own.
+
+GitHub runs scheduled workflows only from the default branch and disables them after
+60 days without repository activity. The job also needs **Allow GitHub Actions to
+create and approve pull requests** under the repository's Actions settings.
+
 1. Review upstream CEF/Chromium and Sparkle security releases. Update exact SDK pins
    and archive digests from upstream; retain the old released bundle for testing.
 2. Build each architecture separately with an increasing build number. Run the
@@ -136,12 +147,12 @@ storage, and private-window separation. Production updates retain bundle IDs,
 profile paths and the publisher's signing identity. Ad-hoc-to-ad-hoc checks do not
 prove stable Keychain authorization across a Developer ID upgrade.
 
-The pinned CEF public settings/header expose no supported macOS OSCrypt product
-namespace option. Its framework still references Chromium Safe Storage. Lite does
-not rename that item, copy its secret, weaken authorization, switch cookie
-providers, or use mock Keychain for ordinary browsing. A Lite-specific namespace
-is unavailable in this SDK. Adopting one would require an upstream-supported CEF
-option (or separately reviewed engine change) plus an explicit encrypted-cookie migration.
+CEF 156 adds `keychain_service_name` and `keychain_account_name` settings for the
+Keychain item OSCrypt uses. Lite leaves them empty, so it keeps using Chromium Safe
+Storage. Lite does not rename that item, copy its secret, weaken authorization,
+switch cookie providers, or use mock Keychain for ordinary browsing. Setting either
+value selects a different Keychain item, so adopting a Lite-specific namespace needs
+an explicit encrypted-cookie migration.
 The mandatory release gate is verified signed cookie/Keychain continuity with the
 supported configuration, not a speculative namespace change.
 Changing only the bundle display name cannot safely migrate existing cookies.
@@ -166,10 +177,11 @@ arm64 and macOS 15 Intel. The workflow is checked in but has not run on GitHub a
 part of this local session. Native VoiceOver/Full Keyboard Access and real signed
 upgrade acceptance are separate gates, not implied by CI success.
 
-Current focused checks: 20 native updater policy/parser checks and 11 Python tests pass.
+Current focused checks: 20 native updater policy/parser checks and 17 Python tests pass.
 The latter include real Sparkle signature verification of synthetic bytes and
 signed feed XML, tamper rejection, correct/mismatched SDKs, archive corruption,
-interrupted download/replacement, unsafe archive paths, and simulated ENOSPC.
+interrupted download/replacement, unsafe archive paths, simulated ENOSPC, and
+selecting and writing a new CEF pin from a synthetic release index.
 These do **not** prove Sparkle's complete installation recovery: that scenario
 requires exercising signed old/new applications with the prerequisites above.
 Seven runner tests also cover exact app/profile matching, timeout failure status,

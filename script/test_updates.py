@@ -13,6 +13,7 @@ import tempfile
 import unittest
 from unittest import mock
 import fetch_cef
+import update_cef
 from sdk_support import digest, download, extract_tar, recover, replace_directory, valid_receipt
 from package import release_configuration
 
@@ -130,6 +131,54 @@ class SDKTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     extract_tar(archive, self.directory / 'extracted')
                 self.assertFalse((self.directory.parent / 'outside').exists())
+
+
+class CEFPinTests(unittest.TestCase):
+    OLD = '154.0.23+g062ebe4+chromium-154.0.8037.17'
+    NEW = '156.0.15+gcf671c0+chromium-156.0.8078.80'
+    NEWER = '156.0.16+gabc1234+chromium-156.0.8078.90'
+    SOURCE = f"ROOT = 1\nVERSION = '{OLD}'\nDIGESTS = {{'macosarm64': '{'a' * 40}', 'macosx64': '{'b' * 40}'}}\n"
+
+    @staticmethod
+    def build(version, digest='c' * 40, channel='stable'):
+        return dict(cef_version=version, channel=channel, files=[dict(type='standard', sha1='0' * 40), dict(type='minimal', sha1=digest)])
+
+    def update(self, arm, intel):
+        index = dict(macosarm64=dict(versions=arm), macosx64=dict(versions=intel))
+        with tempfile.TemporaryDirectory(prefix='lite-pin-test-') as temporary:
+            path = pathlib.Path(temporary) / 'fetch_cef.py'
+            path.write_text(self.SOURCE)
+            return update_cef.update(index, path), path.read_text()
+
+    def test_writes_each_architecture_minimal_digest(self):
+        version, source = self.update([self.build(self.NEW, 'c' * 40)], [self.build(self.NEW, 'd' * 40)])
+        self.assertEqual(version, self.NEW)
+        self.assertEqual(update_cef.pinned(source)[0], self.NEW)
+        namespace = {}
+        exec(source, namespace)
+        self.assertEqual(namespace['DIGESTS'], {'macosarm64': 'c' * 40, 'macosx64': 'd' * 40})
+
+    def test_ignores_beta_and_chooses_by_version_not_index_order(self):
+        builds = [self.build(self.NEW), self.build(self.NEWER), self.build('157.0.1+g1234567+chromium-157.0.8100.1', channel='beta')]
+        self.assertEqual(self.update(builds, builds)[0], self.NEWER)
+
+    def test_waits_for_both_architectures(self):
+        self.assertEqual(self.update([self.build(self.NEW), self.build(self.NEWER)], [self.build(self.NEW)])[0], self.NEW)
+
+    def test_does_not_rewrite_current_or_older_pin(self):
+        builds = [self.build(self.OLD), self.build('153.0.9+g1234567+chromium-153.0.7900.1')]
+        version, source = self.update(builds, builds)
+        self.assertIsNone(version)
+        self.assertEqual(source, self.SOURCE)
+
+    def test_rejects_unexpected_index_values(self):
+        unsafe = [self.build(self.NEW + "'\nimport os"), self.build(self.NEW, "' + evil + '")]
+        self.assertIsNone(self.update(unsafe + [self.build(self.OLD)], unsafe + [self.build(self.OLD)])[0])
+        with self.assertRaises(ValueError):
+            self.update([self.build(self.NEW)], [])
+
+    def test_real_pin_can_be_read(self):
+        self.assertEqual(update_cef.pinned((ROOT / 'script/fetch_cef.py').read_text())[0], fetch_cef.VERSION)
 
 
 class UpdateSigningTests(unittest.TestCase):

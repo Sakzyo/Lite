@@ -5,8 +5,8 @@ nested folders, Favorites, a keyboard Command Bar, Split View, and Mini Lite.
 
 **Status: runnable development build, not a production-qualified release.**
 The app uses AppKit and Chromium Embedded Framework (CEF), not Electron or WebKit.
-The CEF SDK is pinned to **154.0.23 / Chromium 154.0.8037.17**. No Chromium source
-files are patched. The browser UI is native; only website content uses Chromium.
+The CEF SDK version is pinned in [script/fetch_cef.py](script/fetch_cef.py). No Chromium
+source files are patched. The browser UI is native; only website content uses Chromium.
 
 ## Run
 
@@ -93,6 +93,7 @@ measured results and remaining qualification work.
 - [Verification record](docs/verification.md)
 - [Native content blocking](docs/content-blocking.md)
 - [Chrome extensions](docs/extensions.md)
+- [Roadmap](docs/roadmap.md)
 
 CEF, Chromium, uBlock Origin Lite, and Public Suffix List notices are included in the application Resources directory.
 Lite contains no account service, telemetry SDK, AI subsystem, or proprietary Arc

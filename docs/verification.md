@@ -8,6 +8,27 @@ supersede the current acceptance matrix.
 
 # Verification record — 22 September 2026
 
+## CEF 156 update — 5 November 2026
+
+Run on Apple Silicon with macOS 26.5.2, moving from CEF 154.0.23 to
+156.0.15+gcf671c0+chromium-156.0.8078.80. Both archives matched the digests in the CEF
+release index. The Intel archive's header and framework architecture were inspected;
+it was not built or run.
+
+- `./script/verify_release.sh` **did not pass**: it stopped at `test_browser.py` on
+  `combinedMediaGranted`, `combinedMediaProtected` and `combinedMediaStopped`. These
+  need macOS camera and microphone consent for the exact ad hoc build, which an
+  unattended run cannot give. The same three checks failed on CEF 154 in every run.
+- Everything before that step passed: 8 of 8 CTest suites, 17 update tests, 7 endurance
+  runner tests, 5 package tests, and all other browser checks.
+- The steps the script did not reach were run by hand and passed: 5 extension checks,
+  41 native-window checks, `codesign --verify --deep --strict` and `git diff --check`.
+- Two unrelated flakes appeared on the unmodified CEF 154 build. `backgroundResume`
+  failed 1 of 4 browser runs. `nativeCommandShortcutAndNames` and `nativeCommandEscape`
+  failed 2 of 3 native runs while another application was frontmost.
+- Performance measurements were not repeated, so [performance](performance.md) still
+  describes CEF 154.
+
 ## Developer Tools crash and YouTube follow-up — 27 September 2026
 
 - The supplied incident `66A846B1-E073-41C2-9F99-1B9C65CA302C` is the earlier
