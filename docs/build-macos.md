@@ -59,6 +59,8 @@ An optional read-only local schema check prints counts, not browsing URLs:
 Chromium, extension, native-window, endurance and measurement scripts run that bundle
 by default. `script/test_package.py` fails if a release bundle contains those markers,
 and `script/test_release_binary.py` confirms a running release bundle ignores the flags.
+`script/test_crash_capture.py` crashes a helper in a disposable profile and requires a
+stored report.
 
 The bundled-engine harness uses loopback test pages and a disposable profile:
 

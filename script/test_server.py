@@ -16,7 +16,13 @@ def png():
     return b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('!2I5B', 32, 32, 8, 6, 0, 0, 0)) + chunk(b'IDAT', zlib.compress(pixels)) + chunk(b'IEND', b'')
 
 class Handler(BaseHTTPRequestHandler):
+    crash_uploads = []
     def do_POST(self):
+        if self.path == '/crash-upload':
+            body = self.rfile.read(int(self.headers.get('Content-Length', 0)))
+            Handler.crash_uploads.append(dict(body=body.decode('latin-1'), cookie=self.headers.get('Cookie'), contentType=self.headers.get('Content-Type')))
+            self.send_response(200); self.send_header('Content-Length', '0'); self.end_headers()
+            return
         self.rfile.read(int(self.headers.get('Content-Length', '0')))
         self.do_GET()
 
@@ -177,6 +183,8 @@ self.addEventListener('message',e=>e.waitUntil((async()=>{
         elif self.path == '/login':
             body = b'''<!doctype html><title>Lite login test</title><link rel="icon" href="/icon.png"><style>body{font:18px system-ui;padding:48px}input,button{font:inherit;margin:12px;padding:10px}</style><h1>Local login test</h1><form action="/login" onsubmit="event.preventDefault();document.querySelector('#status').textContent='Submitted';"><label>Username<input name="username" autocomplete="username"></label><br><label>Password<input name="password" type="password" autocomplete="current-password"></label><br><button>Sign in</button></form><p id="status">Not submitted</p>'''
             content = 'text/html'
+        elif parsed.path == '/crash-uploads':
+            body, content = json.dumps(Handler.crash_uploads).encode(), 'application/json'
         elif parsed.path == '/lifecycle-probe':
             body = (Path(__file__).resolve().parents[1]/'lite/tests/fixtures/lifecycle-probe.html').read_bytes()
             content = 'text/html'

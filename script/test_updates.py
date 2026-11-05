@@ -15,7 +15,7 @@ from unittest import mock
 import fetch_cef
 import update_cef
 from sdk_support import digest, download, extract_tar, recover, replace_directory, valid_receipt
-from package import release_configuration
+from package import crash_configuration, release_configuration
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 ARCH = 'macosarm64' if platform.machine() == 'arm64' else 'macosx64'
@@ -131,6 +131,20 @@ class SDKTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     extract_tar(archive, self.directory / 'extracted')
                 self.assertFalse((self.directory.parent / 'outside').exists())
+
+
+class CrashConfigurationTests(unittest.TestCase):
+    def test_only_sentry_https_endpoints_are_accepted(self):
+        info = {}
+        crash_configuration(info, None)
+        self.assertEqual(info, {})
+        url = 'https://o1.ingest.de.sentry.io/api/2/minidump/?sentry_key=public'
+        crash_configuration(info, url)
+        self.assertEqual(info['LTCrashUploadURL'], url)
+        for value in ['http://o1.ingest.sentry.io/api/2/minidump/', 'https://evil-sentry.io/', 'https://sentry.io.evil.test/',
+                      'https://user:secret@o1.ingest.sentry.io/', 'not a url']:
+            with self.assertRaises(ValueError, msg=value):
+                crash_configuration({}, value)
 
 
 class CEFPinTests(unittest.TestCase):

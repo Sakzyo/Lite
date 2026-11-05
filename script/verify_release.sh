@@ -16,6 +16,7 @@ python3 script/test_endurance.py 2>&1 | tee test-results/release/endurance-runne
 python3 script/package.py 2>&1 | tee test-results/release/package.log
 python3 script/test_release_binary.py 2>&1 | tee test-results/release/release-binary.log
 python3 script/package.py --test 2>&1 | tee test-results/release/package-test.log
+python3 script/test_crash_capture.py 2>&1 | tee test-results/release/crash-capture.log
 python3 script/test_browser.py 2>&1 | tee test-results/release/browser.log
 python3 script/test_extensions.py 2>&1 | tee test-results/release/extensions.log
 python3 script/test_native.py 2>&1 | tee test-results/release/native.log

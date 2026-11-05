@@ -233,6 +233,7 @@ Lite.sqlite                # organization, window metadata, Lite history
 Lite.sqlite-wal / -shm     # SQLite WAL files while running
 Chromium/Default/          # normal Chromium profile/storage
 Favicons/                  # bounded PNG favicon cache, shared by site origin
+Chromium/pending/           # crash reports, kept 7 days at most
 Credentials/Logins.vault    # authenticated encrypted website accounts/passwords
 Extensions/Extensions.json  # extension list; Web Store packages in Extensions/<id>/
 ```
@@ -253,7 +254,9 @@ removed. Descriptor-relative I/O rejects symlinks, non-owner files and hard-link
 vault files. Directory locking serializes read/modify/write across stores and
 processes. Updates write only ciphertext into an exclusive 0600 temporary file,
 flush it, atomically rename it, then flush the directory. There are no plaintext
-credential files or SQLite password fields. Interrupted writes can leave encrypted
+credential files or SQLite password fields. Crash reports are the exception to look out
+for: they are memory snapshots, so one could hold a value that was in memory at the
+crash. See [crash reporting](crash-reporting.md). Interrupted writes can leave encrypted
 temporary files. A missing key, failed authentication, or invalid data fails closed
 without resetting the vault. Older Lite Keychain logins migrate on first access;
 their originals are deleted only after a successful vault commit, under the same

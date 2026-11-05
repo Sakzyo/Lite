@@ -15,6 +15,7 @@
 #import "LTExtensionsPanel.h"
 #import "../model/LTExtensions.h"
 #import "../model/LTWebsiteData.h"
+#import "../model/LTCrashReports.h"
 #include "include/cef_app.h"
 #include "include/cef_application_mac.h"
 #include "include/cef_command_line.h"
@@ -32,6 +33,7 @@ static const BOOL testProfile = NO;
 #endif
 static BOOL websiteDataCleared = NO, relaunchAfterClear = NO, relaunchRequested = NO;
 static LTExtensions *extensions;
+static LTCrashReports *crashReports;
 static std::string extensionSwitch;
 
 @interface LTAppDelegate : NSObject <NSApplicationDelegate>
@@ -188,6 +190,7 @@ static std::string extensionSwitch;
             return event;
         }];
     [_windows.firstObject showOnboarding];
+    [self offerCrashReports];
     if (_store.backupError) [self backupFailed:nil];
     if (websiteDataCleared) LTAlert(_windows.firstObject.window, historyClearError ? @"Website storage cleared; history deletion needs attention" : @"Website data cleared", historyClearError.localizedDescription ?: @"Cookies, HTTP cache, local storage, IndexedDB, service workers, Cache Storage, engine permissions and other Chromium profile storage were removed before the browser engine started. Bookmarks, organization and saved passwords were kept. Preserved damaged-profile copies remain untouched. Select a tab to load it again.");
     os_log_info(OS_LOG_DEFAULT, "Lite native browser started");
@@ -199,11 +202,32 @@ static std::string extensionSwitch;
         LTRunNativeSmoke(_windows.firstObject, [profileRoot stringByAppendingPathComponent:@"native-results.json"], ^{ [self finishQuit:YES]; });
 #endif
 }
+- (void)offerCrashReports {
+    NSArray *reports = crashReports.reports;
+    NSWindow *window = _windows.firstObject.window;
+    // An unanswered report stays on disk and is offered again next launch.
+    if (!crashReports.canUpload || !reports.count || !window || window.attachedSheet) return;
+    NSAlert *alert = [NSAlert new];
+    alert.messageText = reports.count == 1 ? @"Send a crash report to Sentry?" : [NSString stringWithFormat:@"Send %lu crash reports to Sentry?", (unsigned long)reports.count];
+    alert.informativeText = @"Lite or one of its web pages crashed. A report is a snapshot of memory, so it can include parts of web pages, text you entered, web addresses and file paths. Sentry is the crash reporting service Lite uses to find the cause. If you don't send it, Lite deletes it. Crashes from sessions with a private window are never offered.";
+    [alert addButtonWithTitle:@"Don't Send"];
+    [alert addButtonWithTitle:@"Send"];
+    [alert beginSheetModalForWindow:window completionHandler:^(NSModalResponse response) {
+        if (response != NSAlertSecondButtonReturn) {
+            [crashReports discardReports:reports];
+            return;
+        }
+        [crashReports sendReports:reports completion:^(NSUInteger sent, NSUInteger failed) {
+            if (failed) LTAlert([self current].window, @"A crash report could not be sent", @"Lite kept it for up to 7 days and will ask again the next time it opens.");
+        }];
+    }];
+}
 - (void)warmIcons {
     [_icons prefetchNodes:_store.profile.nodes];
 }
 - (LTWindow *)newWindow:(BOOL)privateMode mini:(BOOL)mini state:(NSDictionary *)state {
     NSError *e = nil;
+    if (privateMode) [crashReports notePrivateSession];
     LTStore *store = privateMode ? [[LTStore alloc] initWithPath:nil error:&e] : _store;
     if (websiteDataCleared && !privateMode) {
         NSMutableDictionary *deferred = [state mutableCopy] ?: [NSMutableDictionary new];
@@ -584,6 +608,17 @@ int main(int argc, char **argv) {
             LTAlert(nil, @"Website-data deletion could not finish", clearError.localizedDescription ?: @"The pending reset was preserved. Resolve the file error and reopen Lite to retry. Chromium was not started.");
             return 1;
         }
+        NSDictionary *bundle = NSBundle.mainBundle.infoDictionary;
+        NSURL *crashUpload = LTCrashUploadURL(bundle[@"LTCrashUploadURL"]);
+#ifdef LITE_TEST_BUILD
+        for (NSString *arg in NSProcessInfo.processInfo.arguments)
+            if ([arg hasPrefix:@"--lite-crash-upload="]) crashUpload = LTCrashUploadURL([arg substringFromIndex:20]);
+#endif
+        crashReports = [[LTCrashReports alloc] initWithProfilePath:base uploadURL:crashUpload];
+        NSString *version = bundle[@"CFBundleShortVersionString"] ?: @"";
+        crashReports.uploadFields = @{@"product": @"Lite", @"version": version,
+                                      @"sentry[release]": [@"lite@" stringByAppendingString:version]};
+        [crashReports prepareForLaunch];
         extensions = [[LTExtensions alloc] initWithProfilePath:base];
         extensionSwitch = extensions.launchSwitch.UTF8String;
         CefSettings settings;

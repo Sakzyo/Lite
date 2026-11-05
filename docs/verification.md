@@ -8,6 +8,23 @@ supersede the current acceptance matrix.
 
 # Verification record — 22 September 2026
 
+## Crash reporting — 5 November 2026
+
+- `./script/verify_release.sh` **did not pass**. It stopped at the same three
+  `combinedMedia*` camera and microphone consent checks as the records below.
+- Everything before that step passed, including 9 of 9 CTest suites (35 new crash report
+  checks), 18 update tests, 8 endurance runner tests, 7 package tests on each bundle, and
+  the new `test_crash_capture.py`, which crashes a sandboxed helper and requires a report.
+- The steps the script did not reach were run by hand and passed: 5 extension checks,
+  47 native-window checks, `codesign --verify --deep --strict` on both bundles and
+  `git diff --check`.
+- The native suite ran the real consent sheet against a loopback fixture. Of three
+  seeded reports, the server received only the approved one, with no cookies. The
+  private-run and expired reports were deleted without being offered.
+- **Not exercised:** a real Sentry upload, symbol publishing, and crash capture under a
+  Developer ID hardened-runtime signature. Chromium's Crashpad handler runs unsandboxed,
+  as it does in Chrome; the renderer sandbox is unchanged.
+
 ## Lifecycle plumbing hidden from pages — 5 November 2026
 
 - `./script/verify_release.sh` **did not pass**. It stopped at the same three

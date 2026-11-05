@@ -84,6 +84,18 @@ class PackagePrivacyTests(unittest.TestCase):
         for binary in binaries:
             self.assertEqual([marker for marker in markers if marker in binary], [])
 
+    def test_crash_reports_never_upload_automatically(self):
+        for path in [root/'resources/crash_reporter.cfg', app/'Contents/Resources/crash_reporter.cfg']:
+            with self.subTest(path=str(path)):
+                settings = [line.partition('=')[0].strip().lower() for line in path.read_text().splitlines()]
+                self.assertIn('productname', settings)
+                self.assertNotIn('serverurl', settings)
+        info = plistlib.loads((app/'Contents/Info.plist').read_bytes())
+        if 'LTCrashUploadURL' in info:
+            from package import crash_configuration
+            self.assertEqual(info['LiteDistribution'], 'DeveloperID')
+            crash_configuration({}, info['LTCrashUploadURL'])
+
     def test_entitlements_do_not_weaken_library_validation(self):
         for path in (root/'resources/entitlements').glob('*.plist'):
             entitlements = plistlib.loads(path.read_bytes())

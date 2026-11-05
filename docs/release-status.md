@@ -22,6 +22,9 @@ actual test evidence and remaining gates for every requested production area.
   verification, safe discard guards and bounded nonsensitive scroll metadata.
 - Test code and `--lite-*` flags build only into `dist/LiteTest.app`; packaging fails
   if a release bundle contains them.
+- Local crash capture with [consent-only upload](crash-reporting.md). Uploads stay off
+  until a release sets `LITE_CRASH_UPLOAD_URL`, and no real Sentry upload or symbol
+  publishing has been exercised.
 - Actual native-window regression harness alongside the separate Chromium suite.
   See the readiness record for which checks passed; infrastructure alone is not
   proof that every release scenario is qualified.

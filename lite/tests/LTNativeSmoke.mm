@@ -152,6 +152,18 @@ static LTNativeSmoke *runningNative;
     switch (_stage) {
         case 0: {
             if (_primary.loading || ![_primary.title isEqual:@"Lite Test Page"]) return;
+            NSWindow *prompt = _owner.window.attachedSheet;
+            if (!_results[@"nativeCrashPromptDisclosure"]) {
+                NSMutableString *text = [NSMutableString new];
+                for (NSView *view in Views(prompt.contentView))
+                    if ([view isKindOfClass:NSTextField.class]) [text appendString:((NSTextField *)view).stringValue];
+                [self record:@"nativeCrashPromptDisclosure" passed:[text containsString:@"Sentry"] && [text containsString:@"text you entered"] && [text containsString:@"deletes"]];
+                NSButton *decline = Button(prompt, @"Don't Send");
+                [self record:@"nativeCrashPromptDefaultsToDecline" passed:decline && [decline.keyEquivalent isEqual:@"\r"]];
+                [Button(prompt, @"Send") performClick:nil];
+                [self advance:0 delay:.5];
+                return;
+            }
             [self record:@"nativeMainWindow" passed:_owner.window.visible && _owner.window.windowController == _owner];
             _sidebar = Label(_owner.window, @"Browser sidebar");
             [self record:@"nativeAccessibleNavigation" passed:Label(_owner.window, @"Address") && Label(_owner.window, @"Sidebar tabs and folders") && Label(_owner.window, @"Site information and permissions")];
