@@ -587,7 +587,7 @@ static LTSmoke *running;
         [_normal evaluateJavaScript:@"liteProbePlay()" completion:^(id value, BOOL success) {
             self.results[@"lifecycleMediaElementPlaying"] = @(success && [value isEqual:@YES]);
         }];
-    } else if (_stage == 183 && _normal.audible) {
+    } else if (_stage == 183 && _normal.audible && _results[@"lifecycleMediaElementPlaying"]) {
         _normal.visible = NO; [_normal freeze:YES]; [_normal discard];
         _results[@"lifecycleMediaElementProtected"] = @(_normal.alive && !_normal.frozen && [_results[@"lifecycleMediaElementPlaying"] boolValue]);
         _normal.visible = YES; _stage = 184;
