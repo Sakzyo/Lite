@@ -1,5 +1,9 @@
 # Architecture
 
+Lite is moving from CEF to a Chromium-core host; see
+[ADR-001](#adr-001-move-the-engine-host-from-cef-alloy-to-a-chromium-core-host).
+Until that cutover, everything else in this document describes the current CEF build.
+
 ```text
 AppKit windows, sidebar, dialogs, native menus
                  │
@@ -31,8 +35,10 @@ pressure source. `lite/tests` contains model/import tests and bundled-engine tes
 CEF's macOS native-parent integration uses **Alloy style**, backed by Chromium.
 It supplies the content engine and security processes but does not provide the
 entire Chrome application. Lite implements its own native tab/window/history UI.
-The engine boundary is explicit so a future Chrome-style or Chromium-core host
-can provide the full extension API and more password-manager capabilities without replacing the organization model.
+The engine boundary is explicit so that the Chromium-core host chosen in
+[ADR-001](#adr-001-move-the-engine-host-from-cef-alloy-to-a-chromium-core-host)
+can provide the full extension API and more password-manager capabilities without
+replacing the organization model.
 
 `LTExtensions` (in `lite/model`) keeps the profile's extension list and verifies
 Chrome Web Store CRX3 packages. Before `CefInitialize`, `main.mm` passes the
@@ -58,6 +64,131 @@ Website popups retain Chromium's opener and request context, including private
 contexts. Downloads use CEF callbacks and the system save dialog. Permission
 decisions are explicit prompts; camera/microphone additionally require macOS TCC.
 Certificate errors use Chromium's default handling and are never overridden.
+
+## ADR-001: Move the engine host from CEF Alloy to a Chromium-core host
+
+- **Status:** Accepted; migration not started. CEF remains the shipping engine.
+- **Date:** 5 November 2026
+- **Deciders:** Sakzyo
+
+### Context
+
+Lite's largest product gaps come from the host rather than from Lite's own code:
+
+- Alloy-style pages have no Chrome tab strip or windows, so `chrome.tabs.create`
+  and `chrome.windows.*` fail and action badges are missing. Extensions cannot be
+  auto-updated or changed without a restart.
+- CEF cannot import a serialized navigation stack, so back/forward history is lost
+  across restarts and most tabs with real history cannot be discarded.
+- CEF exposes no supported way to change the Safe Storage Keychain namespace.
+- Stock CEF binaries have no proprietary codecs, so enabling them already requires
+  a custom engine build.
+
+Chrome-style CEF windows would provide the extension API, but they cannot be
+embedded in Lite's native layout, which is the product.
+
+### Decision
+
+Build Lite from the Chromium source tree, as a downstream of `//chrome`, and drive
+it from Lite's existing AppKit interface. **Chromium-core host** means this
+`//chrome` layer. A bare `//content` embedder is not enough, because it would leave
+Lite to rebuild the extension system, session restore and password manager itself.
+
+```text
+AppKit windows, sidebar, dialogs, native menus
+                 │
+        LTWindow / LTPage interface
+                 │
+   Lite Chromium host: Browser, TabStripModel, WebContents
+                 │
+   Chromium subprocesses: Blink, V8, network, GPU
+```
+
+Lite keeps its own repository, data model, SQLite store and AppKit UI. The Chromium
+revision is pinned, and changes to Chromium live here as a small, reviewable patch
+series rather than a long-lived fork.
+
+### Options considered
+
+| | A: Stay on CEF Alloy | B: CEF Chrome style | C: Chromium core (chosen) | D: `//content` embedder |
+| --- | --- | --- | --- | --- |
+| Native sidebar layout | Yes | No | Yes | Yes |
+| Full extension API | No | Yes | Expected | Lite must build it |
+| Restored navigation history | No | Not assessed | Expected | Lite must build it |
+| Chromium patches | None | None | Small series | Smaller series |
+| Build and CI cost | Low | Low | Very high | Very high |
+| Upstream rebase work | Low | Low | High | Medium |
+
+A cannot close the gaps above. B gives up the native layout. D pays nearly the same
+build cost as C without its features. C is the only option that keeps the layout
+and removes the host limits, in exchange for owning a browser build.
+
+### Consequences
+
+Becomes possible:
+
+- Real `Browser` and `TabStripModel` objects behind the extension API.
+- Session restore through `NavigationController::Restore`, including back/forward
+  history after restart and discard of tabs with history.
+- Extension install, auto-update and enable/disable without restarting the engine.
+- Injected code in an isolated world, instead of page-visible globals such as
+  `__liteLifecycle`.
+- A Lite-specific Keychain namespace, and request hooks that cover WebSockets.
+
+Becomes harder:
+
+- **Security response is now Lite's job.** Every Chromium milestone and security
+  refresh has to be rebased, built and shipped. A late release is a user-facing
+  vulnerability, so the updater and publisher setup become prerequisites for
+  cutover, not follow-ups.
+- **Build infrastructure.** CMake and `fetch_cef.py` give way to GN and a full
+  Chromium checkout. The current 30-minute hosted workflow cannot build it, so
+  remote or cached builds are required. Cost and duration are unmeasured.
+- **Patch maintenance.** Each `//chrome` change adds to rebase work, so every patch
+  must justify itself.
+
+Does not change:
+
+- **Google sync and Chrome-only services** stay unavailable to a third-party
+  Chromium build.
+- **Widevine** still needs a Google license and signing. Building from source
+  makes proprietary codecs a build option, but licensing needs review first.
+- The sandbox, certificate handling and privacy rules in this document still apply.
+
+### Design constraints for the port
+
+- `LTEngine.h` is the seam. CEF symbols are confined to `LTEngine.mm` (150 uses),
+  `helper.cc` (19), `main.mm` (15), `LTYouTubeFilter.h` (1) and one test.
+  `lite/model` and the sidebar should not need engine changes.
+- Lazy tabs are the hardest mapping. Sidebar nodes without a renderer are metadata
+  today, while `TabStripModel` holds live tabs. The port must define what extensions
+  see for unopened and discarded tabs, and for tabs in other Spaces.
+- `BrowserWindow` is a large interface shaped around Chromium's Views UI. Whether
+  an AppKit `LTWindow` can implement it directly is the main technical risk.
+- `Chromium/Default/` must migrate in place. Cookies encrypted under Chromium Safe
+  Storage must survive a change of Keychain namespace, and the Lite vault format
+  stays unchanged. Whether Lite's vault gives way to Chromium's password manager
+  is a separate decision.
+
+### Migration plan
+
+1. **Spike.** Build a pinned Chromium with one AppKit `LTWindow` hosting a
+   `WebContents`. Pass only if `chrome.tabs.create` resolves, restored history
+   works, and build time, app size and the memory table in
+   [performance](performance.md) are measured. If `BrowserWindow` proves unworkable,
+   revisit this decision before going further.
+2. **Second backend.** Implement `LTEngine.h` against the new host beside CEF, with
+   CEF still the default.
+3. **Port.** Move content blocking, the renderer observer, login capture, downloads,
+   permissions, the Task Manager and extensions.
+4. **Parity.** Pass the Chromium integration and native-window suites at their
+   current 95/95 and 35/35, `script/test_extensions.py`, and upgrade of a synthetic
+   CEF profile including cookies and vault.
+5. **Cutover.** Stand up the Chromium update pipeline and signed delivery, ship,
+   then remove CEF, its scripts and its documentation.
+
+CEF pins keep receiving updates throughout. The migration is no reason to let the
+shipping engine fall further behind.
 
 ## Data integrity
 
@@ -143,5 +274,8 @@ frameworks beyond QuartzCore are used.
 - [CEF general usage](https://chromiumembedded.github.io/cef/general_usage)
 - [CEF sandbox setup](https://chromiumembedded.github.io/cef/sandbox_setup)
 - [CEF source and license](https://github.com/chromiumembedded/cef)
+- [Chromium macOS build instructions](https://chromium.googlesource.com/chromium/src/+/main/docs/mac_build_instructions.md)
 
-Chromium modifications: **none**. All Lite-specific code is in this repository.
+Chromium modifications: **none** in the current CEF build. All Lite-specific code is
+in this repository. ADR-001 replaces this with a pinned Chromium revision and a patch
+series once the migration reaches its port phase.
