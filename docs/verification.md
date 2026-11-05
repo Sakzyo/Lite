@@ -8,6 +8,25 @@ supersede the current acceptance matrix.
 
 # Verification record — 22 September 2026
 
+## Lifecycle plumbing hidden from pages — 5 November 2026
+
+- `./script/verify_release.sh` **did not pass**. It stopped at the same three
+  `combinedMedia*` camera and microphone consent checks as the records below.
+- Everything before that step passed, and so did every other browser check, including
+  10 new `lifecycle*` checks and `inputInteractionProtected`.
+- The steps the script did not reach were run by hand and passed: 5 extension checks,
+  41 native-window checks, `codesign --verify --deep --strict` on both bundles and
+  `git diff --check`.
+- `formProtectionSignal` and the pointer, keyboard and change interaction checks used to
+  dispatch synthetic events, which is the forgery this change blocks. They now send real
+  input through the Chrome DevTools Protocol, and assert the same protection.
+- `/lifecycle-probe` attacks the observer from its own strict-CSP page: forged events,
+  patched prototypes, a replaced `navigator`, script-raised trusted events, stack
+  inspection and a non-media `<video>`. Run against weaker observers as controls, the
+  original failed every related check, and the old script with only its global hidden
+  still let the page protect itself and reach an internal listener.
+- Login fill now raises the guard natively. No automated check covers that line.
+
 ## Test code removed from release binaries — 5 November 2026
 
 - `./script/verify_release.sh` **did not pass**. It stopped at the same three

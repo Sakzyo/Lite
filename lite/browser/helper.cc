@@ -3,6 +3,7 @@
 #include "include/cef_sandbox_mac.h"
 #include "include/cef_v8.h"
 #include "include/wrapper/cef_library_loader.h"
+#include "LTLifecycleObserver.h"
 #include "LTLoginCapture.h"
 #include <set>
 
@@ -70,26 +71,12 @@ class RenderApp : public CefApp, public CefRenderProcessHandler {
                 ")(window.__liteLoginSubmitted);delete window.__liteLoginSubmitted;", frame->GetURL(), 0);
         }
         frame->SendProcessMessage(PID_BROWSER, CefProcessMessage::Create("LiteCosmeticReady"));
-        context->GetGlobal()->SetValue(
-            "__liteLifecycle", CefV8Value::CreateFunction("__liteLifecycle", new Lifecycle),
-            static_cast<cef_v8_propertyattribute_t>(V8_PROPERTY_ATTRIBUTE_READONLY |
-                                                    V8_PROPERTY_ATTRIBUTE_DONTENUM |
-                                                    V8_PROPERTY_ATTRIBUTE_DONTDELETE));
-        frame->ExecuteJavaScript(R"JS((()=>{const send=window.__liteLifecycle;
-      for(const event of ['input','change','pointerdown','keydown'])
-        addEventListener(event,()=>send(1,true),{capture:true,once:true});
-      const audioContexts=new Set();
-      const media=()=>{let playing=false;for(const reference of audioContexts){const context=reference.deref();
-        if(!context||context.state==='closed')audioContexts.delete(reference);else playing ||= context.state==='running';}
-        send(2,playing||[...document.querySelectorAll('audio,video')].some(v=>!v.paused&&!v.ended));};
-      for(const name of ['AudioContext','webkitAudioContext']){const Native=window[name];if(!Native)continue;
-        window[name]=new Proxy(Native,{construct(target,args,newTarget){const context=Reflect.construct(target,args,newTarget);
-          audioContexts.add(new WeakRef(context));context.addEventListener('statechange',media);media();return context}});}
-      for(const e of ['play','pause','ended'])addEventListener(e,media,true);
-      addEventListener('enterpictureinpicture',()=>send(3,true),true);
-      addEventListener('leavepictureinpicture',()=>send(3,false),true);
-    })())JS",
-                                 frame->GetURL(), 0);
+        CefRefPtr<CefV8Value> observer;
+        CefRefPtr<CefV8Exception> exception;
+        if (context->Eval(LTLifecycleObserverScript, frame->GetURL(), 0, observer, exception) &&
+            observer->IsFunction())
+            observer->ExecuteFunctionWithContext(
+                context, nullptr, {CefV8Value::CreateFunction("lifecycle", new Lifecycle)});
     }
 
   private:

@@ -13,9 +13,10 @@ apply: meeting these goals does not by itself qualify Lite as a production brows
 - **Remove test code from the app.** Done: `LTSmoke`, `LTNativeSmoke` and the `--lite-*`
   flags are built only into `dist/LiteTest.app`, and packaging fails if a release binary
   contains them.
-- **Hide lifecycle plumbing from pages.** Page scripts must not be able to reach
-  `__liteLifecycle`, so a site cannot protect itself from discard or use the global
-  to fingerprint Lite.
+- **Hide lifecycle plumbing from pages.** Done: the `__liteLifecycle` global is gone,
+  and forged events no longer raise protection flags. A site can still stay protected
+  by really using media, and the `AudioContext` wrapper is still detectable. See
+  [architecture](architecture.md#engine-boundary).
 - **Add crash reporting.** Collect crash reports for endurance testing and real use,
   and send them only with the user's consent. The README says Lite has no telemetry
   SDK, so that statement must be reviewed when this lands.

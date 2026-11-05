@@ -1,0 +1,89 @@
+<!doctype html><meta charset="utf-8"><title>Lite lifecycle probe</title>
+<h1>Lifecycle probe</h1><input id="text"><video id="video" muted playsinline width="320"></video>
+<iframe id="frame" srcdoc="<title>Frame</title>"></iframe>
+<script nonce="lite-test">
+'use strict';
+// Everything a hostile page could try without real user input.
+const result = {finished: false, capturedListeners: 0, stackFunctions: 0, clickWasTrusted: false};
+const names = target => Object.getOwnPropertyNames(target).filter(name => /lite/i.test(name));
+const originalListen = EventTarget.prototype.addEventListener;
+const restores = [];
+function patch(target, key, descriptor) {
+  const original = Object.getOwnPropertyDescriptor(target, key);
+  Object.defineProperty(target, key, {configurable: true, ...descriptor});
+  restores.push(() => original ? Object.defineProperty(target, key, original) : delete target[key]);
+}
+function attack() {
+  const fake = {paused: false, ended: false, state: 'running'};
+  patch(Document.prototype, 'querySelectorAll', {value: () => [fake]});
+  patch(Array.prototype, 'some', {value: () => true});
+  patch(HTMLMediaElement.prototype, 'paused', {get: () => false});
+  patch(HTMLMediaElement.prototype, 'ended', {get: () => false});
+  patch(BaseAudioContext.prototype, 'state', {get: () => 'running'});
+  patch(WeakRef.prototype, 'deref', {value: () => fake});
+  patch(Set.prototype, 'add', {value() { this.size; return this; }});
+  patch(UserActivation.prototype, 'hasBeenActive', {get: () => true});
+  patch(Event.prototype, 'inputType', {get: () => 'insertFromPaste'});
+  patch(InputEvent.prototype, 'inputType', {get: () => 'insertFromPaste'});
+  patch(window, 'navigator', {value: {userActivation: {hasBeenActive: true, isActive: true}}});
+  patch(EventTarget.prototype, 'addEventListener', {value(type, listener, options) {
+    if (type === 'statechange') result.capturedListeners++;
+    return originalListen.call(this, type, listener, options);
+  }});
+  Error.stackTraceLimit = 100;
+  Error.prepareStackTrace = (error, frames) => {
+    for (const frame of frames) if (frame.getFunction()) result.stackFunctions++;
+    return '';
+  };
+  // Forged events for every type the observer listens to.
+  for (const type of ['pointerdown', 'keydown', 'input', 'change', 'play', 'pause', 'enterpictureinpicture']) {
+    for (const target of [window, document, document.getElementById('text')])
+      target.dispatchEvent(new Event(type, {bubbles: true, composed: true}));
+    dispatchEvent(new PointerEvent(type)); dispatchEvent(new KeyboardEvent(type)); dispatchEvent(new InputEvent(type, {inputType: 'insertFromPaste'}));
+  }
+  // Script-raised events that are trusted even with no user involved.
+  const box = document.createElement('input');
+  box.type = 'checkbox';
+  document.body.append(box);
+  box.addEventListener('input', event => { result.clickWasTrusted = event.isTrusted; });
+  box.click();
+  const field = document.getElementById('text');
+  field.focus();
+  document.execCommand('insertText', false, 'scripted');
+  document.execCommand('paste');
+  // A subclass runs page code inside the observer's AudioContext wrapper.
+  const context = Reflect.construct(AudioContext, [], new Proxy(AudioContext, {get(target, key, receiver) {
+    void new Error().stack;
+    return Reflect.get(target, key, receiver);
+  }}));
+  return context;
+}
+(async () => {
+  result.bridgeType = typeof window.__liteLifecycle;
+  result.mainNames = names(window);
+  // Recorded, not asserted: see the limits in docs/architecture.md.
+  result.audioContextSource = Function.prototype.toString.call(AudioContext);
+  await new Promise(resolve => { const frame = document.getElementById('frame'); frame.contentDocument?.readyState === 'complete' ? resolve() : frame.addEventListener('load', resolve); });
+  result.frameNames = names(document.getElementById('frame').contentWindow);
+  const context = attack();
+  await context.close();
+  dispatchEvent(new Event('play'));
+  delete Error.prepareStackTrace;
+  for (const restore of restores.reverse()) restore();
+  result.finished = true;
+  window.liteProbeResult = result;
+})().catch(error => { window.liteProbeResult = {...result, error: String(error)}; });
+window.liteProbePlay = async () => {
+  const video = document.getElementById('video');
+  const canvas = document.createElement('canvas');
+  setInterval(() => canvas.getContext('2d').fillRect(Math.random() * 300, 0, 1, 1), 50);
+  video.srcObject = canvas.captureStream(10);
+  await video.play();
+  return true;
+};
+window.liteProbePause = () => {
+  document.body.append(document.createElementNS('http://www.w3.org/2000/svg', 'video'));
+  document.getElementById('video').pause();
+  return true;
+};
+</script>

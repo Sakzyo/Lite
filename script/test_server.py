@@ -177,6 +177,9 @@ self.addEventListener('message',e=>e.waitUntil((async()=>{
         elif self.path == '/login':
             body = b'''<!doctype html><title>Lite login test</title><link rel="icon" href="/icon.png"><style>body{font:18px system-ui;padding:48px}input,button{font:inherit;margin:12px;padding:10px}</style><h1>Local login test</h1><form action="/login" onsubmit="event.preventDefault();document.querySelector('#status').textContent='Submitted';"><label>Username<input name="username" autocomplete="username"></label><br><label>Password<input name="password" type="password" autocomplete="current-password"></label><br><button>Sign in</button></form><p id="status">Not submitted</p>'''
             content = 'text/html'
+        elif parsed.path == '/lifecycle-probe':
+            body = (Path(__file__).resolve().parents[1]/'lite/tests/fixtures/lifecycle-probe.html').read_bytes()
+            content = 'text/html'
         elif self.path == '/media':
             body = b'''<!doctype html><title>Lite media test</title><style>body{font:20px system-ui;padding:40px;background:#f4f6f3}</style><h1>Picture in Picture test</h1><p>Generated locally from a canvas. No camera or microphone.</p><video controls muted autoplay playsinline width="600"></video><script>const c=document.createElement('canvas');c.width=640;c.height=360;const x=c.getContext('2d');setInterval(()=>{x.fillStyle='#284b43';x.fillRect(0,0,640,360);x.fillStyle='#ffffff';x.font='32px system-ui';x.fillText('Lite media test',40,150);x.fillText(new Date().toLocaleTimeString(),40,210)},100);document.querySelector('video').srcObject=c.captureStream(10);</script>'''
             content = 'text/html'
@@ -188,6 +191,8 @@ self.addEventListener('message',e=>e.waitUntil((async()=>{
         self.send_response(200)
         if parsed.path in ('/content-blocking', '/watch'):
             self.send_header('Content-Security-Policy', "default-src 'self'; script-src 'self' 'nonce-lite-test'; style-src 'none'")
+        if parsed.path == '/lifecycle-probe':
+            self.send_header('Content-Security-Policy', "default-src 'self' blob:; script-src 'nonce-lite-test'; style-src 'none'")
         if compressed:
             self.send_header('Content-Encoding', 'gzip')
         self.send_header('Cache-Control', 'no-store')
