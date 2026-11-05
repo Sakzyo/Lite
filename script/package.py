@@ -47,7 +47,7 @@ def test_signing_identity(requested):
     identities = re.findall(r'^\s*\d+\) ([A-F0-9]{40}) "([^"]+)"(?: \(CSSMERR_TP_NOT_TRUSTED\))?$', text, re.M)
     choices = {digest for digest, name in identities if requested in (digest, name)}
     if len(choices) != 1:
-        raise ValueError('LITE_TEST_SIGNING_IDENTITY must name exactly one usable code-signing identity; found ' + str(len(choices)))
+        raise ValueError('LITE_TEST_SIGNING_IDENTITY must name exactly one usable code-signing identity; found ' + str(len(choices)) + '. If two share a name, use the SHA-1 hash from: security find-identity -p codesigning')
     return choices.pop()
 
 

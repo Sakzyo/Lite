@@ -130,8 +130,10 @@ do not prompt again:
 LITE_TEST_SIGNING_IDENTITY='Lite Local Test Signing' ./script/verify_release.sh
 ```
 
-If you deleted the identity, a new one needs step 3 again, because consent belongs to
-that certificate. Revoke consent at any time under **System Settings > Privacy &
+If two identities share the name, `script/package.py` stops rather than choosing one.
+Set `LITE_TEST_SIGNING_IDENTITY` to the SHA-1 hash from `security find-identity -p
+codesigning` instead. A new or different identity needs step 3 again, because consent
+belongs to that certificate. Revoke consent at any time under **System Settings > Privacy &
 Security > Camera** and **Microphone**. Lite's tooling never edits macOS consent
 records or trust settings, and this certificate must not sign anything you distribute.
 
