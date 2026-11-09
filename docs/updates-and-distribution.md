@@ -129,7 +129,10 @@ a release replaced before the next check gets no pull request of its own.
 
 GitHub runs scheduled workflows only from the default branch and disables them after
 60 days without repository activity. The job also needs **Allow GitHub Actions to
-create and approve pull requests** under the repository's Actions settings.
+create and approve pull requests** under the repository's Actions settings. Without it
+the job pushes the branch, fails to open the pull request and says which setting to turn
+on. Later runs reuse that branch instead of pushing to it again, so turning the setting on
+is enough for the next run to open the pull request.
 
 1. Review upstream CEF/Chromium and Sparkle security releases. Update exact SDK pins
    and archive digests from upstream; retain the old released bundle for testing.
