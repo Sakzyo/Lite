@@ -42,9 +42,16 @@ disables the animation.
 When typing in the Command Bar, saved pages appear only for a complete URL or
 title match (case-sensitive, with surrounding whitespace ignored). Web addresses,
 including domains without a scheme, select Open address first and open directly
-on Return. For ordinary text, an exact saved-page match can lead the results;
-otherwise web search is first. Browser commands remain available below it.
+on Return. For ordinary text, an exact saved-page or history match can lead the
+results; otherwise web search is first. Browser commands remain available below it.
 The optional Search action always searches the literal text.
+
+History matches partial text. Typing the start of a site's address, such as "gith"
+for github.com, puts its best match first, so Return opens it; press ↓ to
+reach web search below it. Visited pages whose title or URL has a word starting
+with each typed word follow web search. Within each kind, pages visited more often
+and more recently come first. An empty Command Bar lists the most visited recent
+pages.
 
 The sidebar supports arrow-key selection and native outline expansion. Context
 menus expose rename, duplicate, pin, moves, Favorites, splits, and copy URL.

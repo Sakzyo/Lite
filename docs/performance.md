@@ -164,6 +164,64 @@ python3 script/measure_native.py --nodes 10000 --duration 2 --save-probe --outpu
 The benchmark also compiles against the earlier synchronous store. The "before" app figures
 came from the starting commit with the same probe added, using its synchronous API.
 
+## History search
+
+The Command Bar queries history on the main thread for every keystroke, so a query has to fit
+in one frame: 16.7 ms at 60 Hz. `LiteHistoryTests` seeds 100,000 URLs, the retention cap, and
+fails if the median of any of 14 typed queries, plus ranking the results, goes over that.
+Measured on 9 November 2026 on an Apple M4 with 10 cores and 32 GiB RAM, macOS 26.5.2,
+Release build, 25 warm runs per query. Raw results:
+[arm64 JSON](benchmarks/2026-11-09-history-search-arm64.json).
+
+| Typed | Results | Median | Slowest run |
+| --- | ---: | ---: | ---: |
+| `g` | 30 | 0.67 ms | 0.79 ms |
+| `gi` | 30 | 2.80 ms | 3.04 ms |
+| `gith` | 30 | 0.21 ms | 0.23 ms |
+| `news` | 30 | 1.38 ms | 1.50 ms |
+| `the` | 30 | 3.82 ms | 4.50 ms |
+| `swift g` | 30 | 4.31 ms | 4.43 ms |
+| `pull request` | 30 | 1.83 ms | 1.90 ms |
+| `zzzz` | 0 | 0.08 ms | 0.09 ms |
+
+The rows are synthetic: hosts, paths and titles drawn from a fixed vocabulary, so short
+prefixes match far more rows than most real histories would. The slowest queries are short
+words that start a word in many rows. Three choices got there; the first query plan took
+47 ms for `g` in an early Python harness on the same data:
+
+- Each kind of match returns at most 30 rows in frecency order before they are merged, so the
+  final sort sees a few dozen rows rather than every match.
+- The address index includes `rank`, so an address match never reads the table.
+- The read-only connection maps the database file instead of copying pages into SQLite's
+  8 MB cache, which matters once history is larger than that.
+
+A single character also matches by address only, because it starts a word in about a third of
+all rows. With the word match as well, `g` took 8 ms in that harness.
+
+The writer's costs at the cap, for the record: recording a visit 0.1 ms until durable, a
+retention pass that has nothing to delete 1 ms, deleting one URL 158 ms, nearly all of it
+replacing the recovery backup, and clearing all history 310 ms. Clearing all of it skips the
+per-row index trigger and rebuilds the index instead; with the trigger it took 1.3 s in the
+Python harness, and Lite clears all history on the main thread at launch after website data
+was cleared.
+
+### What is still slow
+
+- **The database is larger.** 100,000 URLs take 45 MB, against 20 MB for the version 1 table
+  of the same rows. The address column, its index and the full-text index account for the
+  difference. The recovery backup copies the whole database, at most once a minute, on the
+  writer.
+- **The History panel's search** still scans every row: 50 ms at 100,000 URLs for text that
+  matches nothing.
+- **Intel Macs** have not been measured. CI runs the same budget check on `macos-15-intel`.
+
+### Reproduce
+
+```sh
+cmake --build .build --target LiteHistoryTests
+.build/LiteHistoryTests --measure
+```
+
 ## Current readiness measurements
 
 The [1 October 2026 record](readiness-2026-10-01.md) contains the current baseline,

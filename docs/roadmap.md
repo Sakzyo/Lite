@@ -24,9 +24,15 @@ apply: meeting these goals does not by itself qualify Lite as a production brows
 
 ### Everyday browsing
 
-- **Make the Command Bar search history.** Partial text such as "gith" finds
-  github.com. Record visits so results rank by frequency and recency, add full-text
-  search, and limit how long history is kept.
+- **Make the Command Bar search history.** Done: partial text finds history by the start
+  of its address, so "gith" finds github.com, and by the start of any word in a title or
+  URL, through SQLite FTS5. Results rank by how they matched, then by frecency: a visit
+  count in which each visit's weight halves every 30 days. History keeps 90 days and at
+  most 100,000 URLs, pruned on the background writer. With 100,000 URLs the slowest
+  Command Bar query measured took 4.3 ms of the 16.7 ms frame. The profile database is
+  2.2 times as large as before at that size, and the History panel's own search still
+  scans every row. See [history search](performance.md#history-search) and
+  [history](architecture.md#history).
 - **Make closed tabs recoverable.** Reopen Closed Tab survives quitting Lite, and
   closed windows can be restored.
 - **Widen search.** Support more search engines, including custom ones, and add search

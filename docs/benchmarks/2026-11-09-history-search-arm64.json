@@ -1,0 +1,102 @@
+{
+  "results" : {
+    "clear_all_history_with_backup_ms" : 310.40229166683275,
+    "database_bytes" : 45416448,
+    "delete_one_url_with_index_merge_and_backup_ms" : 157.86175000039293,
+    "frame_budget_ms" : 16.666666666666668,
+    "open_ms" : 2.2104583331383765,
+    "queries" : [
+      {
+        "max_ms" : 0.7864583335503994,
+        "median_ms" : 0.66724999987854972,
+        "query" : "g",
+        "results" : 30
+      },
+      {
+        "max_ms" : 3.0434166669692786,
+        "median_ms" : 2.8029999998580024,
+        "query" : "gi",
+        "results" : 30
+      },
+      {
+        "max_ms" : 0.22620833306064014,
+        "median_ms" : 0.21266666635710862,
+        "query" : "gith",
+        "results" : 30
+      },
+      {
+        "max_ms" : 0.27166666677658213,
+        "median_ms" : 0.21091666667416575,
+        "query" : "githu",
+        "results" : 30
+      },
+      {
+        "max_ms" : 0.16583333353992202,
+        "median_ms" : 0.11233333361815312,
+        "query" : "gihub7",
+        "results" : 10
+      },
+      {
+        "max_ms" : 1.502000000073167,
+        "median_ms" : 1.3840833335052594,
+        "query" : "news",
+        "results" : 30
+      },
+      {
+        "max_ms" : 4.4318749996818951,
+        "median_ms" : 4.3076666665911034,
+        "query" : "swift g",
+        "results" : 30
+      },
+      {
+        "max_ms" : 1.3837500000590808,
+        "median_ms" : 1.3150833333384071,
+        "query" : "swift guide rel",
+        "results" : 30
+      },
+      {
+        "max_ms" : 4.4974583329349116,
+        "median_ms" : 3.8233749996834376,
+        "query" : "the",
+        "results" : 30
+      },
+      {
+        "max_ms" : 0.21120833343957202,
+        "median_ms" : 0.089541666511649964,
+        "query" : "https:\/\/www.",
+        "results" : 0
+      },
+      {
+        "max_ms" : 0.22520833317685174,
+        "median_ms" : 0.18383333326710272,
+        "query" : "https:\/\/www.githu",
+        "results" : 30
+      },
+      {
+        "max_ms" : 0.088083333139366005,
+        "median_ms" : 0.079333333360409597,
+        "query" : "zzzz",
+        "results" : 0
+      },
+      {
+        "max_ms" : 1.8979166666213132,
+        "median_ms" : 1.8349583333474584,
+        "query" : "pull request",
+        "results" : 30
+      },
+      {
+        "max_ms" : 0.45437500011757948,
+        "median_ms" : 0.39458333321817918,
+        "query" : "a",
+        "results" : 30
+      }
+    ],
+    "record_visit_durable_median_ms" : 0.11858333346026484,
+    "retention_at_cap_ms" : 0.97666666670193081,
+    "rows" : 100000,
+    "runs" : 25,
+    "seed_ms" : 1530.9986249999383,
+    "worst_median_ms" : 4.3076666665911034
+  },
+  "workload" : "Command Bar history query plus result ranking, warm, 30 results, synthetic history at the retention cap"
+}

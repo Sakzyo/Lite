@@ -217,8 +217,71 @@ shipping engine fall further behind.
 
 `LTStore` validates a copied model before a `BEGIN IMMEDIATE` / `COMMIT` transaction.
 Only after the commit succeeds does the in-memory model change. SQLite uses WAL
-and `synchronous=FULL`. Schema version 1 is explicit; future unknown versions fail
-closed. A corrupt/unsupported profile is not silently overwritten.
+and `synchronous=FULL`. The schema version is explicit in `user_version`, now 2, and
+future unknown versions fail closed. A corrupt/unsupported profile is not silently
+overwritten.
+
+### History
+
+History is one row per URL in the `history` table, separate from the organization:
+
+| Column | Holds |
+| --- | --- |
+| `id` | Stable integer key, which the full-text index refers to |
+| `url` | The URL as visited, unique |
+| `title` | The last title seen for it |
+| `address` | The URL in lowercase without its scheme or a leading `www.`, for prefix matching |
+| `visited` | The last visit |
+| `visits` | How many visits |
+| `rank` | Frecency, below |
+
+`history_fts` is an FTS5 index over `title` and `address`, with the `unicode61`
+tokenizer, which ignores case and diacritics. It stores no text of its own: it reads the
+table, and triggers on the table keep it in step. The `(address, rank)` index answers a
+prefix match without reading the table.
+
+**Frecency.** Each visit has a weight that halves every 30 days, and a URL's frecency is the
+sum. Lite stores it as `rank = ln(weight) + decay × time`. Every row decays by the same factor,
+so ordering by `rank` orders by weight today without updating any row as time passes. A
+visit sets `rank` to `logaddexp(rank, decay × now)`. A title that changes while a page stays
+open, such as an unread count, renames the row without counting a visit.
+
+**Search.** `searchHistory:limit:` takes the rows that match in three ways, each in frecency
+order and capped at the limit, then keeps each row's best match:
+
+1. Exact: the whole URL, or the whole title, found as a phrase starting the title.
+2. Address: the typed text, without a scheme or `www.`, starts the address. "gith" finds
+   `https://www.github.com/…`.
+3. Word: every typed word starts a word of the title or address, in any order. Words go to
+   FTS5 as quoted strings, so nothing typed is query syntax. A single character starts a
+   word in about a third of all rows, so on its own it matches by address only.
+
+Text inside a word, such as "thub", does not match. The Command Bar shows the best address
+match above web search and the rest below it. A typed web address still opens first. The
+History panel's `history:limit:` is unchanged: newest first, matching any part of the URL or
+title, by scanning the table.
+
+**Retention.** Visits older than 90 days are dropped, then the least frecent URLs beyond
+100,000. The writer does this after the first visit it records and then at most hourly, 1,000
+rows at a time, each batch its own turn of the writer so that saves queued meanwhile run in
+between. Opening the store starts nothing on the writer.
+
+**Deletion.** Deleting history also merges the full-text index, so words from deleted rows
+leave the index at once rather than at a later automatic merge. Clearing all history drops
+the delete trigger, deletes the rows and rebuilds the index in one transaction, which is
+four times faster at 100,000 URLs than deleting row by row. Like any deleted SQLite row,
+their bytes can remain in free pages until reused; Lite does not enable `secure_delete`.
+Recovery backups are replaced as before.
+
+**Migration.** Opening a version 1 database runs one transaction: it renames the old table,
+copies each URL with one visit at its last visit time, builds the indexes and triggers, fills
+the full-text index and sets version 2. Every step is safe to repeat, and an interrupted
+migration leaves version 1. A build that knows only version 1 refuses a version 2 database,
+and a backup of it, rather than downgrading it.
+
+Private stores create the same schema in memory and record nothing. FTS5 is part of the
+SQLite that macOS ships, which Lite links, on every supported macOS version, and a test
+checks for it.
 
 ### Background writer
 
@@ -281,7 +344,8 @@ recovery on the next launch needs nothing from the app.
 Pinned URL and current navigated URL are distinct. Custom titles are distinct from
 page titles. Node IDs are stable UUIDs, independent of Arc IDs. Folder parent/Space
 relationships, cycles, duplicates, selected tabs, and URLs are validated together.
-Temporary tabs are a distinct node kind; history is a separate indexed SQL table.
+Temporary tabs are a distinct node kind; history is a separate indexed SQL table
+(see [History](#history)).
 Private windows use an in-memory Lite store and a separate CEF off-record context.
 
 Normal profiles live in `~/Library/Application Support/Lite/`:
