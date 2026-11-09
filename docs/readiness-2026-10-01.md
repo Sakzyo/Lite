@@ -31,6 +31,12 @@ The Release build, all seven CTest targets, 11 SDK/update Python tests, five
 packaging tests, seven endurance-runner checks and strict ad-hoc signature
 verification pass. Hosted CI and production-signing checks have not run.
 
+> **Update, 9 November 2026:** hosted CI has run since this record was written.
+> `release-verification.yml` first passed on `master` on 2 November 2026 and now runs
+> on macOS 15 arm64 and macOS 15 Intel; see [release status](release-status.md).
+> Production-signing checks have still not run. The rest of this record describes
+> 1 October.
+
 The engine suite observes timer counts during freeze/resume, backward/forward
 navigation, scroll restoration, actual browser destruction, HTTP Basic/Digest
 and proxy authentication (including wrong-password retry and cancellation),
@@ -61,7 +67,7 @@ earlier fixture/build failures are not counted as passes.
 | Profile recovery | Malformed fields cause NSError recovery, preserve originals, keep bounded known-good backups, survive failed writes | `LiteProfileTests`, explicit Restore Backup UI, SQLite FULL transactions, two backups and three preserved-original limit; profile benchmark | 10,000-node writes still synchronously occupy the main thread for tens of milliseconds; no claim of stall-free unlimited profiles |
 | HTTP/proxy authentication | Actual Basic/Digest/proxy challenge succeeds, cancel/navigation/closure cancels callback, private credentials stay separate | CEF auth callback and native secure password field, synthetic local challenge fixtures | Real enterprise proxy policy, multi-step external accounts and platform SSO remain unqualified |
 | Downloads and popups | Accurate terminal/interrupted states, bounded regular history across windows/restart, private history ephemeral, verify quarantine | Engine pause/resume/cancel, deliberate truncated-response interruption, duplicate-file preservation and real quarantine/WhereFroms xattrs; `LTDownloadHistory` persistence/retention tests; existing Downloads surface and popup origin/security/private title | Physical disk-exhaustion and native Save As qualification, account-bound OAuth popups and production Gatekeeper execution |
-| Automated release gate | Release compile + core/vault/blocking/profile/updater/storage/download tests + separate engine/native suites + artifact verification | `script/verify_release.sh`; `.github/workflows/release-verification.yml` | Hosted CI jobs have not been run from this checkout; local success is not remote-CI evidence |
+| Automated release gate | Release compile + core/vault/blocking/profile/updater/storage/download tests + separate engine/native suites + artifact verification | `script/verify_release.sh`; `.github/workflows/release-verification.yml` | Hosted CI jobs had not been run on 1 October; local success is not remote-CI evidence. Passing on hosted CI since 2 November 2026 (see the update above) |
 | Native UI and accessibility | Test actual sidebar, command bar, settings/downloads, both split-focus directions, close cancellation and private windows | `LTNativeSmoke`, `test_native.py`, native screenshots; existing AppKit styling retained | Physical drag/drop edge cases, full VoiceOver spoken output, Full Keyboard Access system mode, all scaling/contrast configurations |
 | Compatibility and endurance | Supported macOS/CPU matrix, real login/OAuth/test payments/media/capture, sleep/wake/network/disk/upgrade and long sessions | Available arm64/macOS 26.5.2 fixture runs; bounded repeatable stress workloads | Intel hardware, macOS 14/15 hosts, sandbox accounts/payment test credentials, human TCC/VoiceOver checks and multi-hour endurance |
 

@@ -55,8 +55,14 @@ actual test evidence and remaining gates for every requested production area.
    Full Keyboard Access, scaling/contrast/drag-drop, sleep/wake, network/disk
    pressure, extended mixed-site endurance and independent security review.
 
-Available local hardware is Apple Silicon on macOS 26.5.2. Other matrix entries
-and hosted CI are **unrun**, not passed. No battery improvement is claimed.
+Available local hardware is Apple Silicon on macOS 26.5.2. Hosted CI runs
+`script/verify_release.sh` on GitHub's macOS 15 arm64 and macOS 15 Intel runners
+for every pull request and every push to `master`. It has passed on `master` since
+2 November 2026, most recently on 9 November at `a764b51` (CEF 156.0.26). Hosted
+runners skip the three `combinedMedia*` camera/microphone consent checks (see
+[build-macos](build-macos.md)), and a passing hosted run is automated evidence, not
+the hardware qualification in gate 5. No hosted runner covers macOS 14. Other
+matrix entries are **unrun**, not passed. No battery improvement is claimed.
 
 ## Deliberate capability boundaries
 

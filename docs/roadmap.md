@@ -8,7 +8,7 @@ apply: meeting these goals does not by itself qualify Lite as a production brows
 
 ### Security and release
 
-- **Keep the engine current.** Done: Lite is on CEF 156.0.15 / Chromium 156.0.8078.80,
+- **Keep the engine current.** Done: Lite is on CEF 156.0.26 / Chromium 156.0.8078.88,
   and a scheduled CI job opens a pull request when a newer stable CEF release is out.
 - **Remove test code from the app.** Done: `LTSmoke`, `LTNativeSmoke` and the `--lite-*`
   flags are built only into `dist/LiteTest.app`, and packaging fails if a release binary
@@ -73,9 +73,9 @@ apply: meeting these goals does not by itself qualify Lite as a production brows
 
 ### Code and documentation
 
-- **Correct stale docs.** [Release status](release-status.md) and the
-  [readiness record](readiness-2026-10-01.md) still say hosted CI has not run, but it
-  passed on `master` on 2 November 2026.
+- **Correct stale docs.** Done: [release status](release-status.md) and the
+  [readiness record](readiness-2026-10-01.md) now say hosted CI has passed on `master`
+  since 2 November 2026, on macOS 15 arm64 and Intel runners.
 - **Split up `LTWindow.mm`.** Move string-based command dispatch into its own testable
   router.
 
