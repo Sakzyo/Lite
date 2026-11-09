@@ -34,8 +34,11 @@ apply: meeting these goals does not by itself qualify Lite as a production brows
   at that size, and the History panel's own search still
   scans every row. See [history search](performance.md#history-search) and
   [history](architecture.md#history).
-- **Make closed tabs recoverable.** Reopen Closed Tab survives quitting Lite, and
-  closed windows can be restored.
+- **Make closed tabs recoverable.** Done: the 30 most recently closed tabs and windows
+  are saved in the profile, so Reopen Closed Tab works after quitting Lite, and Reopen
+  Closed Window brings back a window's Space, tabs, split and frame. Deleting history
+  removes them too. Private windows keep their own list, which ends with the window. See
+  [recently closed tabs and windows](architecture.md#recently-closed-tabs-and-windows).
 - **Widen search.** Support more search engines, including custom ones, and add search
   suggestions to the Command Bar.
 - **Add data export.** Bookmarks and the profile's organization can be exported, not

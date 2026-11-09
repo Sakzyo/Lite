@@ -286,6 +286,30 @@ Private stores create the same schema in memory and record nothing. FTS5 is part
 SQLite that macOS ships, which Lite links, on every supported macOS version, and a test
 checks for it.
 
+### Recently closed tabs and windows
+
+The profile JSON keeps a `closed` list, oldest first and at most 30 entries
+(`LTClosedLimit`), shared by every regular window. Closing a temporary tab adds a copy of
+its node, read on the writer so it has the address of the tab's last queued save. Closing
+a regular window adds its restoration state: Space, active and split tabs, frame, sidebar
+and saved scroll positions. Tabs live in their Space, not in a window, so a window's tabs
+stay in the sidebar after it closes and reopening it restores the view. Windows that close
+because Lite quits or restarts are not added; those come back through the saved window list.
+Mini and private windows are never added. A private window's tabs go to its own in-memory
+store and end with it.
+
+Reopen Closed Tab (⇧⌘T) takes the newest tab entry into the current Space. Reopen Closed
+Window takes the newest window entry. With no window open, ⇧⌘T reopens the last window if
+that was the last thing closed. Each reopen removes its entry in the same save that adds
+the tab or window, by entry ID, so two quick presses never reopen one entry twice.
+
+The list is browsing history, so deleting history edits it in the same writer operation,
+before the recovery backups are refreshed. Clearing a period drops entries closed in it.
+Deleting one address drops its closed tabs and removes its scroll positions from closed
+windows. The validator rejects an entry of an unknown type, a tab that is not temporary or
+has an address Lite cannot open, an invalid window state, and a list over the limit. A
+profile saved before the list existed loads with an empty one.
+
 ### Background writer
 
 Each store has one serial writer queue. Organization saves, visit recording, history
