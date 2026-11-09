@@ -180,9 +180,10 @@ release bundle has no test code and ignores test flags, stages `dist/LiteTest.ap
 runs the separate Chromium suite, then the real native-window suite against that bundle. Output is retained under `test-results/release/` and
 `test-results/engine.json` and `test-results/native.json`. `--measure` also runs the disposable native-profile
 measurement harness; timing variation is reported, not automatically failed.
-`.github/workflows/release-verification.yml` runs this entry point on macOS 14
-arm64 and macOS 15 Intel. The workflow is checked in but has not run on GitHub as
-part of this local session. Native VoiceOver/Full Keyboard Access and real signed
+`.github/workflows/release-verification.yml` runs this entry point on macOS 15
+arm64 and macOS 15 Intel. It ran on macOS 14 arm64 until GitHub stopped starting
+`macos-14` jobs in November 2026, so no hosted runner now covers the declared macOS
+14.0 minimum. Native VoiceOver/Full Keyboard Access and real signed
 upgrade acceptance are separate gates, not implied by CI success.
 
 Current focused checks: 20 native updater policy/parser checks and 18 Python tests pass.
