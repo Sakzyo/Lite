@@ -231,14 +231,15 @@ History is one row per URL in the `history` table, separate from the organizatio
 | `url` | The URL as visited, unique |
 | `title` | The last title seen for it |
 | `address` | The URL in lowercase without its scheme or a leading `www.`, for prefix matching |
+| `words` | The title's words, then the address's, for word matching |
 | `visited` | The last visit |
 | `visits` | How many visits |
 | `rank` | Frecency, below |
 
-`history_fts` is an FTS5 index over `title` and `address`, with the `unicode61`
-tokenizer, which ignores case and diacritics. It stores no text of its own: it reads the
-table, and triggers on the table keep it in step. The `(address, rank)` index answers a
-prefix match without reading the table.
+A word is a run of letters and digits, folded to lowercase without diacritics, so "Café"
+gives "cafe". `words` holds each one after a single space. `history_fts` is an FTS5 index over
+`words`. It stores no text of its own: it reads the table, and triggers on the table keep it in
+step. The `(address, rank)` index answers a prefix match without reading the table.
 
 **Frecency.** Each visit has a weight that halves every 30 days, and a URL's frecency is the
 sum. Lite stores it as `rank = ln(weight) + decay × time`. Every row decays by the same factor,
@@ -249,12 +250,14 @@ open, such as an unread count, renames the row without counting a visit.
 **Search.** `searchHistory:limit:` takes the rows that match in three ways, each in frecency
 order and capped at the limit, then keeps each row's best match:
 
-1. Exact: the whole URL, or the whole title, found as a phrase starting the title.
+1. Exact: the whole URL, or the whole title, found through FTS5 as a phrase at the start of
+   `words`.
 2. Address: the typed text, without a scheme or `www.`, starts the address. "gith" finds
    `https://www.github.com/…`.
-3. Word: every typed word starts a word of the title or address, in any order. Words go to
-   FTS5 as quoted strings, so nothing typed is query syntax. A single character starts a
-   word in about a third of all rows, so on its own it matches by address only.
+3. Word: every typed word starts a word of the title or address, in any order. The 2,000
+   most frecent rows are scanned first, in rank order, by looking for " " plus each typed word
+   in `words`. If enough match, they are the best matches. Otherwise FTS5 answers, with each
+   word as a quoted prefix, so nothing typed is query syntax. Both read `words`, so they agree.
 
 Text inside a word, such as "thub", does not match. The Command Bar shows the best address
 match above web search and the rest below it. A typed web address still opens first. The

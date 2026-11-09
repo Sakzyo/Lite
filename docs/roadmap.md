@@ -29,8 +29,9 @@ apply: meeting these goals does not by itself qualify Lite as a production brows
   URL, through SQLite FTS5. Results rank by how they matched, then by frecency: a visit
   count in which each visit's weight halves every 30 days. History keeps 90 days and at
   most 100,000 URLs, pruned on the background writer. With 100,000 URLs the slowest
-  Command Bar query measured took 4.3 ms of the 16.7 ms frame. The profile database is
-  2.2 times as large as before at that size, and the History panel's own search still
+  Command Bar query measured took 2.1 ms of the 16.7 ms frame on Apple Silicon, and CI
+  checks the same budget on Intel. The profile database is 2.6 times as large as before
+  at that size, and the History panel's own search still
   scans every row. See [history search](performance.md#history-search) and
   [history](architecture.md#history).
 - **Make closed tabs recoverable.** Reopen Closed Tab survives quitting Lite, and

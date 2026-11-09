@@ -46,6 +46,16 @@ static NSString *Text(NSString *path, NSString *sql) {
     sqlite3_close(db);
     return value;
 }
+// The store's `words` for ASCII text, for rows a test writes directly: lowercase runs of letters and
+// digits from the title, then the address, each after one space.
+static NSString *Words(NSString *title, NSString *address) {
+    NSMutableString *words = [NSMutableString new];
+    NSCharacterSet *separators = NSCharacterSet.alphanumericCharacterSet.invertedSet;
+    for (NSString *text in @[title, address])
+        for (NSString *token in [text.lowercaseString componentsSeparatedByCharactersInSet:separators])
+            if (token.length) [words appendFormat:@" %@", token];
+    return words;
+}
 static NSArray<NSString *> *URLs(NSArray<NSDictionary *> *rows) { return [rows valueForKey:@"url"]; }
 // Moves a URL's visits `days` into the past, exactly as if they had happened then.
 static void Age(NSString *path, NSString *url, double days) {
@@ -249,8 +259,8 @@ static void RetentionTests(NSString *root) {
     store = OpenStore(path);
     SQL(path, [NSString stringWithFormat:
         @"WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<2600) "
-        @"INSERT INTO history(url,title,address,visited,visits,rank) SELECT 'https://bulk.example/'||i,'Bulk '||i,"
-        @"'bulk.example/'||i,%.17g-i,1,(%.17g-i)*%.17g FROM n",
+        @"INSERT INTO history(url,title,address,words,visited,visits,rank) SELECT 'https://bulk.example/'||i,'Bulk '||i,"
+        @"'bulk.example/'||i,' bulk '||i||' bulk example '||i,%.17g-i,1,(%.17g-i)*%.17g FROM n",
         NSDate.date.timeIntervalSince1970, NSDate.date.timeIntervalSince1970, M_LN2 / LTHistoryHalfLife]);
     CHECK([store pruneHistoryBefore:NSDate.date.timeIntervalSince1970 - 1500.5 keeping:1000 error:&error] &&
               [Text(path, @"SELECT count(*) FROM history") isEqual:@"1000"] &&
@@ -338,7 +348,7 @@ static void SeedLargeHistory(NSString *path, NSUInteger count) {
     sqlite3 *db = Open(path);
     sqlite3_exec(db, "BEGIN", NULL, NULL, NULL);
     sqlite3_stmt *stmt = NULL;
-    sqlite3_prepare_v2(db, "INSERT OR IGNORE INTO history(url,title,address,visited,visits,rank) VALUES(?,?,?,?,?,?)", -1, &stmt, NULL);
+    sqlite3_prepare_v2(db, "INSERT OR IGNORE INTO history(url,title,address,visited,visits,rank,words) VALUES(?,?,?,?,?,?,?)", -1, &stmt, NULL);
     double now = NSDate.date.timeIntervalSince1970, decay = M_LN2 / LTHistoryHalfLife;
     for (NSUInteger i = 0; i < count; i++) {
         NSString *host = [NSString stringWithFormat:@"%@%@%lu.example", syllables[lrand48() % syllables.count],
@@ -354,6 +364,7 @@ static void SeedLargeHistory(NSString *path, NSUInteger count) {
         sqlite3_bind_double(stmt, 4, visited);
         sqlite3_bind_int(stmt, 5, visits);
         sqlite3_bind_double(stmt, 6, log(visits) + visited * decay);
+        sqlite3_bind_text(stmt, 7, Words([[title componentsJoinedByString:@" "] capitalizedString], address).UTF8String, -1, SQLITE_TRANSIENT);
         sqlite3_step(stmt);
         sqlite3_reset(stmt);
     }

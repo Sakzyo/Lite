@@ -231,7 +231,7 @@ it was not built or run.
   match exclusion, direct opening of typed web addresses (including bare domains,
   local addresses, paths, queries and fragments), search precedence for ordinary
   text, literal query encoding, and old exact history entries beyond the recent limit.
-- `LiteHistoryTests` (added 9 November 2026): **48 passed**, covering address-prefix
+- `LiteHistoryTests` (added 9 November 2026): **49 passed**, covering address-prefix
   and word-prefix history matching, frecency ranking, retention by age and URL count,
   the version 1 to 2 schema migration, private stores, and a frame-budget check of
   Command Bar queries at 100,000 URLs.
