@@ -115,6 +115,21 @@ static BOOL Windows(NSArray *windows) {
     }
     return YES;
 }
+static BOOL NodeFields(NSDictionary *node);
+const NSUInteger LTClosedLimit = 30;
+static BOOL Closed(NSArray *closed) {
+    if (![closed isKindOfClass:NSArray.class] || closed.count > LTClosedLimit) return NO;
+    for (NSDictionary *entry in closed) {
+        if (![entry isKindOfClass:NSDictionary.class] || !Strings(entry, @[@"id", @"type"], YES) ||
+            ![entry[@"id"] length] || !Number(entry[@"closed"], 0, DBL_MAX, NO)) return NO;
+        if ([entry[@"type"] isEqual:@"tab"]) {
+            NSDictionary *node = entry[@"node"];
+            if (!NodeFields(node) || ![node[@"kind"] isEqual:@"temporary"] || !LTValidURL(node[@"url"])) return NO;
+        } else if (![entry[@"type"] isEqual:@"window"] || !entry[@"state"] || !Windows(@[entry[@"state"]]))
+            return NO;
+    }
+    return YES;
+}
 static BOOL NodeFields(NSDictionary *node) {
     if (![node isKindOfClass:NSDictionary.class] ||
         !Strings(node, @[@"id", @"kind", @"space", @"title", @"url"], YES) ||
@@ -294,6 +309,7 @@ static NSDictionary *GroupChildren(NSArray<LTNode *> *nodes) {
         _nodes = [NSMutableArray new];
         _settings = [NSMutableDictionary new];
         _windows = [NSMutableArray new];
+        _closed = [NSMutableArray new];
         _activeSpaceID = @"";
     }
     return self;
@@ -314,7 +330,8 @@ static NSDictionary *GroupChildren(NSArray<LTNode *> *nodes) {
         ![j[@"spaces"] isKindOfClass:NSArray.class] || ![j[@"nodes"] isKindOfClass:NSArray.class] ||
         [j[@"spaces"] count] > 4096 || [j[@"nodes"] count] > 100000 ||
         !Strings(j, @[@"activeSpace"], YES) ||
-        (j[@"settings"] && !Settings(j[@"settings"])) || (j[@"windows"] && !Windows(j[@"windows"]))) {
+        (j[@"settings"] && !Settings(j[@"settings"])) || (j[@"windows"] && !Windows(j[@"windows"])) ||
+        (j[@"closed"] && !Closed(j[@"closed"]))) {
         if (error)
             *error = LTError(
                 @"Unsupported or damaged Lite profile. The original database was preserved.");
@@ -339,6 +356,8 @@ static NSDictionary *GroupChildren(NSArray<LTNode *> *nodes) {
         p.settings = [j[@"settings"] mutableCopy];
     if ([j[@"windows"] isKindOfClass:NSArray.class])
         p.windows = [j[@"windows"] mutableCopy];
+    if ([j[@"closed"] isKindOfClass:NSArray.class])
+        p.closed = [j[@"closed"] mutableCopy];
     p.activeSpaceID = S(j[@"activeSpace"]);
     return [p validate:error] ? p : nil;
 }
@@ -348,6 +367,7 @@ static NSDictionary *GroupChildren(NSArray<LTNode *> *nodes) {
     for (LTNode *node in _nodes) [p.nodes addObject:[node copy]];
     p.settings = CopyJSON(_settings);
     p.windows = CopyJSON(_windows);
+    p.closed = CopyJSON(_closed);
     p.activeSpaceID = _activeSpaceID;
     return p;
 }
@@ -363,8 +383,68 @@ static NSDictionary *GroupChildren(NSArray<LTNode *> *nodes) {
         @"nodes" : nodes,
         @"activeSpace" : _activeSpaceID,
         @"settings" : _settings,
-        @"windows" : _windows
+        @"windows" : _windows,
+        @"closed" : _closed
     };
+}
+- (void)noteClosed:(NSDictionary *)entry {
+    [_closed addObject:entry];
+    if (_closed.count > LTClosedLimit) [_closed removeObjectsInRange:NSMakeRange(0, _closed.count - LTClosedLimit)];
+}
+- (void)noteClosedTab:(LTNode *)node time:(double)time {
+    if (![node.kind isEqual:@"temporary"] || !LTValidURL(node.url)) return;
+    [self noteClosed:@{@"id" : LTUUID(), @"type" : @"tab", @"closed" : @(time), @"node" : CopyJSON(node.JSON)}];
+}
+- (void)noteClosedWindow:(NSDictionary *)state time:(double)time {
+    if (!Windows(@[state])) return;
+    [self noteClosed:@{@"id" : LTUUID(), @"type" : @"window", @"closed" : @(time), @"state" : CopyJSON(state)}];
+}
+- (NSDictionary *)latestClosed:(NSString *)type {
+    for (NSDictionary *entry in _closed.reverseObjectEnumerator)
+        if (!type || [entry[@"type"] isEqual:type]) return entry;
+    return nil;
+}
+- (NSDictionary *)takeClosed:(NSString *)identifier {
+    for (NSUInteger i = 0; i < _closed.count; i++)
+        if ([_closed[i][@"id"] isEqual:identifier]) {
+            NSDictionary *entry = _closed[i];
+            [_closed removeObjectAtIndex:i];
+            return entry;
+        }
+    return nil;
+}
+- (BOOL)forgetClosedSince:(double)time {
+    NSUInteger count = _closed.count;
+    [_closed filterUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSDictionary *entry, NSDictionary *bindings) {
+        return time > 0 && [entry[@"closed"] doubleValue] < time;
+    }]];
+    return _closed.count != count;
+}
+- (BOOL)forgetClosedURL:(NSString *)url {
+    BOOL changed = NO;
+    NSMutableArray *kept = [NSMutableArray new];
+    for (__strong NSDictionary *entry in _closed) {
+        if ([entry[@"type"] isEqual:@"tab"]) {
+            if ([entry[@"node"][@"url"] isEqual:url]) { changed = YES; continue; }
+        } else {
+            NSDictionary *sessions = entry[@"state"][@"sessions"];
+            NSArray *matching = [sessions keysOfEntriesPassingTest:^BOOL(id key, NSDictionary *state, BOOL *stop) {
+                return [state[@"url"] isEqual:url];
+            }].allObjects;
+            if (matching.count) {
+                NSMutableDictionary *state = [entry[@"state"] mutableCopy], *trimmed = [sessions mutableCopy];
+                [trimmed removeObjectsForKeys:matching];
+                state[@"sessions"] = trimmed;
+                NSMutableDictionary *copy = [entry mutableCopy];
+                copy[@"state"] = state;
+                entry = copy;
+                changed = YES;
+            }
+        }
+        [kept addObject:entry];
+    }
+    if (changed) _closed = kept;
+    return changed;
 }
 - (void)seal {
     NSMutableDictionary *index = [NSMutableDictionary dictionaryWithCapacity:_nodes.count];
@@ -510,7 +590,7 @@ static NSDictionary *GroupChildren(NSArray<LTNode *> *nodes) {
 - (BOOL)validate:(NSError **)error {
     NSString *problem = nil;
     if (![_spaces isKindOfClass:NSArray.class] || ![_nodes isKindOfClass:NSArray.class] ||
-        ![_activeSpaceID isKindOfClass:NSString.class] || !Settings(_settings) || !Windows(_windows) ||
+        ![_activeSpaceID isKindOfClass:NSString.class] || !Settings(_settings) || !Windows(_windows) || !Closed(_closed) ||
         _spaces.count > 4096 || _nodes.count > 100000) {
         if (error) *error = LTError(@"Invalid profile, settings, or window fields. Your previous data is intact.");
         return NO;

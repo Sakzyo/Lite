@@ -47,6 +47,8 @@ launched process. The Codex Run action uses the same script.
   multiple containers, and safe rejection of broken references. HTML, Chromium JSON,
   and Safari plist bookmark import are separate workflows.
 - Command Bar with direct address entry, search-first text queries, exact saved URL/title matches, and fuzzy browser commands.
+- Reopen Closed Tab and Reopen Closed Window, which keep the 30 most recently closed
+  tabs and windows across quitting. Deleting history removes them too.
 - Real Chromium pages, navigation, TLS status, DevTools, find, zoom, print, HTML save,
   download callbacks, permission prompts, and transient popup windows.
 - Two independent pages in a resizable horizontal or vertical split.

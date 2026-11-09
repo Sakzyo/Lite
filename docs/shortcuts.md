@@ -11,7 +11,7 @@ windows and survive relaunch. Escape cancels recording.
 | ⌘L | Edit current address |
 | ↑ / ↓, Return, Escape | Navigate, accept, or dismiss Command Bar |
 | ⌘N / ⇧⌘N | Normal / private window |
-| ⌘W / ⇧⌘T | Close / reopen tab |
+| ⌘W / ⇧⌘T | Close / reopen tab (with no window open, ⇧⌘T reopens the last window) |
 | ⌘D | Pin or unpin |
 | ⌘R | Reload |
 | ⌘[ / ⌘] | Back / forward |
@@ -26,6 +26,9 @@ windows and survive relaunch. Escape cancels recording.
 | ⌘Y / ⌘J | History / downloads |
 | ⌘, | Settings |
 | ⇧⌘I | Developer Tools |
+
+**File → Reopen Closed Window**, also in the Command Bar, has no default shortcut; record
+one in Keyboard Shortcuts. Recently closed tabs and windows are kept after quitting.
 
 When the sidebar is collapsed, move the pointer to the left edge of the window
 to reveal it as a floating panel over the page. It hides again when the pointer
