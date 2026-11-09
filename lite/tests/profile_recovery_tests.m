@@ -293,7 +293,8 @@ static void WriterTests(NSString *root, const char *program) {
         for (int i=0;i<10;i++) { NSString *name=[NSString stringWithFormat:@"w%d",i]; [released commit:^(LTProfile *p){ [p addSpace:name]; } completion:nil]; }
         [released recordVisit:@"https://example.invalid/kept" title:@"Kept"];
     }
-    CHECK(Spin(^{ return (BOOL)(SavedVisits(path).count==1); }) && SavedSpaces(path).count==10,"releasing the store does not lose queued writes");
+    // The released store closes its database on the writer once the last block ends, so read until both settle.
+    CHECK(Spin(^{ return (BOOL)(SavedVisits(path).count==1 && SavedSpaces(path).count==10); }),"releasing the store does not lose queued writes");
     path=NewPath(root);
     store=[[LTStore alloc]initWithPath:path error:&error];
     expected=[NSMutableArray new];

@@ -461,7 +461,19 @@ int main(int argc, char **argv) {
         results = LTCommandResults(@"Saved", p, history, [NSSet new]);
         CHECK([results.firstObject[@"icon"] isEqual:@"magnifyingglass"] &&
                   ![[results valueForKey:@"icon"] containsObject:@"clock"],
-              "partial history matches are omitted");
+              "history rows the store did not match are omitted");
+        NSArray *matched = @[ @{@"title" : @"Saved Page", @"url" : @"https://saved.example/Path",
+                                @"match" : LTHistoryMatchWord} ];
+        results = LTCommandResults(@"Page", p, matched, [NSSet new]);
+        CHECK([results.firstObject[@"icon"] isEqual:@"magnifyingglass"] &&
+                  [results[1][@"value"] isEqual:@"https://saved.example/Path"],
+              "a partial history match follows web search");
+        matched = @[ @{@"title" : @"Saved Page", @"url" : @"https://saved.example/Path",
+                       @"match" : LTHistoryMatchAddress} ];
+        results = LTCommandResults(@"sav", p, matched, [NSSet new]);
+        CHECK([results.firstObject[@"value"] isEqual:@"https://saved.example/Path"] &&
+                  [results[1][@"icon"] isEqual:@"magnifyingglass"],
+              "the best address-prefix history match leads web search");
         results = LTCommandResults(@"Saved Page", p, history, [NSSet new]);
         CHECK([results.firstObject[@"value"] isEqual:@"https://saved.example/Path"],
               "exact history title wins");
@@ -469,7 +481,7 @@ int main(int argc, char **argv) {
         CHECK([results.firstObject[@"detail"] isEqual:@"Open address"] &&
                   [results.firstObject[@"value"] isEqual:@"https://saved.example/Path"],
               "typed link opens directly even when it matches history");
-        results = LTCommandResults(@"https://saved.example/path", p, history, [NSSet new]);
+        results = LTCommandResults(@"https://saved.example/path", p, matched, [NSSet new]);
         CHECK([results.firstObject[@"value"] isEqual:@"https://saved.example/path"] &&
                   ![[results valueForKey:@"icon"] containsObject:@"clock"],
               "typed URL path case is preserved without suggesting a different history URL");
@@ -481,9 +493,10 @@ int main(int argc, char **argv) {
             [store recordVisit:[NSString stringWithFormat:@"https://recent.example/%d", i]
                          title:[NSString stringWithFormat:@"Exact History extended %d", i]];
         [store waitForWrites];
-        NSArray *exactHistory = [store history:@"Exact History" limit:30 exact:YES];
-        CHECK(exactHistory.count == 1 &&
-                  [exactHistory.firstObject[@"url"] isEqual:@"https://old.example/exact"],
+        NSArray *exactHistory = [store searchHistory:@"Exact History" limit:30];
+        CHECK(exactHistory.count == 30 &&
+                  [exactHistory.firstObject[@"url"] isEqual:@"https://old.example/exact"] &&
+                  [exactHistory.firstObject[@"match"] isEqual:LTHistoryMatchExact],
               "older exact history match survives newer partial matches and result limit");
         LTImportResult *import = [LTImporter parseArcData:JSON(Fixture()) error:&e];
         CHECK(import != nil, "import one space fixture");

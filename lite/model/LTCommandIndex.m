@@ -1,4 +1,5 @@
 #import "LTCommandIndex.h"
+#import "LTStore.h"
 NSInteger LTFuzzyScore(NSString *query, NSString *text) {
     NSString *q = query.lowercaseString, *t = text.lowercaseString;
     if (!q.length)
@@ -69,11 +70,30 @@ NSArray<NSDictionary *> *LTCommandResults(NSString *query, LTProfile *profile,
         if (score)
             add(s.name, @"Switch Space", @"space", s.identifier, 5500 + score, @"square.grid.2x2");
     }
+    // `history` arrives ranked by match and frecency (see -[LTStore searchHistory:limit:]), and keeps
+    // that order. The best address-prefix match, such as github.com for "gith", leads ahead of web
+    // search, the way an address bar completes a host. Other matches follow below search. A typed web
+    // address still opens first, and a history URL that differs from it only in case is left out.
+    BOOL typedAddress = q.length && ![address isEqual:searchURL], topHit = NO;
+    NSInteger listed = 0;
     for (NSDictionary *h in history) {
-        BOOL exact = q.length && ([q isEqual:h[@"title"]] || [q isEqual:h[@"url"]]);
-        if (!q.length || exact)
-            add([h[@"title"] length] ? h[@"title"] : h[@"url"], h[@"url"], @"url", h[@"url"],
-                exact ? 24000 : 4000, @"clock");
+        NSString *url = h[@"url"], *match = h[@"match"];
+        BOOL exact = q.length && ([q isEqual:h[@"title"]] || [q isEqual:url]);
+        if (q.length && !exact && !match)
+            continue;
+        if (typedAddress && !exact && ![url isEqual:address] &&
+            [url caseInsensitiveCompare:address] == NSOrderedSame)
+            continue;
+        NSInteger rank = 4000 - listed;
+        if (exact)
+            rank = 24000;
+        else if (q.length && !typedAddress && !topHit && [match isEqual:LTHistoryMatchAddress]) {
+            rank = 16000;
+            topHit = YES;
+        } else if (q.length)
+            rank = 3900 - listed;
+        listed++;
+        add([h[@"title"] length] ? h[@"title"] : url, url, @"url", url, rank, @"clock");
     }
     NSArray *commands = @[
         @[ @"New Tab", @"newTab", @"plus" ],

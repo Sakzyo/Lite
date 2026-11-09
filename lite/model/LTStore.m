@@ -2,6 +2,7 @@
 #import <sqlite3.h>
 #import <os/lock.h>
 #import <os/log.h>
+#include <math.h>
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -13,6 +14,17 @@ NSString *const LTStoreWriteErrorKey = @"LTStoreWriteError";
 NSString *const LTStoreChangeQuietObserverKey = @"LTStoreChangeQuietObserver";
 static const NSUInteger MaxProfileBytes = 64 * 1024 * 1024;
 static const NSTimeInterval BackupInterval = 60;
+const int LTStoreSchemaVersion = 2;
+const NSTimeInterval LTHistoryMaxAge = 90 * 86400;
+const NSUInteger LTHistoryMaxURLs = 100000;
+const NSTimeInterval LTHistoryHalfLife = 30 * 86400;
+NSString *const LTHistoryMatchExact = @"exact";
+NSString *const LTHistoryMatchAddress = @"address";
+NSString *const LTHistoryMatchWord = @"word";
+// Retention runs at most this often, and deletes this many rows per turn of the writer so that
+// queued saves never wait behind a large prune.
+static const NSTimeInterval HistoryPruneInterval = 3600;
+static const int HistoryPruneBatch = 1000;
 static NSString *DatabasePath(NSString *path) {
     // macOS temporary directories commonly traverse /var -> /private/var.
     // Resolve the parent only; never follow a database or backup symlink.
@@ -27,6 +39,101 @@ static NSString *DatabasePath(NSString *path) {
 
 static BOOL StoreError(NSError **error, NSString *message) {
     if (error) *error = LTError(message);
+    return NO;
+}
+// Frecency is a visit count in which each visit's weight halves every LTHistoryHalfLife. Stored
+// as rank = ln(weight) + decay * time, it orders rows by their weight now without being updated as
+// time passes, because every row decays by the same factor. A visit adds one to the weight:
+// rank' = logaddexp(rank, decay * time), which also stays correct if the clock steps backwards.
+static double HistoryDecay(void) { return M_LN2 / LTHistoryHalfLife; }
+static double HistoryRankAddingVisit(double rank, BOOL visited, double time) {
+    double visit = time * HistoryDecay();
+    if (!visited) return visit;
+    double high = MAX(rank, visit), low = MIN(rank, visit);
+    return high + log1p(exp(low - high));
+}
+// The part of a URL or typed text that address-prefix matching compares: lowercase, without the
+// scheme or a leading "www.". "https://www.GitHub.com/x" and "github.com/x" both give "github.com/x".
+static NSString *HistoryAddress(NSString *text) {
+    NSString *address = text.lowercaseString ?: @"";
+    for (NSString *scheme in @[@"https://", @"http://"])
+        if ([address hasPrefix:scheme]) { address = [address substringFromIndex:scheme.length]; break; }
+    if ([address hasPrefix:@"www."]) address = [address substringFromIndex:4];
+    return address;
+}
+// Used only while migrating rows written before the address column existed.
+static void HistoryAddressFunction(sqlite3_context *context, int count, sqlite3_value **values) {
+    const char *text = (const char *)sqlite3_value_text(values[0]);
+    NSString *address = HistoryAddress(text ? [NSString stringWithUTF8String:text] : nil);
+    sqlite3_result_text(context, address.UTF8String ?: "", -1, SQLITE_TRANSIENT);
+}
+#define HistoryDeleteTrigger \
+    "CREATE TRIGGER IF NOT EXISTS history_fts_delete AFTER DELETE ON history BEGIN " \
+    "INSERT INTO history_fts(history_fts,rowid,title,address) VALUES('delete',old.id,old.title,old.address); END;"
+static BOOL Exec(sqlite3 *db, const char *sql) { return sqlite3_exec(db, sql, NULL, NULL, NULL) == SQLITE_OK; }
+static int UserVersion(sqlite3 *db) {
+    sqlite3_stmt *stmt = NULL;
+    int version = -1;
+    if (sqlite3_prepare_v2(db, "PRAGMA user_version", -1, &stmt, NULL) == SQLITE_OK && sqlite3_step(stmt) == SQLITE_ROW)
+        version = sqlite3_column_int(stmt, 0);
+    sqlite3_finalize(stmt);
+    return version;
+}
+static BOOL HasColumn(sqlite3 *db, const char *table, const char *column) {
+    sqlite3_stmt *stmt = NULL;
+    BOOL found = NO;
+    if (sqlite3_prepare_v2(db, "SELECT 1 FROM pragma_table_info(?) WHERE name=?", -1, &stmt, NULL) == SQLITE_OK) {
+        sqlite3_bind_text(stmt, 1, table, -1, SQLITE_STATIC);
+        sqlite3_bind_text(stmt, 2, column, -1, SQLITE_STATIC);
+        found = sqlite3_step(stmt) == SQLITE_ROW;
+    }
+    sqlite3_finalize(stmt);
+    return found;
+}
+// Brings a database at any earlier user_version to LTStoreSchemaVersion in one transaction, so an
+// interrupted migration leaves the previous schema. Every step is safe to repeat.
+//
+// Version 2 gives history a stable integer key (FTS5 refers to rows by it, and VACUUM may renumber
+// an implicit rowid), a visit count, a frecency rank and a normalized address, plus a full-text index
+// over titles and addresses that triggers keep in step with the table.
+static BOOL MigrateSchema(sqlite3 *db) {
+    if (!Exec(db, "BEGIN IMMEDIATE")) return NO;
+    BOOL ok = Exec(db, "CREATE TABLE IF NOT EXISTS profile (id INTEGER PRIMARY KEY CHECK(id=1), json BLOB NOT NULL)");
+    int version = ok ? UserVersion(db) : -1;
+    if (version < 0 || version > LTStoreSchemaVersion) ok = NO;
+    if (ok && version < LTStoreSchemaVersion) {
+        BOOL legacy = HasColumn(db, "history", "url") && !HasColumn(db, "history", "address");
+        if (legacy) ok = Exec(db, "ALTER TABLE history RENAME TO history_v1");
+        ok = ok && Exec(db,
+            "CREATE TABLE IF NOT EXISTS history (id INTEGER PRIMARY KEY, url TEXT NOT NULL UNIQUE, "
+            "title TEXT NOT NULL, address TEXT NOT NULL, visited REAL NOT NULL, "
+            "visits INTEGER NOT NULL DEFAULT 1 CHECK(visits>0), rank REAL NOT NULL)");
+        if (legacy) {
+            // Version 1 kept only the last visit, so each URL starts with one visit at that time.
+            NSString *copy = [NSString stringWithFormat:@"INSERT INTO history(url,title,address,visited,visits,rank) "
+                "SELECT url,title,lite_history_address(url),visited,1,visited*%.17g FROM history_v1 ORDER BY visited,rowid",
+                HistoryDecay()];
+            ok = ok && Exec(db, copy.UTF8String) && Exec(db, "DROP TABLE history_v1");
+        }
+        ok = ok && Exec(db,
+            "CREATE INDEX IF NOT EXISTS history_time ON history(visited);"
+            "CREATE INDEX IF NOT EXISTS history_rank ON history(rank);"
+            "CREATE INDEX IF NOT EXISTS history_address ON history(address,rank);"
+            "CREATE VIRTUAL TABLE IF NOT EXISTS history_fts USING fts5(title, address, content='history', "
+            "content_rowid='id', tokenize='unicode61 remove_diacritics 2');"
+            "CREATE TRIGGER IF NOT EXISTS history_fts_insert AFTER INSERT ON history BEGIN "
+            "INSERT INTO history_fts(rowid,title,address) VALUES(new.id,new.title,new.address); END;"
+            HistoryDeleteTrigger
+            "CREATE TRIGGER IF NOT EXISTS history_fts_update AFTER UPDATE OF title,address ON history "
+            "WHEN old.title IS NOT new.title OR old.address IS NOT new.address BEGIN "
+            "INSERT INTO history_fts(history_fts,rowid,title,address) VALUES('delete',old.id,old.title,old.address);"
+            "INSERT INTO history_fts(rowid,title,address) VALUES(new.id,new.title,new.address); END;"
+            "INSERT INTO history_fts(history_fts) VALUES('rebuild');");
+        NSString *stamp = [NSString stringWithFormat:@"PRAGMA user_version=%d", LTStoreSchemaVersion];
+        ok = ok && Exec(db, stamp.UTF8String);
+    }
+    if (ok && Exec(db, "COMMIT")) return YES;
+    Exec(db, "ROLLBACK");
     return NO;
 }
 static BOOL RegularFile(NSString *path) {
@@ -53,7 +160,7 @@ static BOOL FutureDatabaseVersion(sqlite3 *db) {
     BOOL future = NO;
     if (sqlite3_prepare_v2(db, "PRAGMA user_version", -1, &stmt, NULL) == SQLITE_OK && sqlite3_step(stmt) == SQLITE_ROW) {
         int version = sqlite3_column_int(stmt, 0);
-        future = version < 0 || version > 1;
+        future = version < 0 || version > LTStoreSchemaVersion;
     }
     sqlite3_finalize(stmt);
     return future;
@@ -154,6 +261,7 @@ static NSString *AvailableBackup(NSString *path) {
     sqlite3 *_db;
     LTProfile *_committed;
     NSTimeInterval _lastBackup;
+    NSTimeInterval _lastPrune;
     // Main thread only.
     sqlite3 *_reader;
     NSMutableArray<LTStoreWrite *> *_finished;
@@ -265,13 +373,9 @@ static NSString *AvailableBackup(NSString *path) {
         }
         sqlite3_busy_timeout(_db, 3000);
         sqlite3_limit(_db, SQLITE_LIMIT_LENGTH, (int)MaxProfileBytes);
-        const char *schema =
-            "PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; BEGIN IMMEDIATE; CREATE TABLE IF NOT EXISTS profile "
-            "(id INTEGER PRIMARY KEY CHECK(id=1), json BLOB NOT NULL); CREATE TABLE IF NOT EXISTS "
-            "history (url TEXT PRIMARY KEY, title TEXT NOT NULL, visited REAL NOT NULL); CREATE "
-            "INDEX IF NOT EXISTS history_time ON history(visited); PRAGMA user_version=1; COMMIT;";
-        if (sqlite3_exec(_db, schema, NULL, NULL, NULL) != SQLITE_OK) {
-            sqlite3_exec(_db, "ROLLBACK", NULL, NULL, NULL);
+        sqlite3_create_function_v2(_db, "lite_history_address", 1, SQLITE_UTF8 | SQLITE_DETERMINISTIC, NULL,
+                                   HistoryAddressFunction, NULL, NULL, NULL);
+        if (!Exec(_db, "PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;") || !MigrateSchema(_db)) {
             StoreError(error, @"Lite could not initialize its database. No organization was replaced.");
             return nil;
         }
@@ -289,6 +393,9 @@ static NSString *AvailableBackup(NSString *path) {
                 return nil;
             }
             sqlite3_busy_timeout(_reader, 250);
+            // The Command Bar reads scattered rows of a history that can be tens of megabytes. Mapping
+            // the file spares a copy into SQLite's 8 MB page cache for each one. The connection only reads.
+            Exec(_reader, "PRAGMA mmap_size=268435456");
         }
         for (LTNode *node in _profile.nodes)
             if ([node.kind isEqual:@"folder"]) node.expanded = NO;
@@ -518,49 +625,218 @@ static NSString *AvailableBackup(NSString *path) {
     if (_privateMode || _closed || ![url hasPrefix:@"http"])
         return;
     url = [url copy];
-    title = [title copy];
+    title = [title copy] ?: @"";
+    NSString *address = HistoryAddress(url);
     // The visit happened now, whenever the writer reaches it.
     double visited = NSDate.date.timeIntervalSince1970;
     dispatch_async(_writer, ^{
+        int rc = [self insertVisit:url title:title address:address time:visited];
+        if (rc != SQLITE_DONE) os_log_error(OS_LOG_DEFAULT, "Lite could not record a visit (SQLite %d)", rc);
+        // Retention rides on visits rather than on opening the store, so a store that is released
+        // right after it opens has nothing left running against its database.
+        [self pruneHistoryIfDue:visited];
+    });
+}
+// Writer only.
+- (int)insertVisit:(NSString *)url title:(NSString *)title address:(NSString *)address time:(double)time {
+    if (!_db) return SQLITE_MISUSE;
+    sqlite3_stmt *s = NULL;
+    int rc = sqlite3_prepare_v2(_db, "SELECT rank FROM history WHERE url=?", -1, &s, NULL);
+    BOOL known = NO;
+    double rank = 0;
+    if (rc == SQLITE_OK) {
+        sqlite3_bind_text(s, 1, url.UTF8String, -1, SQLITE_TRANSIENT);
+        rc = sqlite3_step(s);
+        if (rc == SQLITE_ROW) { known = YES; rank = sqlite3_column_double(s, 0); rc = SQLITE_DONE; }
+    }
+    sqlite3_finalize(s);
+    if (rc != SQLITE_DONE) return rc;
+    // Only the writer changes history, so the rank read above is still current.
+    rc = sqlite3_prepare_v2(_db,
+        "INSERT INTO history(url,title,address,visited,visits,rank) VALUES(?1,?2,?3,?4,1,?5) "
+        "ON CONFLICT(url) DO UPDATE SET title=excluded.title,visited=max(visited,excluded.visited),"
+        "visits=visits+1,rank=excluded.rank", -1, &s, NULL);
+    if (rc == SQLITE_OK) {
+        sqlite3_bind_text(s, 1, url.UTF8String, -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(s, 2, title.UTF8String, -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(s, 3, address.UTF8String, -1, SQLITE_TRANSIENT);
+        sqlite3_bind_double(s, 4, time);
+        sqlite3_bind_double(s, 5, HistoryRankAddingVisit(rank, known, time));
+        rc = sqlite3_step(s);
+    }
+    sqlite3_finalize(s);
+    return rc;
+}
+- (void)updateVisitTitle:(NSString *)title url:(NSString *)url {
+    if (_privateMode || _closed || ![url hasPrefix:@"http"])
+        return;
+    url = [url copy];
+    title = [title copy] ?: @"";
+    dispatch_async(_writer, ^{
+        if (!self->_db) return;
         sqlite3_stmt *s = NULL;
-        int rc = sqlite3_prepare_v2(self->_db,
-                                    "INSERT INTO history(url,title,visited) VALUES(?,?,?) ON CONFLICT(url) DO "
-                                    "UPDATE SET title=excluded.title,visited=excluded.visited",
-                                    -1, &s, NULL);
+        int rc = sqlite3_prepare_v2(self->_db, "UPDATE history SET title=? WHERE url=?", -1, &s, NULL);
         if (rc == SQLITE_OK) {
-            sqlite3_bind_text(s, 1, url.UTF8String, -1, SQLITE_TRANSIENT);
-            sqlite3_bind_text(s, 2, title.UTF8String, -1, SQLITE_TRANSIENT);
-            sqlite3_bind_double(s, 3, visited);
+            sqlite3_bind_text(s, 1, title.UTF8String, -1, SQLITE_TRANSIENT);
+            sqlite3_bind_text(s, 2, url.UTF8String, -1, SQLITE_TRANSIENT);
             rc = sqlite3_step(s);
         }
         sqlite3_finalize(s);
-        if (rc != SQLITE_DONE) os_log_error(OS_LOG_DEFAULT, "Lite could not record a visit (SQLite %d)", rc);
+        if (rc != SQLITE_DONE) os_log_error(OS_LOG_DEFAULT, "Lite could not update a visit title (SQLite %d)", rc);
     });
 }
-- (NSArray<NSDictionary *> *)history:(NSString *)query limit:(NSInteger)limit {
-    return [self history:query limit:limit exact:NO];
+// Writer only. Deletes one batch: visits older than `cutoff` first, then the least frecent URLs
+// beyond `maxURLs`. `more` says whether another batch is needed.
+- (BOOL)pruneHistoryBatchBefore:(double)cutoff keeping:(NSUInteger)maxURLs more:(BOOL *)more {
+    *more = NO;
+    if (!_db) return NO;
+    const char *steps[] = {
+        "DELETE FROM history WHERE id IN (SELECT id FROM history WHERE visited<? LIMIT ?)",
+        "DELETE FROM history WHERE id IN (SELECT id FROM history ORDER BY rank DESC LIMIT ? OFFSET ?)",
+    };
+    for (int step = 0; step < 2; step++) {
+        sqlite3_stmt *s = NULL;
+        int rc = sqlite3_prepare_v2(_db, steps[step], -1, &s, NULL);
+        if (rc == SQLITE_OK) {
+            if (step == 0) {
+                sqlite3_bind_double(s, 1, cutoff);
+                sqlite3_bind_int(s, 2, HistoryPruneBatch);
+            } else {
+                sqlite3_bind_int(s, 1, HistoryPruneBatch);
+                sqlite3_bind_int64(s, 2, (sqlite3_int64)MIN(maxURLs, (NSUInteger)INT64_MAX));
+            }
+            rc = sqlite3_step(s);
+        }
+        sqlite3_finalize(s);
+        if (rc != SQLITE_DONE) {
+            os_log_error(OS_LOG_DEFAULT, "Lite could not apply history retention (SQLite %d)", rc);
+            return NO;
+        }
+        if (sqlite3_changes(_db) == HistoryPruneBatch) { *more = YES; return YES; }
+    }
+    return YES;
 }
-- (NSArray<NSDictionary *> *)history:(NSString *)query limit:(NSInteger)limit exact:(BOOL)exact {
+// Writer only. Each batch is its own turn of the writer, so saves queued meanwhile run in between.
+- (void)pruneHistoryIfDue:(double)now {
+    if (_privateMode || !_db || now - _lastPrune < HistoryPruneInterval) return;
+    _lastPrune = now;
+    [self pruneHistoryBefore:now - LTHistoryMaxAge keeping:LTHistoryMaxURLs];
+}
+- (void)pruneHistoryBefore:(double)cutoff keeping:(NSUInteger)maxURLs {
+    BOOL more = NO;
+    if ([self pruneHistoryBatchBefore:cutoff keeping:maxURLs more:&more] && more)
+        dispatch_async(_writer, ^{ [self pruneHistoryBefore:cutoff keeping:maxURLs]; });
+}
+- (BOOL)pruneHistoryBefore:(double)cutoff keeping:(NSUInteger)maxURLs error:(NSError **)error {
+    LTStoreWrite *write = [LTStoreWrite new];
+    write->operation = ^BOOL(LTStoreWrite *current, NSError **failure) {
+        BOOL more = YES;
+        while (more)
+            if (![self pruneHistoryBatchBefore:cutoff keeping:maxURLs more:&more])
+                return StoreError(failure, @"Lite could not apply history retention.");
+        return YES;
+    };
+    return [self waitFor:write error:error];
+}
+static NSDictionary *HistoryRow(sqlite3_stmt *s, NSString *match) {
+    const char *url = (const char *)sqlite3_column_text(s, 0), *title = (const char *)sqlite3_column_text(s, 1);
+    NSString *u = url ? [NSString stringWithUTF8String:url] : nil, *t = title ? [NSString stringWithUTF8String:title] : nil;
+    if (!u) return nil;
+    NSMutableDictionary *row = [@{@"url" : u, @"title" : t ?: @"", @"visited" : @(sqlite3_column_double(s, 2)),
+                                  @"visits" : @(sqlite3_column_int64(s, 3))} mutableCopy];
+    if (match) row[@"match"] = match;
+    return row;
+}
+- (NSArray<NSDictionary *> *)history:(NSString *)query limit:(NSInteger)limit {
     NSMutableArray *rows = [NSMutableArray new];
     // Private windows never record history, and their in-memory database has no second connection.
     if (!_reader) return rows;
     sqlite3_stmt *s = NULL;
-    const char *sql =
-        exact ? "SELECT url,title,visited FROM history WHERE url=? OR title=? ORDER BY visited "
-                "DESC LIMIT ?"
-              : "SELECT url,title,visited FROM history WHERE instr(lower(url),lower(?))>0 "
-                "OR instr(lower(title),lower(?))>0 ORDER BY visited DESC LIMIT ?";
-    sqlite3_prepare_v2(_reader, sql, -1, &s, NULL);
-    sqlite3_bind_text(s, 1, query.UTF8String, -1, SQLITE_TRANSIENT);
-    sqlite3_bind_text(s, 2, query.UTF8String, -1, SQLITE_TRANSIENT);
-    sqlite3_bind_int(s, 3, (int)limit);
-    while (sqlite3_step(s) == SQLITE_ROW) {
-        NSString *u = @((const char *)sqlite3_column_text(s, 0));
-        NSString *t = @((const char *)sqlite3_column_text(s, 1));
-        [rows addObject:@{@"url" : u, @"title" : t, @"visited" : @(sqlite3_column_double(s, 2))}];
+    const char *sql = "SELECT url,title,visited,visits FROM history WHERE instr(lower(url),lower(?1))>0 "
+                      "OR instr(lower(title),lower(?1))>0 ORDER BY visited DESC LIMIT ?2";
+    if (sqlite3_prepare_v2(_reader, sql, -1, &s, NULL) == SQLITE_OK) {
+        sqlite3_bind_text(s, 1, (query ?: @"").UTF8String, -1, SQLITE_TRANSIENT);
+        sqlite3_bind_int(s, 2, (int)limit);
+        while (sqlite3_step(s) == SQLITE_ROW) {
+            NSDictionary *row = HistoryRow(s, nil);
+            if (row) [rows addObject:row];
+        }
     }
     sqlite3_finalize(s);
     return rows;
+}
+- (NSArray<NSDictionary *> *)searchHistory:(NSString *)query limit:(NSInteger)limit {
+    NSMutableArray *rows = [NSMutableArray new];
+    if (!_reader || limit <= 0) return rows;
+    NSString *raw = [query ?: @"" stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    sqlite3_stmt *s = NULL;
+    if (!raw.length) {
+        if (sqlite3_prepare_v2(_reader, "SELECT url,title,visited,visits FROM history ORDER BY rank DESC LIMIT ?",
+                               -1, &s, NULL) == SQLITE_OK) {
+            sqlite3_bind_int(s, 1, (int)limit);
+            while (sqlite3_step(s) == SQLITE_ROW) {
+                NSDictionary *row = HistoryRow(s, nil);
+                if (row) [rows addObject:row];
+            }
+        }
+        sqlite3_finalize(s);
+        return rows;
+    }
+    // Address prefix: a range over the (address, rank) index, which covers the query. The upper bound
+    // is the prefix with its last byte raised by one; UTF-8 never uses 0xFF, so that cannot overflow.
+    NSMutableData *low = [[HistoryAddress(raw) dataUsingEncoding:NSUTF8StringEncoding] mutableCopy];
+    NSMutableData *high = [low mutableCopy];
+    if (high.length) ((uint8_t *)high.mutableBytes)[high.length - 1]++;
+    // Word prefix: every word typed must start a word of the title or address, in any order. Words go
+    // to FTS5 as quoted strings, so nothing typed is read as query syntax. A single character starts
+    // a word in about a third of all rows, so it matches by address alone.
+    NSMutableArray *terms = [NSMutableArray new];
+    for (NSString *word in [raw componentsSeparatedByCharactersInSet:NSCharacterSet.alphanumericCharacterSet.invertedSet])
+        if (word.length && terms.count < 16) [terms addObject:[NSString stringWithFormat:@"\"%@\"*", word]];
+    BOOL words = terms.count && raw.length > 1;
+    // Each branch returns at most `limit` rows in its own frecency order, so the final sort sees a few
+    // dozen rows however many match. A row that matches several ways keeps its best match. A whole
+    // title is found through the full-text index too, as a phrase starting the title, because titles
+    // have no index of their own.
+    NSMutableString *sql = [NSMutableString stringWithString:
+        @"SELECT h.url,h.title,h.visited,h.visits,min(m.tier) AS tier FROM (SELECT id,0 AS tier FROM history WHERE url=?1"];
+    if (words)
+        [sql appendString:@" UNION ALL SELECT f.rowid,0 FROM history_fts f JOIN history t ON t.id=f.rowid "
+                          @"WHERE history_fts MATCH ?6 AND t.title=?1"];
+    if (low.length)
+        [sql appendString:@" UNION ALL SELECT id,1 FROM (SELECT id FROM history WHERE address>=?2 AND address<?3 "
+                          @"ORDER BY rank DESC LIMIT ?5)"];
+    if (words)
+        [sql appendString:@" UNION ALL SELECT id,2 FROM (SELECT f.rowid AS id FROM history_fts f JOIN history t "
+                          @"ON t.id=f.rowid WHERE history_fts MATCH ?4 ORDER BY t.rank DESC LIMIT ?5)"];
+    [sql appendString:@") m JOIN history h ON h.id=m.id GROUP BY h.id ORDER BY tier,h.rank DESC LIMIT ?5"];
+    if (sqlite3_prepare_v2(_reader, sql.UTF8String, -1, &s, NULL) == SQLITE_OK) {
+        sqlite3_bind_text(s, 1, raw.UTF8String, -1, SQLITE_TRANSIENT);
+        if (low.length) {
+            sqlite3_bind_text(s, 2, low.bytes, (int)low.length, SQLITE_TRANSIENT);
+            sqlite3_bind_text(s, 3, high.bytes, (int)high.length, SQLITE_TRANSIENT);
+        }
+        if (words) {
+            sqlite3_bind_text(s, 4, [terms componentsJoinedByString:@" "].UTF8String, -1, SQLITE_TRANSIENT);
+            NSString *phrase = [NSString stringWithFormat:@"title : ^\"%@\"", [raw stringByReplacingOccurrencesOfString:@"\"" withString:@"\"\""]];
+            sqlite3_bind_text(s, 6, phrase.UTF8String, -1, SQLITE_TRANSIENT);
+        }
+        sqlite3_bind_int(s, 5, (int)limit);
+        NSArray *matches = @[LTHistoryMatchExact, LTHistoryMatchAddress, LTHistoryMatchWord];
+        while (sqlite3_step(s) == SQLITE_ROW) {
+            int tier = sqlite3_column_int(s, 4);
+            NSDictionary *row = HistoryRow(s, matches[MAX(0, MIN(2, tier))]);
+            if (row) [rows addObject:row];
+        }
+    }
+    sqlite3_finalize(s);
+    return rows;
+}
+// Writer only. Merges the full-text index so that words from deleted rows leave the file now rather
+// than at some later automatic merge.
+- (BOOL)purgeDeletedHistoryText:(NSError **)error {
+    if (Exec(_db, "INSERT INTO history_fts(history_fts) VALUES('optimize')")) return YES;
+    return StoreError(error, @"Lite deleted the history but could not finish removing it from the search index. Check disk space and try again.");
 }
 - (BOOL)refreshBackupsAfterHistoryDeletion:(LTStoreWrite *)write error:(NSError **)error {
     if (!_path) return YES;
@@ -584,6 +860,14 @@ static NSString *AvailableBackup(NSString *path) {
 - (LTStoreWrite *)clearHistoryWrite:(double)time {
     LTStoreWrite *write = [LTStoreWrite new];
     write->operation = ^BOOL(LTStoreWrite *current, NSError **error) {
+        // Clearing all of it skips the per-row trigger, which took over a second at 100,000 URLs,
+        // and rebuilds the full-text index from whatever is left. One transaction, so a failure
+        // leaves both the rows and the trigger as they were.
+        BOOL all = time <= 0;
+        if (all && !Exec(self->_db, "BEGIN IMMEDIATE; DROP TRIGGER IF EXISTS history_fts_delete;")) {
+            Exec(self->_db, "ROLLBACK");
+            return StoreError(error, @"Lite could not finish deleting history. Check disk space and try again; deletion is not complete.");
+        }
         sqlite3_stmt *s = NULL;
         int rc = sqlite3_prepare_v2(self->_db, "DELETE FROM history WHERE visited>=?", -1, &s, NULL);
         if (rc == SQLITE_OK) {
@@ -591,8 +875,13 @@ static NSString *AvailableBackup(NSString *path) {
             rc = sqlite3_step(s);
         }
         sqlite3_finalize(s);
+        if (all && (rc != SQLITE_DONE ||
+                    !Exec(self->_db, "INSERT INTO history_fts(history_fts) VALUES('rebuild');" HistoryDeleteTrigger "COMMIT;"))) {
+            Exec(self->_db, "ROLLBACK");
+            rc = SQLITE_ERROR;
+        }
         if (rc != SQLITE_DONE) return StoreError(error, @"Lite could not finish deleting history. Check disk space and try again; deletion is not complete.");
-        return [self refreshBackupsAfterHistoryDeletion:current error:error];
+        return [self purgeDeletedHistoryText:error] && [self refreshBackupsAfterHistoryDeletion:current error:error];
     };
     return write;
 }
@@ -608,7 +897,7 @@ static NSString *AvailableBackup(NSString *path) {
         }
         sqlite3_finalize(s);
         if (rc != SQLITE_DONE) return StoreError(error, @"Lite could not finish deleting this history entry. Check disk space and try again.");
-        return [self refreshBackupsAfterHistoryDeletion:current error:error];
+        return [self purgeDeletedHistoryText:error] && [self refreshBackupsAfterHistoryDeletion:current error:error];
     };
     return write;
 }

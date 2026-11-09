@@ -108,7 +108,7 @@
     NSString *query = [_field.stringValue
         stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     _results = LTCommandResults(query, _store.profile,
-                                [_store history:query limit:30 exact:query.length > 0], _openIDs);
+                                [_store searchHistory:query limit:30], _openIDs);
     [_table reloadData];
     if (_results.count)
         [_table selectRowIndexes:[NSIndexSet indexSetWithIndex:0] byExtendingSelection:NO];
