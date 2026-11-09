@@ -183,7 +183,6 @@
     LTLibraryPanel *_library;
     LTFaviconCache *_icons;
     LTPasswords *_passwords;
-    NSMutableArray<NSDictionary *> *_closed;
     LTDownloadHistory *_downloadHistory;
     NSMutableDictionary *_sessions;
     BOOL _deferPages, _confirmingClose, _closedWindow;
@@ -225,7 +224,6 @@
         if (store.privateMode) [self setDownloadHistory:[[LTDownloadHistory alloc] initWithPath:nil contextIdentifier:_context.contextIdentifier]];
         [_context updateBlockingPreferences:store.profile.settings[@"contentBlocking"]];
         _pageMap = [NSMutableDictionary new];
-        _closed = [NSMutableArray new];
         _sessions = [state[@"sessions"] mutableCopy] ?: [NSMutableDictionary new];
         _deferPages = [state[@"deferPages"] boolValue];
         _splitRatio = 0.5;
@@ -1041,22 +1039,11 @@
                   });
     } else if ([command isEqual:@"closeTab"])
         [self closeTabID:identifier];
-    else if ([command isEqual:@"reopenTab"]) {
-        NSDictionary *j = _closed.lastObject;
-        if (j) {
-            [_closed removeLastObject];
-            LTNode *n = [LTNode fromJSON:j];
-            n.parentID = @"";
-            n.spaceID = _spaceID;
-            [self commit:^(LTProfile *p) {
-              if ([p node:n.identifier])
-                  n.identifier = LTUUID();
-              [p.nodes addObject:n];
-            } then:^{
-              [self selectTab:n.identifier];
-            }];
-        }
-    } else if ([command isEqual:@"splitRight"] || [command isEqual:@"splitDown"]) {
+    else if ([command isEqual:@"reopenTab"])
+        [self reopenClosedTab];
+    else if ([command isEqual:@"reopenWindow"])
+        [NSNotificationCenter.defaultCenter postNotificationName:@"LTAppCommand" object:command];
+    else if ([command isEqual:@"splitRight"] || [command isEqual:@"splitDown"]) {
         if (!_activeID.length)
             return;
         _verticalSplit = [command isEqual:@"splitRight"];
@@ -1283,15 +1270,36 @@
     } else
         [self completeClose:identifier];
 }
+// Reopens the most recently closed tab into this window's Space. The list is shared by every regular
+// window and survives quitting; a private window has its own, which ends with the window.
+- (void)reopenClosedTab {
+    NSDictionary *entry = [_store.profile latestClosed:@"tab"];
+    if (!entry) {
+        NSBeep();
+        return;
+    }
+    NSString *entryID = entry[@"id"], *spaceID = _spaceID;
+    __block NSString *reopened = nil;
+    [self commit:^(LTProfile *p) {
+      // Another window, or a quick second press, may have taken it first.
+      if (![p space:spaceID]) return;
+      NSDictionary *taken = [p takeClosed:entryID];
+      if (!taken) return;
+      LTNode *n = [LTNode fromJSON:taken[@"node"]];
+      n.parentID = @"";
+      n.spaceID = spaceID;
+      if ([p node:n.identifier])
+          n.identifier = LTUUID();
+      [p.nodes addObject:n];
+      reopened = n.identifier;
+    } then:^{
+      if (reopened) [self selectTab:reopened];
+    }];
+}
 - (void)completeClose:(NSString *)identifier {
     LTNode *n = [_store.profile node:identifier];
     if (!n)
         return;
-    if ([n.kind isEqual:@"temporary"]) {
-        [_closed addObject:n.JSON];
-        if (_closed.count > 30)
-            [_closed removeObjectAtIndex:0];
-    }
     _pageMap[identifier].visible = NO;
     if ([_activeID isEqual:identifier]) {
         _activeID = _secondaryID.length ? _secondaryID : @"";
@@ -1300,9 +1308,14 @@
         _secondaryID = @"";
     BOOL temporary = [n.kind isEqual:@"temporary"];
     NSString *spaceID = _spaceID, *activeID = _activeID;
+    double closedAt = NSDate.date.timeIntervalSince1970;
     [self commit:^(LTProfile *p) {
-      if (temporary)
+      if (temporary) {
+          // Read on the writer, so the tab is recorded at the address its last queued save gave it.
+          LTNode *closed = [p node:identifier];
+          if (closed) [p noteClosedTab:closed time:closedAt];
           [p removeNode:identifier];
+      }
       if (!activeID.length || [p node:activeID])
           [p space:spaceID].selectedID = activeID;
     }];

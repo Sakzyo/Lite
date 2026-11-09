@@ -31,7 +31,8 @@ REQUIRED = ['nativeMainWindow', 'nativeAccessibleNavigation', 'nativeFixtureSeed
             'nativePrivateClearConfirmation', 'nativePrivateClearCancelPreservesSession',
             'nativePrivateClearClosesOldContext', 'nativePrivateClearFreshWindow',
             'nativePrivateClearStorageEmpty', 'nativePrivateClearPreservesRegularData',
-            'nativeRegularWindowClosure', 'nativeTabClosure', 'nativeAuthenticationDialog',
+            'nativeRegularWindowClosure', 'nativeTabClosure', 'nativeClosedTabRecorded',
+            'nativeClosedWindowRecorded', 'nativeReopenClosedTab', 'nativeReopenClosedWindow', 'nativeAuthenticationDialog',
             'nativeAuthenticationSucceeded', 'nativeCrashPromptDisclosure', 'nativeCrashPromptDefaultsToDecline']
 
 

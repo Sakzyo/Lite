@@ -557,12 +557,13 @@ static NSString *AvailableBackup(NSString *path) {
         NSError *backupError = nil;
         id quietObserver = batch.firstObject->quietObserver;
         for (LTStoreWrite *write in batch) {
+            // History deletion can change the profile too, when it forgets recently closed tabs.
+            BOOL profileWrite = write->operation == nil || write->committed;
             if (write->committed) {
                 if (latest) [retired addObject:latest];
                 latest = write->committed;
                 write->committed = nil;
             }
-            BOOL profileWrite = write->operation == nil;
             // A failed write redraws too: windows may be showing what they asked for, not what saved.
             if (profileWrite && (latest || (write->error && !write->waiting))) changed = YES;
             if (!profileWrite || write->error || write->quietObserver != quietObserver) quiet = NO;
@@ -912,6 +913,17 @@ static NSDictionary *HistoryRow(sqlite3_stmt *s, NSString *match) {
     if (Exec(_db, "INSERT INTO history_fts(history_fts) VALUES('optimize')")) return YES;
     return StoreError(error, @"Lite deleted the history but could not finish removing it from the search index. Check disk space and try again.");
 }
+// Writer only. Recently closed tabs and windows are browsing history too, so deleting history removes
+// them from the saved profile before the backups are refreshed.
+- (BOOL)forgetClosed:(BOOL (^)(LTProfile *profile))change write:(LTStoreWrite *)write error:(NSError **)error {
+    LTProfile *candidate = [_committed transactionCopy];
+    if (!change(candidate)) return YES;
+    if (![self persist:candidate error:error])
+        return StoreError(error, @"Lite deleted the history but could not remove it from recently closed tabs. Check disk space and try again; deletion is not complete.");
+    [candidate seal];
+    _committed = write->committed = candidate;
+    return YES;
+}
 - (BOOL)refreshBackupsAfterHistoryDeletion:(LTStoreWrite *)write error:(NSError **)error {
     if (!_path) return YES;
     // A later recovery must not resurrect deliberately deleted browsing history.
@@ -955,7 +967,9 @@ static NSDictionary *HistoryRow(sqlite3_stmt *s, NSString *match) {
             rc = SQLITE_ERROR;
         }
         if (rc != SQLITE_DONE) return StoreError(error, @"Lite could not finish deleting history. Check disk space and try again; deletion is not complete.");
-        return [self purgeDeletedHistoryText:error] && [self refreshBackupsAfterHistoryDeletion:current error:error];
+        return [self purgeDeletedHistoryText:error] &&
+               [self forgetClosed:^BOOL(LTProfile *profile) { return [profile forgetClosedSince:time]; } write:current error:error] &&
+               [self refreshBackupsAfterHistoryDeletion:current error:error];
     };
     return write;
 }
@@ -971,7 +985,9 @@ static NSDictionary *HistoryRow(sqlite3_stmt *s, NSString *match) {
         }
         sqlite3_finalize(s);
         if (rc != SQLITE_DONE) return StoreError(error, @"Lite could not finish deleting this history entry. Check disk space and try again.");
-        return [self purgeDeletedHistoryText:error] && [self refreshBackupsAfterHistoryDeletion:current error:error];
+        return [self purgeDeletedHistoryText:error] &&
+               [self forgetClosed:^BOOL(LTProfile *profile) { return [profile forgetClosedURL:url]; } write:current error:error] &&
+               [self refreshBackupsAfterHistoryDeletion:current error:error];
     };
     return write;
 }

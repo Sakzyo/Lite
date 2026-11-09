@@ -400,6 +400,34 @@ static LTNativeSmoke *runningNative;
         case 20: {
             if (_primary.alive) return;
             [self record:@"nativeTabClosure" passed:[_owner.store.profile node:_primary.identifier] == nil && _secondary.alive];
+            LTProfile *profile = _owner.store.profile;
+            [self record:@"nativeClosedTabRecorded" passed:[[profile latestClosed:@"tab"][@"node"][@"id"] isEqual:_primary.identifier]];
+            [self record:@"nativeClosedWindowRecorded" passed:[profile latestClosed:@"window"] != nil];
+            [_owner performCommand:@"reopenTab"]; [self advance:80 delay:.2]; break;
+        }
+        case 80: {
+            LTNode *reopened = [_owner.store.profile node:_primary.identifier];
+            if (!reopened) return;
+            [self record:@"nativeReopenClosedTab" passed:[reopened.kind isEqual:@"temporary"] &&
+                ![[_owner.store.profile latestClosed:@"tab"][@"node"][@"id"] isEqual:_primary.identifier]];
+            [_owner performCommand:@"reopenWindow"]; [self advance:81 delay:.2]; break;
+        }
+        case 81: {
+            LTWindow *reopened = [self additionalWindow:NO];
+            if (!reopened) return;
+            [self record:@"nativeReopenClosedWindow" passed:reopened != _other && reopened.store == _owner.store &&
+                ![_owner.store.profile latestClosed:@"window"]];
+            _other = reopened;
+            [_other.window performClose:nil]; [self advance:82 delay:.2]; break;
+        }
+        case 82: {
+            if (_other.window.attachedSheet) {
+                NSButton *close = Button(_other.window.attachedSheet, @"Close All Pages");
+                if (close) { [close performClick:nil]; [self advance:82 delay:.2]; }
+                return;
+            }
+            if (_other.window.visible) return;
+            [_owner.window makeKeyAndOrderFront:nil];
             [self advance:90 delay:0];
             [_owner openURL:@"http://127.0.0.1:18743/auth-basic" then:^{
                 self.authPage = [self.owner activePage]; [self advance:21 delay:.2];

@@ -253,7 +253,7 @@ static std::string extensionSwitch;
     w.didClose = ^(LTWindow *closed) {
       [weak.windows removeObject:closed];
       if (!weak.quitting)
-          [weak saveWindows];
+          [weak saveWindowsClosing:closed];
     };
     w.promote = ^(NSString *url, NSString *spaceID) {
       LTWindow *target = nil;
@@ -290,6 +290,10 @@ static std::string extensionSwitch;
         [self newWindow:NO mini:NO state:nil];
     else if ([c isEqual:@"newPrivate"])
         [self newWindow:YES mini:NO state:nil];
+    else if ([c isEqual:@"reopenWindow"] ||
+             ([c isEqual:@"reopenTab"] && !_windows.count && [[_store.profile latestClosed:nil][@"type"] isEqual:@"window"]))
+        // With no window open, the last thing closed is usually that window, so ⇧⌘T brings it back.
+        [self reopenClosedWindow];
     else {
         LTWindow *w = [self current];
         if (!w)
@@ -308,8 +312,35 @@ static std::string extensionSwitch;
     }
     else if ([n.object isEqual:@"newPrivate"])
         [self newWindow:YES mini:NO state:nil];
+    else if ([n.object isEqual:@"reopenWindow"])
+        [self reopenClosedWindow];
     else
         [self newWindow:NO mini:NO state:nil];
+}
+// Reopens the most recently closed regular window where it was, showing the Space and tabs it had.
+- (void)reopenClosedWindow {
+    NSDictionary *entry = [_store.profile latestClosed:@"window"];
+    if (!entry) {
+        NSBeep();
+        return;
+    }
+    NSString *entryID = entry[@"id"];
+    NSDictionary *state = entry[@"state"];
+    __block BOOL taken = NO;
+    __weak typeof(self) weak = self;
+    [_store commit:^(LTProfile *p) {
+      taken = [p takeClosed:entryID] != nil;
+    } completion:^(NSError *error) {
+      if (error) {
+          [weak.store reportWriteFailure:error];
+          return;
+      }
+      // A quick second press may find this entry already gone.
+      if (!taken || weak.quitting) return;
+      LTWindow *w = [weak newWindow:NO mini:NO state:state];
+      [w.window makeKeyAndOrderFront:nil];
+      [weak saveWindows];
+    }];
 }
 - (NSMutableArray *)windowStates {
     NSMutableArray *states = [NSMutableArray new];
@@ -319,12 +350,20 @@ static std::string extensionSwitch;
     return states;
 }
 - (void)saveWindows {
+    [self saveWindowsClosing:nil];
+}
+// `closed` is a window the user just closed. A regular one joins the recently closed list; mini and
+// private windows, and windows that close because Lite quits or restarts, do not.
+- (void)saveWindowsClosing:(LTWindow *)closed {
     if (!_store || _quitting)
         return;
     NSMutableArray *states = [self windowStates];
+    NSDictionary *closedState = closed && !closed.mini && !closed.store.privateMode ? closed.restorationState : nil;
+    double closedAt = NSDate.date.timeIntervalSince1970;
     // Window layout saves in the background, so it logs instead of interrupting with an alert.
     [_store commit:^(LTProfile *p) {
       p.windows = states;
+      if (closedState) [p noteClosedWindow:closedState time:closedAt];
     } completion:^(NSError *error) {
       if (error) os_log_error(OS_LOG_DEFAULT, "Lite could not save window restoration metadata");
     }];
@@ -492,7 +531,8 @@ static std::string extensionSwitch;
         @[
             @"File", @[ @"New Tab", @"newTab", @"t" ], @[ @"New Window", @"newWindow", @"n" ],
             @[ @"New Private Window", @"newPrivate", @"N" ],
-            @[ @"Reopen Closed Tab", @"reopenTab", @"T" ], @[ @"Close Tab", @"closeTab", @"w" ],
+            @[ @"Reopen Closed Tab", @"reopenTab", @"T" ], @[ @"Reopen Closed Window", @"reopenWindow", @"" ],
+            @[ @"Close Tab", @"closeTab", @"w" ],
             @[ @"-" ], @[ @"New Space…", @"newSpace", @"" ], @[ @"New Folder…", @"newFolder", @"" ],
             @[ @"New GitHub Live Folder…", @"githubFolder", @"" ],
             @[ @"-" ], @[ @"Save Page…", @"save", @"s" ], @[ @"Print…", @"print", @"p" ]
