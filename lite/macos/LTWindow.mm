@@ -832,9 +832,15 @@
             }];
         }
     }
-    NSString *visit = [page.url stringByAppendingString:page.title];
-    if (!page.loading && !page.errorText.length && ![_visitKeys[page.identifier] isEqual:visit]) {
-        [_store recordVisit:page.url title:page.title];
+    // A new URL in a tab is a visit. The same URL with a new title, such as an unread count in a
+    // mail page, only renames it, so it does not inflate the URL's frecency.
+    NSArray *visit = @[ page.url ?: @"", page.title ?: @"" ];
+    NSArray *last = _visitKeys[page.identifier];
+    if (!page.loading && !page.errorText.length && ![last isEqual:visit]) {
+        if ([last.firstObject isEqual:visit.firstObject])
+            [_store updateVisitTitle:page.title url:page.url];
+        else
+            [_store recordVisit:page.url title:page.title];
         _visitKeys[page.identifier] = visit;
     }
     [_sidebar updateItem:page.identifier];

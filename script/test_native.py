@@ -21,7 +21,7 @@ REQUIRED = ['nativeMainWindow', 'nativeAccessibleNavigation', 'nativeFixtureSeed
             'nativeSplitPrimaryFocused', 'nativeSplitFocusForward', 'nativeSplitFocusBackward',
             'nativeSidebarCollapsed', 'nativeFullScreenChrome', 'nativeFullScreenRestored',
             'nativeSidebarRevealed', 'nativeSidebarFollowsSaves', 'nativeCommandShortcutAndNames',
-            'nativeCommandArrowNavigation', 'nativeCommandEscape', 'nativeSettingsAccessibleControls',
+            'nativeCommandArrowNavigation', 'nativeCommandHistoryPrefix', 'nativeCommandEscape', 'nativeSettingsAccessibleControls',
             'nativeDownloadsAccessibleControls', 'nativeWindowCloseDialog',
             'nativeWindowCancelPreservesEveryPage', 'nativeBeforeUnloadDialog',
             'nativeBeforeUnloadCancelPreservesTab', 'nativeCanceledPageStateIntact',

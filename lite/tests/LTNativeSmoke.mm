@@ -277,6 +277,20 @@ static LTNativeSmoke *runningNative;
             BOOL down = table.selectedRow == row + 1;
             Key(_panel, @"\uf700", 126, 0);
             [self record:@"nativeCommandArrowNavigation" passed:down && table.selectedRow == row];
+            // The start of a visited host leads the results ahead of web search, from the real store.
+            BOOL history = NO;
+            if ([search isKindOfClass:NSSearchField.class] && table.numberOfRows > 1) {
+                NSSearchField *field = (NSSearchField *)search;
+                field.stringValue = @"127";
+                [field.delegate controlTextDidChange:[NSNotification notificationWithName:NSControlTextDidChangeNotification object:field]];
+                NSMutableArray *first = [NSMutableArray new], *second = [NSMutableArray new];
+                for (NSInteger r = 0; r < 2; r++)
+                    for (NSView *view in Views([table viewAtColumn:0 row:r makeIfNecessary:YES]))
+                        if ([view isKindOfClass:NSTextField.class]) [r ? second : first addObject:((NSTextField *)view).stringValue];
+                history = table.selectedRow == 0 && [[first componentsJoinedByString:@" "] containsString:@"http://127.0.0.1:18743/"] &&
+                    [[second componentsJoinedByString:@" "] containsString:@"Search for"];
+            }
+            [self record:@"nativeCommandHistoryPrefix" passed:history];
             Key(_panel, @"\x1b", 53, 0);
             [self advance:8 delay:.2]; break;
         }

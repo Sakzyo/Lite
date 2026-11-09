@@ -164,6 +164,73 @@ python3 script/measure_native.py --nodes 10000 --duration 2 --save-probe --outpu
 The benchmark also compiles against the earlier synchronous store. The "before" app figures
 came from the starting commit with the same probe added, using its synchronous API.
 
+## History search
+
+The Command Bar queries history on the main thread for every keystroke, so a query has to fit
+in one frame: 16.7 ms at 60 Hz. `LiteHistoryTests` seeds 100,000 URLs, the retention cap, and
+fails if the median of any of 14 typed queries, plus ranking the results, goes over that.
+Measured on 9 November 2026 on an Apple M4 with 10 cores and 32 GiB RAM, macOS 26.5.2,
+Release build, 25 warm runs per query. Raw results:
+[arm64 JSON](benchmarks/2026-11-09-history-search-arm64.json).
+
+| Typed | Results | Median | Slowest run |
+| --- | ---: | ---: | ---: |
+| `g` | 30 | 0.79 ms | 0.94 ms |
+| `gi` | 30 | 0.60 ms | 0.64 ms |
+| `gith` | 30 | 0.95 ms | 1.07 ms |
+| `news` | 30 | 0.51 ms | 0.54 ms |
+| `the` | 30 | 1.25 ms | 1.33 ms |
+| `swift g` | 30 | 0.36 ms | 0.38 ms |
+| `swift guide rel` | 30 | 2.07 ms | 2.11 ms |
+| `pull request` | 30 | 1.27 ms | 1.33 ms |
+| `zzzz` | 0 | 0.72 ms | 0.74 ms |
+
+The rows are synthetic: hosts, paths and titles drawn from a fixed vocabulary of about 30
+words, so a common word starts a word in about one row in six, and short prefixes match far
+more rows than most real histories would. The first query plan took 47 ms for `g` in an
+early Python harness on the same data. Four choices got there:
+
+- **Common words scan frecent rows first.** FTS5 has to visit every row a word matches before
+  it can rank them, and reading the index for `the` alone took 2.4 ms on this machine. So a
+  word search first scans the 2,000 most frecent rows in rank order, checking each row's
+  `words`. If 30 of them match, they are exactly the 30 best; only rarer words, which the
+  index finds cheaply, go to FTS5. The two agree because both read the same `words` column.
+- Each kind of match returns at most 30 rows in frecency order before they are merged, so the
+  final sort sees a few dozen rows rather than every match.
+- The address index includes `rank`, so an address match never reads the table.
+- The read-only connection maps the database file instead of copying pages into SQLite's
+  8 MB cache, which matters once history is larger than that.
+
+**Intel.** The first version of this change took up to 21.5 ms for `the` on the hosted
+`macos-15-intel` runner, which was 5 to 6 times slower than the M4 for every query, and
+failed this check there. Scanning frecent rows first brought the slowest query on the M4 from
+4.4 ms to 2.1 ms.
+
+The writer's costs at the cap, for the record: recording a visit 0.1 ms until durable, a
+retention pass that has nothing to delete 0.9 ms, deleting one URL 162 ms, nearly all of it
+replacing the recovery backup, and clearing all history 347 ms. Clearing all of it skips the
+per-row index trigger and rebuilds the index instead; with the trigger it took 1.3 s in the
+Python harness, and Lite clears all history on the main thread at launch after website data
+was cleared.
+
+### What is still slow
+
+- **The database is larger.** 100,000 URLs take 53 MB, against 20 MB for the version 1 table
+  of the same rows. The address and words columns, the address index and the full-text index
+  account for the difference. The recovery backup copies the whole database, at most once a
+  minute, on the writer.
+- **The History panel's search** still scans every row: 50 ms at 100,000 URLs for text that
+  matches nothing.
+- **Migrating** a version 1 history computes each row's address and words once, on the main
+  thread while the profile opens. This was not measured at 100,000 rows.
+
+### Reproduce
+
+```sh
+cmake --build .build --target LiteHistoryTests
+.build/LiteHistoryTests --measure
+```
+
 ## Current readiness measurements
 
 The [1 October 2026 record](readiness-2026-10-01.md) contains the current baseline,
