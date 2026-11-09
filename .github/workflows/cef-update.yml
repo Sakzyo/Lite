@@ -34,12 +34,21 @@ jobs:
             echo "A pull request already exists for $VERSION."
             exit 0
           fi
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git switch -c "$BRANCH"
-          git add script/fetch_cef.py
-          git commit -m "Update CEF to $VERSION"
-          git push origin "$BRANCH"
-          gh pr create --base "$GITHUB_REF_NAME" --head "$BRANCH" --title "Update CEF to $VERSION" --body "Automated pin update from the [CEF release index](https://cef-builds.spotifycdn.com/index.html). Review the upstream changes and the Release verification results before merging. Follow [Routine engine and emergency security release](docs/updates-and-distribution.md#routine-engine-and-emergency-security-release) to ship it."
+          # A run that pushed the branch but could not open the pull request leaves the
+          # branch behind. Reuse it: pushing a second commit to it would be rejected.
+          if git ls-remote --exit-code --heads origin "$BRANCH" > /dev/null; then
+            echo "Reusing the existing $BRANCH branch."
+          else
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git switch -c "$BRANCH"
+            git add script/fetch_cef.py
+            git commit -m "Update CEF to $VERSION"
+            git push origin "$BRANCH"
+          fi
+          if ! gh pr create --base "$GITHUB_REF_NAME" --head "$BRANCH" --title "Update CEF to $VERSION" --body "Automated pin update from the [CEF release index](https://cef-builds.spotifycdn.com/index.html). Review the upstream changes and the Release verification results before merging. Follow [Routine engine and emergency security release](docs/updates-and-distribution.md#routine-engine-and-emergency-security-release) to ship it."; then
+            echo "::error::Could not open the pull request. Check that 'Allow GitHub Actions to create and approve pull requests' is on under Settings > Actions > General. The $BRANCH branch is kept, and the next run reuses it."
+            exit 1
+          fi
           # Events raised with this token do not start pull_request workflows.
           gh workflow run release-verification.yml --ref "$BRANCH"

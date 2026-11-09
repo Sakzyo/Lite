@@ -2,6 +2,7 @@
 """Disposable SDK transaction tests and real Sparkle Ed25519 signature regressions."""
 import base64
 import errno
+import hashlib
 import io
 import os
 import pathlib
@@ -11,6 +12,7 @@ import subprocess
 import tarfile
 import tempfile
 import unittest
+import urllib.error
 from unittest import mock
 import fetch_cef
 import update_cef
@@ -91,6 +93,36 @@ class SDKTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'checksum'):
                 download('https://fixture.invalid/archive', self.archive, '0' * 40, 'sha1')
         self.assertEqual(digest(self.archive, 'sha1'), self.expected)
+
+    def server_error(self, code):
+        return urllib.error.HTTPError('https://fixture.invalid/archive', code, 'fixture', {}, None)
+
+    def test_transient_server_error_is_retried(self):
+        archive = self.directory / 'retried.zip'
+        expected = hashlib.sha256(b'payload').hexdigest()
+        with mock.patch('urllib.request.urlopen', side_effect=[self.server_error(504), io.BytesIO(b'payload')]) as urlopen, \
+                mock.patch('time.sleep') as sleep, mock.patch('sys.stderr', io.StringIO()):
+            download('https://fixture.invalid/archive', archive, expected)
+        self.assertEqual(urlopen.call_count, 2)
+        sleep.assert_called_once_with(2)
+        self.assertEqual(archive.read_bytes(), b'payload')
+
+    def test_persistent_server_error_stops_after_bounded_retries(self):
+        archive = self.directory / 'unavailable.zip'
+        with mock.patch('urllib.request.urlopen', side_effect=self.server_error(503)) as urlopen, \
+                mock.patch('time.sleep') as sleep, mock.patch('sys.stderr', io.StringIO()):
+            with self.assertRaises(urllib.error.HTTPError):
+                download('https://fixture.invalid/archive', archive, '0' * 64)
+        self.assertEqual(urlopen.call_count, 4)
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [2, 4, 8])
+        self.assertFalse(archive.exists())
+
+    def test_client_error_is_not_retried(self):
+        with mock.patch('urllib.request.urlopen', side_effect=self.server_error(404)) as urlopen, mock.patch('time.sleep') as sleep:
+            with self.assertRaises(urllib.error.HTTPError):
+                download('https://fixture.invalid/archive', self.directory / 'missing.zip', '0' * 64)
+        self.assertEqual(urlopen.call_count, 1)
+        sleep.assert_not_called()
 
     def test_interrupted_replacement_recovers_old_installation(self):
         self.sdk.mkdir()

@@ -129,7 +129,10 @@ a release replaced before the next check gets no pull request of its own.
 
 GitHub runs scheduled workflows only from the default branch and disables them after
 60 days without repository activity. The job also needs **Allow GitHub Actions to
-create and approve pull requests** under the repository's Actions settings.
+create and approve pull requests** under the repository's Actions settings. Without it
+the job pushes the branch, fails to open the pull request and says which setting to turn
+on. Later runs reuse that branch instead of pushing to it again, so turning the setting on
+is enough for the next run to open the pull request.
 
 1. Review upstream CEF/Chromium and Sparkle security releases. Update exact SDK pins
    and archive digests from upstream; retain the old released bundle for testing.
@@ -177,12 +180,13 @@ release bundle has no test code and ignores test flags, stages `dist/LiteTest.ap
 runs the separate Chromium suite, then the real native-window suite against that bundle. Output is retained under `test-results/release/` and
 `test-results/engine.json` and `test-results/native.json`. `--measure` also runs the disposable native-profile
 measurement harness; timing variation is reported, not automatically failed.
-`.github/workflows/release-verification.yml` runs this entry point on macOS 14
-arm64 and macOS 15 Intel. The workflow is checked in but has not run on GitHub as
-part of this local session. Native VoiceOver/Full Keyboard Access and real signed
+`.github/workflows/release-verification.yml` runs this entry point on macOS 15
+arm64 and macOS 15 Intel. It ran on macOS 14 arm64 until GitHub stopped starting
+`macos-14` jobs in November 2026, so no hosted runner now covers the declared macOS
+14.0 minimum. Native VoiceOver/Full Keyboard Access and real signed
 upgrade acceptance are separate gates, not implied by CI success.
 
-Current focused checks: 20 native updater policy/parser checks and 18 Python tests pass.
+Current focused checks: 20 native updater policy/parser checks and 21 Python tests pass.
 The latter include real Sparkle signature verification of synthetic bytes and
 signed feed XML, tamper rejection, correct/mismatched SDKs, archive corruption,
 interrupted download/replacement, unsafe archive paths, simulated ENOSPC, and
