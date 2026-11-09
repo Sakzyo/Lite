@@ -6,8 +6,15 @@ import json
 import os
 import pathlib
 import shutil
+import sys
 import tarfile
+import time
+import urllib.error
 import urllib.request
+
+# Server errors that usually clear on their own, such as GitHub release downloads
+# answering 504 Gateway Time-out on hosted runners.
+TRANSIENT_HTTP_CODES = {429, 500, 502, 503, 504}
 
 
 def sync_directory(directory):
@@ -23,12 +30,26 @@ def digest(path, algorithm='sha256'):
         return hashlib.file_digest(source, algorithm).hexdigest()
 
 
+def open_url(url, attempts=4, delay=2):
+    """Opens url, retrying transient server errors with backoff. Other errors raise at once."""
+    for attempt in range(attempts):
+        try:
+            return urllib.request.urlopen(url, timeout=60)
+        except urllib.error.HTTPError as error:
+            if error.code not in TRANSIENT_HTTP_CODES or attempt == attempts - 1:
+                raise
+            error.close()
+            wait = delay * 2 ** attempt
+            print(f'{url} answered HTTP {error.code}; retrying in {wait} s.', file=sys.stderr)
+            time.sleep(wait)
+
+
 def download(url, archive, expected, algorithm='sha256'):
     if archive.exists() and digest(archive, algorithm) == expected:
         return
     partial = archive.with_name(archive.name + '.partial')
     try:
-        with urllib.request.urlopen(url, timeout=60) as response, partial.open('wb') as target:
+        with open_url(url) as response, partial.open('wb') as target:
             shutil.copyfileobj(response, target, 1024 * 1024)
             target.flush()
             os.fsync(target.fileno())
