@@ -186,7 +186,7 @@ arm64 and macOS 15 Intel. It ran on macOS 14 arm64 until GitHub stopped starting
 14.0 minimum. Native VoiceOver/Full Keyboard Access and real signed
 upgrade acceptance are separate gates, not implied by CI success.
 
-Current focused checks: 20 native updater policy/parser checks and 18 Python tests pass.
+Current focused checks: 20 native updater policy/parser checks and 21 Python tests pass.
 The latter include real Sparkle signature verification of synthetic bytes and
 signed feed XML, tamper rejection, correct/mismatched SDKs, archive corruption,
 interrupted download/replacement, unsafe archive paths, simulated ENOSPC, and
