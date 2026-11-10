@@ -16,6 +16,7 @@
 #import "../model/LTExtensions.h"
 #import "../model/LTWebsiteData.h"
 #import "../model/LTCrashReports.h"
+#import "../model/LTFilterUpdates.h"
 #include "include/cef_app.h"
 #include "include/cef_application_mac.h"
 #include "include/cef_command_line.h"
@@ -53,6 +54,7 @@ static std::string extensionSwitch;
 @property LTUpdater *updater;
 @property LTDownloadHistory *downloads;
 @property LTExtensionsPanel *extensionsPanel;
+@property NSTimer *filterTimer;
 - (void)start;
 - (void)quit;
 @end
@@ -171,6 +173,7 @@ static std::string extensionSwitch;
         return identifiers;
     };
     [_github start];
+    [self scheduleFilterChecks];
     _performance.pages = ^NSArray * {
       NSMutableArray *p = [NSMutableArray new];
       for (LTWindow *w in weak.windows)
@@ -207,6 +210,31 @@ static std::string extensionSwitch;
     if (testProfile && [NSProcessInfo.processInfo.arguments containsObject:@"--lite-save-probe"])
         LTRunSaveProbe(_windows.firstObject, [profileRoot stringByAppendingPathComponent:@"save-probe.json"]);
 #endif
+}
+// Filter updates are checked 30 seconds after launch and then hourly, but the feed is asked at most
+// once a day, or an hour after a failed check, unless the user asks from the Content Blocking sheet.
+- (void)scheduleFilterChecks {
+    if (!LTFilterUpdater.shared) return;
+    double delay = 30;
+#ifdef LITE_TEST_BUILD
+    if (testProfile) {
+        delay = 1;
+        LTFilterUpdater.shared.retryInterval = 5;
+        LTFilterUpdater.shared.requestTimeout = 10;
+    }
+#endif
+    __weak typeof(self) weak = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        [weak checkFiltersIfDue];
+    });
+    _filterTimer = [NSTimer scheduledTimerWithTimeInterval:MIN(3600, LTFilterUpdater.shared.retryInterval) repeats:YES block:^(NSTimer *timer) {
+        [weak checkFiltersIfDue];
+    }];
+}
+- (void)checkFiltersIfDue {
+    NSDictionary *blocking = _store.profile.settings[@"contentBlocking"];
+    if (_quitting || ([blocking isKindOfClass:NSDictionary.class] && [blocking[@"updatesDisabled"] boolValue])) return;
+    if ([LTFilterUpdater.shared isDue:NSDate.date.timeIntervalSince1970]) [LTFilterUpdater.shared updateFilters];
 }
 - (void)offerCrashReports {
     NSArray *reports = crashReports.reports;
@@ -715,6 +743,22 @@ int main(int argc, char **argv) {
             if ([arg hasPrefix:@"--lite-crash-upload="]) crashUpload = LTCrashUploadURL([arg substringFromIndex:20]);
 #endif
         crashReports = [[LTCrashReports alloc] initWithProfilePath:base uploadURL:crashUpload];
+        NSString *filterFeed = bundle[@"LTFilterFeedURL"], *filterKey = bundle[@"LTFilterPublicKey"];
+#ifdef LITE_TEST_BUILD
+        for (NSString *arg in NSProcessInfo.processInfo.arguments) {
+            if ([arg hasPrefix:@"--lite-filter-feed="]) filterFeed = [arg substringFromIndex:19];
+            if ([arg hasPrefix:@"--lite-filter-key="]) filterKey = [arg substringFromIndex:18];
+        }
+#endif
+        if (filterFeed.length && filterKey.length) {
+            // A newer verified set installed by an earlier run replaces the bundled filters before
+            // the engine compiles them, so launch compiles only one set.
+            LTFilterUpdater.shared = [[LTFilterUpdater alloc] initWithFeed:filterFeed publicKey:filterKey
+                                                                directory:[base stringByAppendingPathComponent:@"Filters"]];
+            LTContentBlocker *installed =
+                [LTFilterUpdater.shared installedBlockerNewerThan:LTFilterSerial(LTContentBlocker.bundledDirectory)];
+            if (installed) [LTContentBlocker install:installed];
+        }
         NSString *version = bundle[@"CFBundleShortVersionString"] ?: @"";
         crashReports.uploadFields = @{@"product": @"Lite", @"version": version,
                                       @"sentry[release]": [@"lite@" stringByAppendingString:version]};

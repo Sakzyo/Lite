@@ -49,6 +49,12 @@ python3 script/package.py --production
 `LITE_CRASH_UPLOAD_URL` is optional. Without it the release has no crash upload. See
 [crash reporting](crash-reporting.md).
 
+`LITE_FILTER_FEED_URL` and `LITE_FILTER_PUBLIC_KEY` are optional, and must be set together.
+With them the release checks an HTTPS feed for signed content-blocking filters; without them
+it uses only the filters it was built with. The key is the P-256 public key printed by
+`script/sign_filters.py key`, which is a different key from the Ed25519 key that signs app
+updates. See [filter updates](content-blocking.md#filter-updates).
+
 The identity is selected automatically only when exactly one valid Developer ID
 Application identity is available. `LITE_NOTARY_PROFILE` names credentials already
 configured with `xcrun notarytool store-credentials`; the script never creates an

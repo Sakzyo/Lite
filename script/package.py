@@ -76,6 +76,28 @@ def release_configuration(info, feed, key, build):
     info.update(SUFeedURL=feed, SUPublicEDKey=key, LTUpdatesEnabled=True, CFBundleVersion=build)
 
 
+P256_SPKI_HEADER = bytes.fromhex('3059301306072a8648ce3d020106082a8648ce3d030107034200')
+
+
+def filter_configuration(info, feed, key, production=False):
+    """Filter updates are optional: a build without both settings never checks for them."""
+    if not feed and not key:
+        return
+    url = urllib.parse.urlsplit(feed or '')
+    local = url.hostname in ('127.0.0.1', 'localhost', '::1')
+    try:
+        decoded = base64.b64decode(key or '', validate=True)
+    except ValueError:
+        decoded = b''
+    point = decoded[len(P256_SPKI_HEADER):] if decoded.startswith(P256_SPKI_HEADER) else decoded
+    if (not url.hostname or url.username or url.password or url.query or url.fragment or
+            not (url.scheme == 'https' or (url.scheme == 'http' and local and not production)) or
+            len(point) != 65 or point[0] != 4):
+        raise ValueError('Filter updates need both LITE_FILTER_FEED_URL (HTTPS) and LITE_FILTER_PUBLIC_KEY '
+                         '(the P-256 key printed by script/sign_filters.py key)')
+    info.update(LTFilterFeedURL=feed, LTFilterPublicKey=key)
+
+
 def crash_configuration(info, value):
     """The consent dialog names Sentry, so a release must not send reports anywhere else."""
     if not value:
@@ -143,6 +165,7 @@ def package(production=False, output=None, test=False):
         crash_configuration(info, os.environ.get('LITE_CRASH_UPLOAD_URL'))
         if not os.environ.get('LITE_NOTARY_PROFILE'):
             raise ValueError('Production requires LITE_NOTARY_PROFILE: an existing notarytool Keychain credential profile')
+    filter_configuration(info, os.environ.get('LITE_FILTER_FEED_URL'), os.environ.get('LITE_FILTER_PUBLIC_KEY'), production)
     destination.parent.mkdir(parents=True, exist_ok=True)
     with installation_lock(destination.parent, 'package'), tempfile.TemporaryDirectory(prefix='.lite-package-', dir=destination.parent) as temporary:
         app = pathlib.Path(temporary) / 'Lite.app'

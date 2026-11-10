@@ -58,8 +58,7 @@ site if it breaks. Cosmetic styles are page-level CSS, not privileged browser us
 styles; pages can override/remove them, and closed shadow trees are not filtered.
 
 There is no element picker, user-authored filter editor, regional/annoyance-list
-selector, dedicated popup-filter list, strict-block interstitial, or automatic
-filter updater. Lite's existing gesture-based popup handling remains in place.
+selector, dedicated popup-filter list, or strict-block interstitial. Lite's existing gesture-based popup handling remains in place.
 WebSocket handshakes are not intercepted by this CEF resource hook. No claim is
 made to remove all advertisements. YouTube can change its player format or deliver
 ads within the video stream itself; these filters do not edit media or guarantee
@@ -94,10 +93,92 @@ python3 script/test_browser.py
 ```
 
 The converter reads JSON literals without evaluating upstream scripts. Review
-coverage changes and update the pinned-count regression intentionally. Builds and
-normal browsing do not fetch lists or contact a filtering service.
+coverage changes and update the pinned-count regression intentionally. The import
+stamps `provenance.json` with a `serial`, the time it ran as `YYYYMMDDHHMM` in UTC.
+Builds never fetch upstream lists or run upstream code; a build with a filter feed
+fetches only sets you have signed, as described below.
+
+## Filter updates
+
+A release can take new filters without a new version of Lite. The maintainer signs a
+filter set and puts it on a web server; Lite checks that server and installs a set only
+if it verifies. Updates are off in any build packaged without both
+`LITE_FILTER_FEED_URL` and `LITE_FILTER_PUBLIC_KEY`, including every local and test
+build, so those builds never contact a feed.
+
+**Publishing.** `script/sign_filters.py` does each step:
+
+```sh
+python3 script/sign_filters.py key ~/secure/lite-filters.pem   # once; prints LITE_FILTER_PUBLIC_KEY
+python3 script/sign_filters.py serial                          # after changing any filter file
+python3 script/sign_filters.py publish /path/to/feed --key ~/secure/lite-filters.pem
+```
+
+The key is a P-256 key created by `openssl`, readable only by its owner, and the
+script refuses to overwrite one, because a build trusts only the key it was packaged
+with. Losing it means filter updates stop until a release ships a new public key.
+`publish` refuses a set whose files differ from `provenance.json`, or whose serial is
+not newer than the one already in the feed directory. It writes:
+
+| Path | Holds |
+| --- | --- |
+| `<serial>/` | The seven files Lite loads, plus `upstream-source.tar.xz` and the PSL for the GPL |
+| `filters.json.sig` | Base64 ECDSA P-256 SHA-256 signature of `filters.json`'s exact bytes |
+| `filters.json` | `format`, `version` 1, `serial`, `created`, and each file's size and SHA-256 |
+
+Upload them in that order so a client never reads a manifest whose files are missing.
+Any static HTTPS host works. Choosing it is a release decision, not yet made.
+
+**Checking.** Lite looks 30 seconds after launch and then hourly, but asks the feed only
+if 24 hours have passed since its last check, an hour since a check that failed, or when
+**Check Now** is pressed in the Content Blocking sheet. It downloads the files one at a
+time, so a check holds at most one connection to the feed host. **Update filters automatically** there turns scheduled checks
+off; it is saved in the regular profile and cannot be changed from a private window.
+Requests are GETs with no cookies, credentials or cache, `Lite-Browser` as the user
+agent, and no redirects. The feed host learns the Mac's IP address and that it runs Lite,
+and nothing else about the user.
+
+**Verifying.** Lite installs a set only when all of these hold:
+
+- `filters.json.sig` is the build's key's signature of `filters.json`. Both have size
+  limits, 64 KB and 1 KB.
+- The manifest's `format` is `lite-filters` and its `version` is one this build reads. A
+  newer version is reported as needing a newer Lite.
+- It lists exactly the seven files Lite loads, each at most 32 MB and together at most
+  64 MB, and each downloaded file has the listed size and SHA-256.
+- `provenance.json` carries the manifest's serial.
+- The serial is larger than that of the filters in use, so a feed, or anyone replaying an
+  old signed manifest, cannot roll filters back.
+- The set compiles.
+
+It is written to a staging folder under `Filters` in the profile, compiled, moved into
+place and named in `Filters/current`; then older sets are deleted. Any failure leaves the
+filters in use and on disk unchanged, and the sheet shows the reason.
+
+**Applying.** The new rules replace the ones in use at once
+(`+[LTContentBlocker install:]`). Every network request asks for the current rules, so
+the next request uses them; open pages keep the cosmetic styles they already applied
+until they reload. At launch, Lite verifies the installed set again (signature, sizes and
+hashes) and uses it only if it is newer than the filters bundled with this version of
+Lite. Otherwise it deletes the set, so an app update with newer bundled filters wins,
+and a damaged set is replaced at the next check.
+
+The private key is the trust anchor: anyone holding it can change what Lite blocks for
+every user of that build. It never enters the repository or the app, and the script
+never prints it.
 
 ## Verification
+
+`LiteFilterUpdateTests` uses real P-256 keys and serves feeds from an in-process
+stand-in for the network. It covers key and feed-address parsing, each manifest
+refusal, installing a set, the requests sent, refusing older sets, mismatched or
+missing files, provenance mismatch, a set that does not compile, a redirect, a check
+already running, launch loading and deletion of damaged or outdated sets, and
+replacing the rules in use while other threads read them. Making the updater follow
+redirects or skip the hash check made the matching checks fail. The native suite
+signs a set with one extra rule using a key made for the run and serves it over
+loopback; the running app must install it without relaunching, block the new rule,
+send nine requests without cookies, and show the sheet's controls.
 
 `LiteBlockingTests` exercises real upstream rules, URL-boundary negatives, allow
 precedence, method/type/domain restrictions, PSL cases, cosmetic exceptions,

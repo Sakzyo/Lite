@@ -1,5 +1,6 @@
 #import "LTContentBlocker.h"
 #include <algorithm>
+#include <os/lock.h>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -123,14 +124,35 @@ struct Rule {
     NSCache<NSString *, NSString *> *_scripts;
     NSString *_youtubeScript;
 }
+static LTContentBlocker *currentBlocker;
+static os_unfair_lock blockerLock = OS_UNFAIR_LOCK_INIT;
++ (NSString *)bundledDirectory {
+    return [NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:@"ContentBlocking"];
+}
 + (instancetype)shared {
-    static LTContentBlocker *instance;
+    os_unfair_lock_lock(&blockerLock);
+    LTContentBlocker *blocker = currentBlocker;
+    os_unfair_lock_unlock(&blockerLock);
+    if (blocker) return blocker;
+    static LTContentBlocker *bundled;
     static dispatch_once_t once;
     dispatch_once(&once, ^{
-        instance = [[self alloc] initWithDirectory:
-            [NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:@"ContentBlocking"]];
+        bundled = [[self alloc] initWithDirectory:[self bundledDirectory]];
     });
-    return instance;
+    os_unfair_lock_lock(&blockerLock);
+    if (!currentBlocker) currentBlocker = bundled;
+    blocker = currentBlocker;
+    os_unfair_lock_unlock(&blockerLock);
+    return blocker;
+}
++ (void)install:(LTContentBlocker *)blocker {
+    os_unfair_lock_lock(&blockerLock);
+    currentBlocker = blocker;
+    os_unfair_lock_unlock(&blockerLock);
+}
+- (int64_t)serial {
+    id serial = _provenance[@"serial"];
+    return [serial isKindOfClass:NSNumber.class] ? [serial longLongValue] : 0;
 }
 - (instancetype)initWithDirectory:(NSString *)directory {
     if (!(self = [super init])) return nil;

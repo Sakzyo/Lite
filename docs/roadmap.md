@@ -68,7 +68,13 @@ apply: meeting these goals does not by itself qualify Lite as a production brows
 
 ### Content blocking
 
-- **Update filters without an app release.** Deliver signed filter updates.
+- **Update filters without an app release.** Done: a release build configured with a filter
+  feed checks it at most once a day, downloads a set only when its signature and every
+  file's hash verify, refuses older sets, and swaps the new rules in without a relaunch.
+  Settings for it are in the Content Blocking sheet. `script/sign_filters.py` creates the
+  key and publishes a feed. Choosing where the feed is hosted, and keeping the key, are
+  still to do before a release uses it. See
+  [filter updates](content-blocking.md#filter-updates).
 - **Close the filtering gaps.** Add scriptlets, regex network rules, custom filters
   and an element picker.
 

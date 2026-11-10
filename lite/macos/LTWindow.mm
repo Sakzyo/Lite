@@ -2,6 +2,7 @@
 #import "../browser/LTContentBlocker.h"
 #import "../migration/LTExporter.h"
 #import "../migration/LTImporter.h"
+#import "../model/LTFilterUpdates.h"
 #import "../model/LTGitHub.h"
 #import "LTCommandPanel.h"
 #import "LTDownloadHistory.h"
@@ -152,6 +153,9 @@
 @interface LTWindow () <NSWindowDelegate, NSSplitViewDelegate, NSSearchFieldDelegate>
 @end
 @implementation LTWindow {
+    __weak NSTextField *_filterStatus;
+    __weak NSButton *_filterCheck;
+    id _filterObserver;
     LTBrowserContext *_context;
     NSMutableDictionary<NSString *, LTPage *> *_pageMap;
     NSString *_spaceID;
@@ -1953,10 +1957,11 @@
     NSAlert *alert = [NSAlert new];
     alert.messageText = @"Content blocking";
     alert.informativeText = [NSString stringWithFormat:
-        @"%@\n%lu requests blocked on this page.\n\nUses %lu native rules from uBlock Origin Lite %@. "
+        @"%@\n%lu requests blocked on this page.\n\nUses %lu native rules from uBlock Origin Lite %@%@. "
         @"Changes apply to new page loads; Apply reloads this page.%@",
         host.length ? host : @"No website selected", (unsigned long)page.blockedRequests,
         (unsigned long)[blocker.provenance[@"networkRules"] unsignedIntegerValue], blocker.provenance[@"version"],
+        LTFilterSerialDate(blocker.serial) ? [@", published " stringByAppendingString:LTFilterSerialDate(blocker.serial)] : @"",
         _store.privateMode ? @" Private-window settings are temporary." : @""];
     NSButton *enabled = [NSButton checkboxWithTitle:@"Block ads and trackers" target:nil action:nil];
     enabled.state = ![prefs[@"disabled"] boolValue];
@@ -1965,11 +1970,41 @@
     NSButton *site = [NSButton checkboxWithTitle:@"Pause blocking on this hostname" target:nil action:nil];
     site.state = [prefs[@"disabledSites"] containsObject:host];
     site.enabled = host.length && ([@[@"http", @"https"] containsObject:url.scheme.lowercaseString]);
-    NSTextField *details = LTLabel(@"Built-in filters: uBlock, EasyList, EasyPrivacy, Peter Lowe’s,\nuBlock Badware, and URLhaus.\n\nThis native subset excludes scriptlets, redirects, regex rules,\nheader changes, and procedural cosmetic filters.\nFilter updates are bundled with Lite builds.", 11, NSFontWeightRegular);
+    LTFilterUpdater *updater = LTFilterUpdater.shared;
+    NSTextField *details = LTLabel([@"Built-in filters: uBlock, EasyList, EasyPrivacy, Peter Lowe’s,\nuBlock Badware, and URLhaus.\n\nThis native subset excludes scriptlets, redirects, regex rules,\nheader changes, and procedural cosmetic filters."
+        stringByAppendingString:updater ? @"" : @"\nThis build updates filters only with new versions of Lite."], 11, NSFontWeightRegular);
     details.maximumNumberOfLines = 0;
     details.textColor = NSColor.secondaryLabelColor;
-    NSStackView *options = LTStack(@[enabled, cosmetic, site, details], NSUserInterfaceLayoutOrientationVertical, 12);
-    options.frame = NSMakeRect(0, 0, 440, 200);
+    NSMutableArray *rows = [@[enabled, cosmetic, site] mutableCopy];
+    NSButton *automatic = nil;
+    if (updater) {
+        automatic = [NSButton checkboxWithTitle:@"Update filters automatically" target:nil action:nil];
+        automatic.state = ![prefs[@"updatesDisabled"] boolValue];
+        // Updates are shared by every window, so only a regular window's profile decides them.
+        automatic.enabled = !_store.privateMode;
+        NSButton *check = [NSButton buttonWithTitle:@"Check Now" target:self action:@selector(checkFilterUpdates:)];
+        check.enabled = !updater.checking;
+        NSTextField *status = LTLabel([self filterStatusText], 11, NSFontWeightRegular);
+        status.maximumNumberOfLines = 0;
+        status.textColor = NSColor.secondaryLabelColor;
+        status.accessibilityLabel = @"Filter update status";
+        _filterStatus = status;
+        _filterCheck = check;
+        [rows addObject:automatic];
+        [rows addObject:LTStack(@[status, check], NSUserInterfaceLayoutOrientationHorizontal, 10)];
+        __weak LTWindow *weak = self;
+        if (_filterObserver) [NSNotificationCenter.defaultCenter removeObserver:_filterObserver];
+        _filterObserver = [NSNotificationCenter.defaultCenter addObserverForName:LTFilterUpdatesChanged object:nil
+            queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note) {
+                LTWindow *strong = weak;
+                if (!strong) return;
+                strong->_filterStatus.stringValue = [strong filterStatusText];
+                strong->_filterCheck.enabled = YES;
+            }];
+    }
+    [rows addObject:details];
+    NSStackView *options = LTStack(rows, NSUserInterfaceLayoutOrientationVertical, 12);
+    options.frame = NSMakeRect(0, 0, 440, updater ? 260 : 200);
     [options.widthAnchor constraintEqualToConstant:440].active = YES;
     alert.accessoryView = options;
     [alert addButtonWithTitle:@"Apply and Reload"];
@@ -1977,6 +2012,10 @@
     [alert beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse response) {
         BOOL siteSettable = site.enabled, siteDisabled = site.state == NSControlStateValueOn;
         BOOL blockingOn = enabled.state == NSControlStateValueOn, cosmeticOn = cosmetic.state == NSControlStateValueOn;
+        BOOL updatesSettable = automatic.enabled, updatesOn = automatic.state == NSControlStateValueOn;
+        if (self->_filterObserver) [NSNotificationCenter.defaultCenter removeObserver:self->_filterObserver];
+        self->_filterObserver = nil;
+        if (response != NSAlertFirstButtonReturn) return; // Cancel changes nothing and does not reload.
         [self commit:^(LTProfile *profile) {
             NSMutableDictionary *updated = [profile.settings[@"contentBlocking"] mutableCopy] ?: [NSMutableDictionary new];
             NSMutableSet *sites = [NSMutableSet setWithArray:updated[@"disabledSites"] ?: @[]];
@@ -1987,11 +2026,25 @@
             updated[@"disabled"] = @(!blockingOn);
             updated[@"cosmeticDisabled"] = @(!cosmeticOn);
             updated[@"disabledSites"] = [sites.allObjects sortedArrayUsingSelector:@selector(compare:)];
+            if (updatesSettable) updated[@"updatesDisabled"] = @(!updatesOn);
             profile.settings[@"contentBlocking"] = updated;
         } then:^{
             [page reload];
         }];
     }];
+}
+- (NSString *)filterStatusText {
+    LTFilterUpdater *updater = LTFilterUpdater.shared;
+    if (updater.checking) return @"Checking for filter updates…";
+    if (updater.lastCheck <= 0) return @"Not checked yet.";
+    NSString *when = [NSDateFormatter localizedStringFromDate:[NSDate dateWithTimeIntervalSince1970:updater.lastCheck]
+                                                    dateStyle:NSDateFormatterMediumStyle timeStyle:NSDateFormatterShortStyle];
+    return [NSString stringWithFormat:@"Last checked %@: %@", when, updater.lastResult];
+}
+- (void)checkFilterUpdates:(NSButton *)sender {
+    sender.enabled = NO;
+    [LTFilterUpdater.shared updateFilters];
+    _filterStatus.stringValue = [self filterStatusText];
 }
 - (void)findNext:(id)s {
     [[self activePage] find:_find.stringValue forward:YES next:YES];

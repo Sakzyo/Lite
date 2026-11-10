@@ -18,6 +18,7 @@ def png():
 class Handler(BaseHTTPRequestHandler):
     crash_uploads = []
     suggestion_requests = []
+    filter_requests = []
     def do_POST(self):
         if self.path == '/crash-upload':
             body = self.rfile.read(int(self.headers.get('Content-Length', 0)))
@@ -191,6 +192,17 @@ self.addEventListener('message',e=>e.waitUntil((async()=>{
             query = parse_qs(parsed.query).get('q', [''])[0]
             Handler.suggestion_requests.append(dict(query=query, cookie=self.headers.get('Cookie')))
             body, content = json.dumps([query, [query + 'ure suggestion', query + ' again']]).encode(), 'application/x-suggestions+json'
+        elif parsed.path.startswith('/filters/'):
+            # The signed filter feed test_native.py publishes. Each request is kept for /filter-log.
+            feed = (Path(__file__).resolve().parents[1]/'.build/native-filter-feed').resolve()
+            target = (feed/parsed.path[len('/filters/'):]).resolve()
+            Handler.filter_requests.append(dict(path=parsed.path, cookie=self.headers.get('Cookie'), agent=self.headers.get('User-Agent')))
+            if not target.is_relative_to(feed) or not target.is_file():
+                self.send_response(404); self.send_header('Content-Length', '0'); self.end_headers()
+                return
+            body, content = target.read_bytes(), 'application/octet-stream'
+        elif parsed.path == '/filter-log':
+            body, content = json.dumps(Handler.filter_requests).encode(), 'application/json'
         elif parsed.path == '/suggest-log':
             body, content = json.dumps(Handler.suggestion_requests).encode(), 'application/json'
         elif parsed.path == '/lifecycle-probe':

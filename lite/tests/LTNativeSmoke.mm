@@ -3,6 +3,7 @@
 #import "../macos/LTTheme.h"
 #import "../macos/LTWindow.h"
 #import "../model/LTExtensions.h"
+#import "../model/LTFilterUpdates.h"
 
 // Exercise the same native command paths as the UI without exposing test flags
 // in the browser engine or changing lifecycle state to manufacture a pass.
@@ -343,6 +344,17 @@ static LTNativeSmoke *runningNative;
         }
         case 76:
             if (_owner.window.attachedSheet) return;
+            [_owner performCommand:@"contentBlocking"]; [self advance:77 delay:.2]; break;
+        case 77: {
+            NSWindow *sheet = _owner.window.attachedSheet;
+            NSButton *automatic = Button(sheet, @"Update filters automatically");
+            if (!automatic) return;
+            [self record:@"nativeFilterUpdateControls" passed:automatic.enabled && automatic.state == NSControlStateValueOn &&
+                Button(sheet, @"Check Now") && Label(sheet, @"Filter update status")];
+            [Button(sheet, @"Cancel") performClick:nil]; [self advance:78 delay:.2]; break;
+        }
+        case 78:
+            if (_owner.window.attachedSheet) return;
             [_owner performCommand:@"downloads"]; [self advance:10 delay:.2]; break;
         case 10:
             _panel = VisibleWindow(@"Lite — Downloads");
@@ -607,6 +619,12 @@ static LTNativeSmoke *runningNative;
 - (void)finish {
     [_timer invalidate]; _timer = nil;
     _results[@"elapsedSeconds"] = @(NSDate.date.timeIntervalSince1970 - _started);
+    // The runner signed a set with one extra rule; it must be in use without a relaunch.
+    LTContentBlocker *blocker = [LTContentBlocker shared];
+    [self record:@"nativeFilterUpdateInstalled" passed:blocker.serial > LTFilterSerial(LTContentBlocker.bundledDirectory) &&
+        [blocker blocksURL:@"https://filter-update.test/probe.js" initiator:@"http://127.0.0.1:18743" type:@"script" method:@"GET"] &&
+        [LTFilterUpdater.shared.lastResult hasPrefix:@"Installed filters published"]];
+    _results[@"filterUpdateResult"] = LTFilterUpdater.shared.lastResult ?: @"no updater";
     if (_results[@"timeoutStage"]) {
         NSMutableArray *buttons = [NSMutableArray new];
         for (NSView *view in Views(_owner.window.attachedSheet.contentView))
