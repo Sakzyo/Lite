@@ -180,6 +180,7 @@
     NSSearchField *_find;
     NSVisualEffectView *_findBar;
     LTCommandPanel *_command;
+    LTSearchSuggestions *_suggestions;
     LTLibraryPanel *_library;
     LTFaviconCache *_icons;
     LTPasswords *_passwords;
@@ -736,7 +737,7 @@
 }
 - (void)openURL:(NSString *)url then:(void (^)(void))next {
     if (!LTValidURL(url))
-        url = LTURLFromInput(url, _store.profile.settings[@"search"]);
+        url = LTURLFromInput(url, _store.profile.settings);
     if (_mini) {
         NSString *identifier = _activeID.length ? _activeID : LTUUID();
         if (!_pageMap[identifier]) {
@@ -879,8 +880,12 @@
     }
 }
 - (void)showCommand:(NSString *)initial {
+    // Created when suggestions are first wanted, and never for a private window.
+    if (!_suggestions && !_store.privateMode && [_store.profile.settings[@"searchSuggestions"] isEqual:@YES])
+        _suggestions = [LTSearchSuggestions new];
     _command = [[LTCommandPanel alloc] initWithStore:_store
-                                             openIDs:[NSSet setWithArray:_pageMap.allKeys]];
+                                             openIDs:[NSSet setWithArray:_pageMap.allKeys]
+                                         suggestions:_suggestions];
     __weak typeof(self) weak = self;
     _command.selected = ^(NSDictionary *r) {
       LTWindow *self = weak;

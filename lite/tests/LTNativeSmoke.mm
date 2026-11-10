@@ -48,6 +48,14 @@ static NSArray *ExpectedRows(LTProfile *profile, NSString *space) {
     AppendExpected(rows, [top filteredArrayUsingPredicate:temporary], children);
     return rows;
 }
+// Every label in one Command Bar row, joined.
+static NSString *RowText(NSTableView *table, NSInteger row) {
+    if (![table isKindOfClass:NSTableView.class] || row < 0 || row >= table.numberOfRows) return @"";
+    NSMutableArray *text = [NSMutableArray new];
+    for (NSView *view in Views([table viewAtColumn:0 row:row makeIfNecessary:YES]))
+        if ([view isKindOfClass:NSTextField.class]) [text addObject:((NSTextField *)view).stringValue];
+    return [text componentsJoinedByString:@" "];
+}
 static NSButton *Button(NSWindow *window, NSString *title) {
     for (NSView *view in Views(window.contentView))
         if ([view isKindOfClass:NSButton.class] && [((NSButton *)view).title isEqual:title])
@@ -291,17 +299,37 @@ static LTNativeSmoke *runningNative;
                     [[second componentsJoinedByString:@" "] containsString:@"Search for"];
             }
             [self record:@"nativeCommandHistoryPrefix" passed:history];
+            // The profile's search engine is the loopback fixture, with suggestions on. Its answer
+            // arrives after typing pauses; "127" above was replaced before that and is never sent.
+            if ([search isKindOfClass:NSSearchField.class]) {
+                NSSearchField *field = (NSSearchField *)search;
+                field.stringValue = @"lite fixt";
+                [field.delegate controlTextDidChange:[NSNotification notificationWithName:NSControlTextDidChangeNotification object:field]];
+            }
+            [self advance:71 delay:.8]; break;
+        }
+        case 71: {
+            NSTableView *table = (NSTableView *)Label(_panel, @"Command results");
+            NSString *first = RowText(table, 0), *second = RowText(table, 1);
+            [self record:@"nativeCommandSearchSuggestions" passed:table.selectedRow == 0 && [first containsString:@"Search for “lite fixt”"] &&
+                [second containsString:@"lite fixture suggestion"] && [second containsString:@"Fixture Search suggestion"]];
             Key(_panel, @"\x1b", 53, 0);
             [self advance:8 delay:.2]; break;
         }
         case 8:
             [self record:@"nativeCommandEscape" passed:_panel && !_panel.visible && _owner.window.keyWindow];
             [_owner performCommand:@"settings"]; [self advance:9 delay:.2]; break;
-        case 9:
+        case 9: {
             _panel = VisibleWindow(@"Lite — Settings");
             [self record:@"nativeSettingsAccessibleControls" passed:_panel && Label(_panel, @"Search engine") && Label(_panel, @"Memory policy") && Button(_panel, @"Clear browsing data…")];
+            NSPopUpButton *engines = (NSPopUpButton *)Label(_panel, @"Search engine");
+            NSButton *remove = (NSButton *)Label(_panel, @"Remove search engine");
+            [self record:@"nativeSettingsSearchEngines" passed:[engines isKindOfClass:NSPopUpButton.class] && [engines.itemTitles containsObject:@"Kagi"] &&
+                [engines.titleOfSelectedItem isEqual:@"Fixture Search"] && Label(_panel, @"Add search engine") && remove.enabled &&
+                Button(_panel, @"Show search suggestions in the Command Bar").state == NSControlStateValueOn];
             [_panel performClose:nil];
             [_owner performCommand:@"downloads"]; [self advance:10 delay:.2]; break;
+        }
         case 10:
             _panel = VisibleWindow(@"Lite — Downloads");
             [self record:@"nativeDownloadsAccessibleControls" passed:_panel && Label(_panel, @"Search downloads") && Label(_panel, @"Downloads") && Button(_panel, @"Pause / Resume")];
@@ -366,10 +394,33 @@ static LTNativeSmoke *runningNative;
             _privateWindow = [self additionalWindow:YES];
             [self record:@"nativePrivateWindow" passed:_privateWindow && _privateWindow.store != _owner.store && [_privateWindow.window.title containsString:@"Private"]];
             [self record:@"nativeExtensionsHiddenInPrivate" passed:!_privateWindow.extensions && Label(_privateWindow.window, @"Extensions").hidden];
+            NSDictionary *privateSettings = _privateWindow.store.profile.settings;
+            [self record:@"nativePrivateSearchEngine" passed:[LTSelectedSearchEngine(privateSettings)[@"name"] isEqual:@"Fixture Search"] &&
+                !privateSettings[@"searchSuggestions"]];
             [self advance:90 delay:0];
             [_privateWindow openURL:@"http://127.0.0.1:18743/storage" then:^{
-                self.privatePage = [self.privateWindow activePage]; [self advance:17 delay:.2];
+                self.privatePage = [self.privateWindow activePage];
+                [self.privateWindow performCommand:@"newTab"]; [self advance:72 delay:.3];
             }]; break;
+        }
+        case 72: {
+            // Text typed in a private window is searched only when the user asks; the fixture's
+            // request log, read by test_native.py, must not contain it.
+            _panel = VisibleWindow(@"Lite Command Bar");
+            NSSearchField *field = (NSSearchField *)Label(_panel, @"Search or enter address");
+            if ([field isKindOfClass:NSSearchField.class]) {
+                field.stringValue = @"lite private";
+                [field.delegate controlTextDidChange:[NSNotification notificationWithName:NSControlTextDidChangeNotification object:field]];
+            }
+            [self advance:73 delay:.6]; break;
+        }
+        case 73: {
+            NSTableView *table = (NSTableView *)Label(_panel, @"Command results");
+            BOOL suggested = NO;
+            for (NSInteger row = 0; row < table.numberOfRows; row++) suggested = suggested || [RowText(table, row) containsString:@"suggestion"];
+            [self record:@"nativePrivateCommandWithoutSuggestions" passed:_panel && [RowText(table, 0) containsString:@"Search for “lite private”"] && !suggested];
+            Key(_panel, @"\x1b", 53, 0);
+            [self advance:17 delay:.2]; break;
         }
         case 17: {
             if (_otherPage.loading || _privatePage.loading || !_privatePage.alive) return;

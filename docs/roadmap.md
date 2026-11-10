@@ -39,8 +39,15 @@ apply: meeting these goals does not by itself qualify Lite as a production brows
   Closed Window brings back a window's Space, tabs, split and frame. Deleting history
   removes them too. Private windows keep their own list, which ends with the window. See
   [recently closed tabs and windows](architecture.md#recently-closed-tabs-and-windows).
-- **Widen search.** Support more search engines, including custom ones, and add search
-  suggestions to the Command Bar.
+- **Widen search.** Done: Settings offers DuckDuckGo, Google, Bing, Brave Search, Ecosia,
+  Kagi and Startpage, and up to 32 search engines of your own, each a name and a search
+  address with `%s` where the query goes. Private windows search with the same engine.
+  Command Bar suggestions are off until you turn them on in Settings. When they are on,
+  Lite sends the text you type to the selected engine, without cookies, and lists up to
+  four suggestions under the search row. Addresses, and anything typed in a private
+  window, are not sent. A query's `+` now reaches the engine as typed; before, engines
+  read it as a space. See
+  [search engines and suggestions](architecture.md#search-engines-and-suggestions).
 - **Add data export.** Bookmarks and the profile's organization can be exported, not
   only imported.
 

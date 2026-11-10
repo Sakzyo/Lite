@@ -310,6 +310,86 @@ windows. The validator rejects an entry of an unknown type, a tab that is not te
 has an address Lite cannot open, an invalid window state, and a list over the limit. A
 profile saved before the list existed loads with an empty one.
 
+### Search engines and suggestions
+
+Three profile settings hold the search configuration:
+
+| Setting | Holds |
+| --- | --- |
+| `search` | The selected engine's name. A new profile has `DuckDuckGo` |
+| `searchEngines` | The user's own engines, in the order added, at most 32 |
+| `searchSuggestions` | Whether the Command Bar asks for suggestions. Absent means off |
+
+An engine is a name, a search address and, optionally, a suggestions address. `%s` in an
+address stands for the query. Seven engines are built in (`LTBuiltInSearchEngines`):
+DuckDuckGo, Google, Bing, Brave Search, Ecosia, Kagi and Startpage, each with an https
+search address and an https suggestions address. Settings lists them first, then the
+user's own, with Add and Remove beside the menu. Removing the selected engine selects
+DuckDuckGo in the same save.
+
+**Filling the address.** The query replaces `%s` with every character percent-encoded
+except letters, digits and `-._~`. The same rule serves a query string and a path, so an
+address such as `https://docs.example/%s/index.html` works and the query stays one path
+segment. Before this, the query went through `NSURLQueryItem`, which leaves `+` as it is,
+and engines read "c++" as "c" and two spaces.
+
+**Rules for a custom engine.** `LTCustomSearchEngine` checks an entry and returns what is
+stored:
+
+- The name is 1 to 64 characters on one line, and differs from every other engine's name
+  without regard to case.
+- The search address contains `%s`, has no spaces, is at most 2,048 characters, and is an
+  http or https address that Lite can open. It cannot carry a user name or password.
+- `%s` cannot be in the site's name, scheme or port, so a query never chooses which site
+  receives it.
+- The suggestions address follows the same rules and must be https, because it receives
+  text as it is typed. http is accepted only for `localhost`, `127.0.0.1` and `::1`.
+- `{searchTerms}`, the OpenSearch placeholder, is accepted and stored as `%s`.
+
+The profile validator applies the same function: each stored engine must be exactly what
+it returns, and `search` must name a built-in or stored engine. A save that would break
+this is refused like any other invalid save. A profile from before these settings loads
+unchanged. A build from before them knows only DuckDuckGo and Google: it refuses a profile
+that selects another engine, as it would a damaged one, and preserves the file.
+
+A private window starts with a new in-memory profile. Lite copies `search` and
+`searchEngines` into it, so a private window searches with the engine the user chose. It
+does not copy `searchSuggestions`.
+
+**Suggestions.** `LTSearchSuggestionURL` decides whether anything may be sent. It returns
+nothing unless `searchSuggestions` is on and the selected engine has a suggestions
+address, and nothing for text that is:
+
+- empty, longer than 256 characters, or more than one line;
+- an address the Command Bar would open, such as `example.org/path` or `localhost:3000`;
+- an address still being typed, meaning text without spaces that contains `:/`.
+
+The Command Bar opens on the current page's address when it is used as the address bar,
+so the page address is covered by the second rule. A partly typed host such as "gith" is
+a search like any other and is sent. A private window has no fetcher at all, so the
+setting cannot turn suggestions on there.
+
+Each window that is not private creates one `LTSearchSuggestions` the first time its
+Command Bar opens with suggestions on, and keeps it, so the connection to the engine is
+reused. It waits
+until typing has paused for 150 ms, cancels the previous request, and sends a GET with no
+cookies, no credentials and no cache. It does not follow redirects, which would pass the
+text to a host the user did not choose. The engine receives the text, and with it the
+Mac's IP address, its language preference in `Accept-Language`, and `Lite-Browser` as the
+user agent. A request ends after 4 seconds without an answer.
+
+The answer must be OpenSearch suggestions JSON, `["query", ["one", "two"]]`, of at most
+64 KiB. Lite keeps the first four entries that are single-line strings of at most 200
+characters, dropping the typed text itself and repeats. Anything else, such as an error
+page, gives no suggestions. Answers are remembered in memory while the Command Bar is
+open and forgotten when it closes. Nothing about suggestions is written to disk.
+
+Suggestions are listed directly under "Search for …", so the first row, which Return
+opens, never changes when they arrive. If another row is selected when they arrive, it
+stays selected. While the engine is being asked again, earlier suggestions that still
+begin with the typed text stay listed. Choosing a suggestion searches for it with the
+selected engine.
+
 ### Background writer
 
 Each store has one serial writer queue. Organization saves, visit recording, history

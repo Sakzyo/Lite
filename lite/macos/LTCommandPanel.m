@@ -11,8 +11,12 @@
     NSTableView *_table;
     NSArray *_results;
     __weak NSWindow *_owner;
+    LTSearchSuggestions *_suggester;
+    NSArray<NSString *> *_suggestions;
 }
-- (instancetype)initWithStore:(LTStore *)store openIDs:(NSSet *)ids {
+- (instancetype)initWithStore:(LTStore *)store
+                      openIDs:(NSSet *)ids
+                  suggestions:(LTSearchSuggestions *)suggestions {
     NSPanel *panel = [[NSPanel alloc]
         initWithContentRect:NSMakeRect(0, 0, 650, 430)
                   styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskFullSizeContentView
@@ -26,6 +30,7 @@
     if ((self = [super initWithWindow:panel])) {
         _store = store;
         _openIDs = ids;
+        _suggester = store.privateMode ? nil : suggestions;
         panel.delegate = self;
         NSVisualEffectView *root = [NSVisualEffectView new];
         root.material = NSVisualEffectMaterialPopover;
@@ -104,14 +109,53 @@
     [self.window makeFirstResponder:_field];
     [_field selectText:nil];
 }
-- (void)refresh {
-    NSString *query = [_field.stringValue
+- (NSString *)query {
+    return [_field.stringValue
         stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
-    _results = LTCommandResults(query, _store.profile,
-                                [_store searchHistory:query limit:30], _openIDs);
+}
+// Rebuilds the rows. `keep` is the row to leave selected when it is still listed, so suggestions
+// that arrive late do not move the selection; otherwise the first row is selected.
+- (void)reloadKeeping:(NSDictionary *)keep {
+    NSString *query = [self query];
+    _results = LTCommandResults(query, _store.profile, [_store searchHistory:query limit:30], _openIDs,
+                                _suggestions);
     [_table reloadData];
-    if (_results.count)
-        [_table selectRowIndexes:[NSIndexSet indexSetWithIndex:0] byExtendingSelection:NO];
+    NSUInteger row = !keep ? 0 : [_results indexOfObjectPassingTest:^BOOL(NSDictionary *r, NSUInteger i, BOOL *stop) {
+        return [r[@"type"] isEqual:keep[@"type"]] && [r[@"value"] isEqual:keep[@"value"]] &&
+               [r[@"title"] isEqual:keep[@"title"]];
+    }];
+    if (_results.count) {
+        row = row == NSNotFound ? 0 : row;
+        [_table selectRowIndexes:[NSIndexSet indexSetWithIndex:row] byExtendingSelection:NO];
+        [_table scrollRowToVisible:row];
+    }
+}
+- (void)refresh {
+    NSString *query = [self query], *typed = query.lowercaseString;
+    NSDictionary *settings = _store.profile.settings;
+    // Suggestions that still begin with the text stay listed until the engine answers again.
+    NSMutableArray *kept = [NSMutableArray new];
+    for (NSString *suggestion in _suggestions)
+        if (typed.length && suggestion.length > typed.length && [suggestion.lowercaseString hasPrefix:typed])
+            [kept addObject:suggestion];
+    _suggestions = kept;
+    __weak typeof(self) weak = self;
+    __block BOOL asking = YES;
+    // A private window has no fetcher, so nothing typed in it is sent.
+    BOOL asked = [_suggester suggest:query settings:settings completion:^(NSArray<NSString *> *suggestions) {
+        LTCommandPanel *panel = weak;
+        if (!panel || ![[panel query] isEqual:query])
+            return;
+        panel->_suggestions = suggestions;
+        if (!asking) {
+            NSInteger row = panel->_table.selectedRow;
+            [panel reloadKeeping:row >= 0 && row < (NSInteger)panel->_results.count ? panel->_results[row] : nil];
+        }
+    }];
+    asking = NO;
+    if (!asked)
+        _suggestions = @[];
+    [self reloadKeeping:nil];
 }
 - (void)controlTextDidChange:(NSNotification *)n {
     [self refresh];
@@ -170,6 +214,7 @@
         _selected(result);
 }
 - (void)close {
+    [_suggester forget];
     [_owner removeChildWindow:self.window];
     [self.window orderOut:nil];
     [_owner makeKeyWindow];

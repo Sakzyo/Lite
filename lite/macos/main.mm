@@ -235,6 +235,16 @@ static std::string extensionSwitch;
     NSError *e = nil;
     if (privateMode) [crashReports notePrivateSession];
     LTStore *store = privateMode ? [[LTStore alloc] initWithPath:nil error:&e] : _store;
+    if (privateMode) {
+        // A private window searches with the engine the user chose. It never asks for suggestions.
+        NSDictionary *settings = _store.profile.settings;
+        NSString *search = settings[@"search"];
+        NSArray *engines = settings[@"searchEngines"] ? [[NSArray alloc] initWithArray:settings[@"searchEngines"] copyItems:YES] : nil;
+        [store commit:^(LTProfile *p) {
+          p.settings[@"searchEngines"] = engines;
+          p.settings[@"search"] = search;
+        } error:nil];
+    }
     if (websiteDataCleared && !privateMode) {
         NSMutableDictionary *deferred = [state mutableCopy] ?: [NSMutableDictionary new];
         deferred[@"deferPages"] = @YES;

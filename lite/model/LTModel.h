@@ -1,11 +1,13 @@
 #import <Foundation/Foundation.h>
+#import "LTSearch.h"
 
 NS_ASSUME_NONNULL_BEGIN
 FOUNDATION_EXPORT NSString *LTUUID(void);
 FOUNDATION_EXPORT NSError *LTError(NSString *message);
 FOUNDATION_EXPORT BOOL LTValidURL(NSString *url);
-FOUNDATION_EXPORT NSString *LTURLFromInput(NSString *input, NSString *provider);
-FOUNDATION_EXPORT NSString *LTSearchURL(NSString *query, NSString *provider);
+// The address to open for Command Bar text: the text itself when it is an address, otherwise a
+// search with the engine selected in the profile's `settings`.
+FOUNDATION_EXPORT NSString *LTURLFromInput(NSString *input, NSDictionary *_Nullable settings);
 // How many recently closed tabs and windows a profile keeps.
 FOUNDATION_EXPORT const NSUInteger LTClosedLimit;
 
