@@ -38,6 +38,7 @@ REQUIRED = ['nativeMainWindow', 'nativeAccessibleNavigation', 'nativeFixtureSeed
             'nativeAuthenticationSucceeded', 'nativeCrashPromptDisclosure', 'nativeCrashPromptDefaultsToDecline',
             'nativeFilterUpdateControls', 'nativeFilterUpdateInstalled',
             'nativeCustomFilterEditor', 'nativeCustomFilterApply', 'nativeCustomFilterCancel',
+            'nativeCustomFilterSwitchesSaved', 'nativeCustomFilterReturnInsertsNewline', 'nativeCustomFilterSwitchesRestored',
             'nativeCustomFilterRejectsWholeDraft', 'nativePrivateCustomFiltersCopied',
             'nativePrivateCustomFilterEditsIsolated']
 

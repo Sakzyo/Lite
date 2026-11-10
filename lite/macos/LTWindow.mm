@@ -1958,7 +1958,7 @@
     alert.messageText = @"Content blocking";
     alert.informativeText = [NSString stringWithFormat:
         @"%@\n%lu requests blocked on this page.\n\nUses %lu native rules from uBlock Origin Lite %@%@. "
-        @"Changes apply to new page loads; Apply reloads this page.%@",
+        @"Changes apply to new page loads; Apply reloads this page. Custom Filters saves these switches before opening the editor.%@",
         host.length ? host : @"No website selected", (unsigned long)page.blockedRequests,
         (unsigned long)[blocker.provenance[@"networkRules"] unsignedIntegerValue], blocker.provenance[@"version"],
         LTFilterSerialDate(blocker.serial) ? [@", published " stringByAppendingString:LTFilterSerialDate(blocker.serial)] : @"",
@@ -2016,11 +2016,8 @@
         BOOL updatesSettable = automatic.enabled, updatesOn = automatic.state == NSControlStateValueOn;
         if (self->_filterObserver) [NSNotificationCenter.defaultCenter removeObserver:self->_filterObserver];
         self->_filterObserver = nil;
-        if (response == NSAlertThirdButtonReturn) {
-            [self editCustomFilters:self->_store.profile.settings[@"contentBlocking"][@"customFilters"] ?: @"" problem:nil];
-            return;
-        }
-        if (response != NSAlertFirstButtonReturn) return; // Cancel changes nothing and does not reload.
+        BOOL editFilters = response == NSAlertThirdButtonReturn;
+        if (response != NSAlertFirstButtonReturn && !editFilters) return; // Cancel changes nothing and does not reload.
         [self commit:^(LTProfile *profile) {
             NSMutableDictionary *updated = [profile.settings[@"contentBlocking"] mutableCopy] ?: [NSMutableDictionary new];
             NSMutableSet *sites = [NSMutableSet setWithArray:updated[@"disabledSites"] ?: @[]];
@@ -2034,7 +2031,9 @@
             if (updatesSettable) updated[@"updatesDisabled"] = @(!updatesOn);
             profile.settings[@"contentBlocking"] = updated;
         } then:^{
-            [page reload];
+            if (editFilters)
+                [self editCustomFilters:self->_store.profile.settings[@"contentBlocking"][@"customFilters"] ?: @"" problem:nil];
+            else [page reload];
         }];
     }];
 }

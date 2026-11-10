@@ -121,6 +121,8 @@ static BOOL SameRect(NSRect a, NSRect b) {
 @property LTPage *authPage;
 @property NSView *sidebar;
 @property NSWindow *panel;
+@property NSWindow *customFilterSheet;
+@property NSData *customFilterProfile;
 @property NSPopover *popover;
 @property NSUInteger browsersWithPopover;
 @property NSTimer *timer;
@@ -356,6 +358,9 @@ static LTNativeSmoke *runningNative;
             if (!automatic) return;
             [self record:@"nativeFilterUpdateControls" passed:automatic.enabled && automatic.state == NSControlStateValueOn &&
                 Button(sheet, @"Check Now") && Label(sheet, @"Filter update status")];
+            [Button(sheet, @"Block ads and trackers") performClick:nil];
+            [Button(sheet, @"Hide advertising elements") performClick:nil];
+            [Button(sheet, @"Pause blocking on this hostname") performClick:nil];
             [Button(sheet, @"Custom Filters…") performClick:nil]; [self advance:100 delay:.2]; break;
         }
         case 100: {
@@ -364,19 +369,49 @@ static LTNativeSmoke *runningNative;
             if (![editor isKindOfClass:NSTextView.class]) return;
             [self record:@"nativeCustomFilterEditor" passed:editor.editable && !editor.richText &&
                 sheet.firstResponder == editor && Button(sheet, @"Apply and Reload") && Button(sheet, @"Cancel")];
-            editor.string = CustomFilterFixture;
+            NSDictionary *blocking = _owner.store.profile.settings[@"contentBlocking"];
+            [self record:@"nativeCustomFilterSwitchesSaved" passed:[blocking[@"disabled"] boolValue] &&
+                [blocking[@"cosmeticDisabled"] boolValue] && [blocking[@"disabledSites"] containsObject:@"127.0.0.1"] &&
+                ![blocking[@"updatesDisabled"] boolValue]];
+            _customFilterSheet = sheet;
+            _customFilterProfile = [NSJSONSerialization dataWithJSONObject:_owner.store.profile.JSON options:NSJSONWritingSortedKeys error:nil];
+            editor.string = @"! Native editor\n||custom-native.test^@@||custom-native.test/needed.js";
+            editor.selectedRange = NSMakeRange([@"! Native editor\n||custom-native.test^" length], 0);
+            Key(sheet, @"\r", 36, 0);
+            [self advance:108 delay:.5]; break;
+        }
+        case 108: {
+            NSWindow *sheet = _owner.window.attachedSheet;
+            NSTextView *editor = (NSTextView *)Label(sheet, @"Custom network filters");
+            NSData *profile = [NSJSONSerialization dataWithJSONObject:_owner.store.profile.JSON options:NSJSONWritingSortedKeys error:nil];
+            BOOL unchanged = sheet == _customFilterSheet && [editor isKindOfClass:NSTextView.class] &&
+                [editor.string isEqual:CustomFilterFixture] && [profile isEqual:_customFilterProfile];
+            [self record:@"nativeCustomFilterReturnInsertsNewline" passed:unchanged];
+            _customFilterSheet = nil;
+            _customFilterProfile = nil;
+            if (!unchanged) { [self finish]; return; }
             [Button(sheet, @"Apply and Reload") performClick:nil]; [self advance:101 delay:.2]; break;
         }
         case 101:
             if (_owner.window.attachedSheet || ![_owner.store.profile.settings[@"contentBlocking"][@"customFilters"] isEqual:CustomFilterFixture]) return;
             [_owner performCommand:@"contentBlocking"]; [self advance:102 delay:.2]; break;
-        case 102:
-            [Button(_owner.window.attachedSheet, @"Custom Filters…") performClick:nil]; [self advance:103 delay:.2]; break;
+        case 102: {
+            NSWindow *sheet = _owner.window.attachedSheet;
+            if (!Button(sheet, @"Custom Filters…")) return;
+            [Button(sheet, @"Block ads and trackers") performClick:nil];
+            [Button(sheet, @"Hide advertising elements") performClick:nil];
+            [Button(sheet, @"Pause blocking on this hostname") performClick:nil];
+            [Button(sheet, @"Custom Filters…") performClick:nil]; [self advance:103 delay:.2]; break;
+        }
         case 103: {
             NSWindow *sheet = _owner.window.attachedSheet;
             NSTextView *editor = (NSTextView *)Label(sheet, @"Custom network filters");
             if (![editor isKindOfClass:NSTextView.class]) return;
             [self record:@"nativeCustomFilterApply" passed:[editor.string isEqual:CustomFilterFixture]];
+            NSDictionary *blocking = _owner.store.profile.settings[@"contentBlocking"];
+            [self record:@"nativeCustomFilterSwitchesRestored" passed:![blocking[@"disabled"] boolValue] &&
+                ![blocking[@"cosmeticDisabled"] boolValue] && ![blocking[@"disabledSites"] containsObject:@"127.0.0.1"] &&
+                ![blocking[@"updatesDisabled"] boolValue]];
             editor.string = @"||canceled-native.test^";
             [Button(sheet, @"Cancel") performClick:nil]; [self advance:104 delay:.2]; break;
         }

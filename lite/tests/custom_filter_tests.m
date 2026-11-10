@@ -47,6 +47,25 @@ static void TestInput(void) {
     CHECK(LTValidateCustomFilters(@"", nil), "empty text removes custom rules");
     CHECK(LTValidateCustomFilters(@"! Local filters\r\n\r\n||ads.example^\r\n@@||ads.example/safe|\r\n", nil),
           "comments, blank lines, exceptions and CRLF are accepted");
+    for (NSString *header in @[@"[Adblock]", @"[Adblock Plus 2.0]"]) {
+        NSString *text = [NSString stringWithFormat:@" \t\r\n\t%@ \r\n  ! Pasted filters\n\t||ads.example^  \n  @@||ads.example/safe\t", header];
+        CHECK(LTValidateCustomFilters(text, nil) && [Profile(text).settings[@"contentBlocking"][@"customFilters"] isEqual:text],
+              "a first nonempty supported header and surrounding spaces or tabs are accepted without changing stored text");
+        LTBlockingPolicy *policy = Policy(text);
+        CHECK(Blocks(policy, @"https://ads.example/a") && !Blocks(policy, @"https://ads.example/safe"),
+              "trimmed pasted patterns retain block and exception behavior");
+    }
+    for (NSString *text in @[@"\n! Comment\n[Adblock]\n||ads.example^", @"[Adblock]\n\n[Adblock Plus 2.0]"]) {
+        NSError *error = nil;
+        CHECK(!LTValidateCustomFilters(text, &error) && [error.localizedDescription.lowercaseString containsString:@"line 3"] &&
+              [error.localizedDescription.lowercaseString containsString:@"remove"] && !Profile(text),
+              "a misplaced list header is refused with its original line number and removal guidance");
+    }
+    for (NSString *header in @[@"[AdBlock]", @"[Adblock Plus]", @"[Adblock Plus 3.0]", @"[Unsupported List]"]) {
+        NSError *error = nil;
+        CHECK(!LTValidateCustomFilters(header, &error) && [error.localizedDescription.lowercaseString containsString:@"header"] && !Profile(header),
+              "unknown list headers are refused rather than compiled as URL patterns");
+    }
     for (id value in @[@42, @[], @{}, NSNull.null]) {
         NSError *error = nil;
         CHECK(!LTValidateCustomFilters(value, &error) && error != nil && !Profile(value),
@@ -62,7 +81,7 @@ static void TestInput(void) {
     NSArray *invalid = @[
         @"||ads.example^$third-party", @"||ads.example^$domain=page.example",
         @"page.example##.advert", @"page.example#@#.advert", @"page.example#?#div:has(.advert)",
-        @"/ads[0-9]+/", @"@@/ads[0-9]+/", @"@@", @"|", @"||", @"|||ads.example^",
+        @"/ads[0-9]+/", @"@@/ads[0-9]+/", @"//", @"@@//", @"@@", @"|", @"||", @"|||ads.example^",
         @"ad|vert", @"||ads.example^||", @"space here", @"tab\there", @"café.example",
         @"control\x01here", @"newline\rhere"
     ];
@@ -77,8 +96,13 @@ static void TestInput(void) {
     CHECK(!LTValidateCustomFilters([line stringByAppendingString:@"a"], nil) && !Profile([line stringByAppendingString:@"a"]),
           "2049-character pattern is refused in the editor and profile");
     CHECK(!LTValidateCustomFilters([@"!" stringByAppendingString:line], nil), "comments obey the same line-length limit");
+    NSString *padded = [Repeated(@" ", 2047) stringByAppendingString:@"/"];
+    CHECK(LTValidateCustomFilters(padded, nil) && !LTValidateCustomFilters([padded stringByAppendingString:@"\t"], nil) &&
+          !Profile([padded stringByAppendingString:@"\t"]), "the original line length is limited before surrounding whitespace is trimmed");
     NSString *rules = Repeated(@"||bounded.example^\n", 1000);
     CHECK(LTValidateCustomFilters(rules, nil) && Profile(rules), "1000 active rules are accepted");
+    CHECK(LTValidateCustomFilters([@"[Adblock Plus 2.0]\n \t\n ! Comment\n" stringByAppendingString:rules], nil),
+          "the accepted header, blank lines and comments do not count as active rules");
     NSString *tooMany = [rules stringByAppendingString:@"||one-more.example^"];
     CHECK(!LTValidateCustomFilters(tooMany, nil) && !Profile(tooMany), "1001 active rules are refused in the editor and profile");
     NSString *comment = [NSString stringWithFormat:@"!%@\n", Repeated(@"é", 1023)];
@@ -87,6 +111,8 @@ static void TestInput(void) {
           "256 KiB UTF-8 total is accepted, including Unicode comments");
     NSString *oversized = [limit stringByAppendingString:@"!"];
     CHECK(!LTValidateCustomFilters(oversized, nil) && !Profile(oversized), "the UTF-8 byte limit is enforced even below the character limit");
+    CHECK(!LTValidateCustomFilters([limit stringByAppendingString:@" "], nil) && !Profile([limit stringByAppendingString:@" "]),
+          "the original UTF-8 size is limited before whitespace-only lines are ignored");
 }
 
 static void TestMatching(LTContentBlocker *bundle, LTContentBlocker *replacement) {
@@ -96,6 +122,28 @@ static void TestMatching(LTContentBlocker *bundle, LTContentBlocker *replacement
           [bundle decisionForURL:@"https://unmatched.example/a" initiator:@"https://page.example" type:@"script" method:@"GET"] == LTNetworkNoMatch,
           "bundled matcher distinguishes block, allow and no match");
     LTBlockingPolicy *policy = Policy(@"||ads.example^\n|https://exact.example/path|\n/track*pixel^\n/Case.js|");
+    CHECK(LTValidateCustomFilters(@"/", nil) && Blocks(Policy(@"/"), @"https://plain.example/path"),
+          "a single slash is a literal path pattern, not an empty regular expression");
+    CHECK(LTValidateCustomFilters(@"@@/", nil) && !Blocks(Policy(@"@@/"), @"https://bundled.example/path"),
+          "a single slash exception matches a normally blocked request");
+    LTBlockingPolicy *segmented = Policy(@"ab*cd^MandatoryTail|");
+    CHECK(Blocks(segmented, @"https://cdn.example/ab--cd/MANDATORYTAIL"),
+          "a mandatory literal after wildcard and separator segments matches with ASCII case folding");
+    CHECK(!Blocks(segmented, @"https://cdn.example/xx--cd/MandatoryTail") &&
+          !Blocks(segmented, @"https://cdn.example/ab--cd/MandatoryTail/extra"),
+          "finding a mandatory literal still requires the full pattern and end anchor to match");
+    LTBlockingPolicy *anchored = Policy(@"||MixedAds.Example^\n@@||MixedAds.Example/safe*AllowedSuffix|");
+    CHECK(Blocks(anchored, @"https://sub.MIXEDADS.example/blocked") &&
+          !Blocks(anchored, @"https://sub.MIXEDADS.example/safe-ALLOWEDSUFFIX") &&
+          Blocks(anchored, @"https://sub.MIXEDADS.example/else-ALLOWEDSUFFIX"),
+          "mandatory literals preserve domain-anchored custom blocks and exceptions");
+    CHECK(!Blocks(anchored, @"https://good.example/MixedAds.Example/blocked"),
+          "a domain literal in the URL path does not bypass the hostname anchor");
+    for (NSString *pattern in @[@"*", @"^"])
+        CHECK(Blocks(Policy(pattern), @"https://plain.example/path"), "patterns without a literal still use full matching");
+    LTBlockingPolicy *shortPattern = Policy(@"ab*cd^");
+    CHECK(Blocks(shortPattern, @"https://plain.example/ab--cd/") && !Blocks(shortPattern, @"https://plain.example/ab--cdef"),
+          "short literal segments retain wildcard and separator behavior");
     NSArray *vectors = @[
         @[@"https://ads.example/a", @YES], @[@"https://sub.ads.example/a", @YES],
         @[@"https://notads.example/a", @NO], @[@"https://ads.example.evil/a", @NO],
@@ -153,7 +201,7 @@ static void TestPersistence(NSString *directory) {
     NSString *path = [directory stringByAppendingPathComponent:@"profile.sqlite"];
     NSError *error = nil;
     LTStore *store = [[LTStore alloc] initWithPath:path error:&error];
-    NSString *text = @"! Kept exactly\r\n||saved.example^\r\n@@||saved.example/safe\r\n";
+    NSString *text = @" \t\r\n[Adblock Plus 2.0]\r\n ! Kept exactly\r\n\t||saved.example^  \r\n @@||saved.example/safe\t\r\n";
     CHECK(store && [store commit:^(LTProfile *p) { p.settings[@"contentBlocking"] = @{@"customFilters": text}; } error:&error],
           "valid custom filter text commits through the real store");
     error = nil;
@@ -233,6 +281,52 @@ static void TestConcurrentReplacement(void) {
     CHECK(mismatches == 0, "concurrent requests see complete immutable custom rules while preferences change");
 }
 
+static void TestRequestCost(void) {
+    NSMutableString *rules = [NSMutableString new];
+    for (NSUInteger i = 0; i < 998; ++i) {
+        if (i % 2) [rules appendFormat:@"metrics*segment-%lu*pixel^\n", (unsigned long)i];
+        else [rules appendFormat:@"||host-%lu.metrics.example^\n", (unsigned long)i];
+    }
+    [rules appendString:@"/late-block\n@@/late-block/allowed"];
+    LTBlockingPolicy *policy = Policy(rules);
+    NSMutableArray<NSString *> *requests = [NSMutableArray new];
+    NSString *base = [@"https://cdn.example/assets/metrics/" stringByAppendingString:Repeated(@"segment/", 24)];
+    BOOL bounded = YES;
+    for (NSUInteger i = 0; i < 3000; ++i) {
+        NSString *url = [NSString stringWithFormat:@"%@ordinary/resource-%lu.js?version=1", base, (unsigned long)i];
+        bounded &= url.length <= 512;
+        [requests addObject:url];
+    }
+    CHECK(bounded && LTValidateCustomFilters(rules, nil), "request-cost fixture has 1000 valid rules and URLs of at most 512 characters");
+    CHECK(Blocks(policy, [base stringByAppendingString:@"late-block/resource.js"]) &&
+          !Blocks(policy, [base stringByAppendingString:@"late-block/allowed/resource.js"]),
+          "the last block and exception both take effect in a 1000-rule set");
+    for (NSUInteger i = 0; i < 30; ++i) Blocks(policy, requests[i]);
+    NSUInteger mismatches = 0;
+    double elapsed = 0, slowest = 0;
+    for (NSString *url in requests) {
+        @autoreleasepool {
+            double started = NSProcessInfo.processInfo.systemUptime;
+            BOOL blocked = Blocks(policy, url);
+            double duration = NSProcessInfo.processInfo.systemUptime - started;
+            elapsed += duration;
+            if (duration > slowest) slowest = duration;
+            if (blocked) ++mismatches;
+        }
+    }
+    double meanMS = elapsed * 1000 / requests.count;
+    CHECK(mismatches == 0, "1000 custom rules preserve every nonmatching request");
+    // About 3x the initial 0.113 ms arm64 mean, with another 2x for slower Intel runners.
+#if defined(__x86_64__)
+    const double budgetMS = .700;
+#else
+    const double budgetMS = .350;
+#endif
+    CHECK(meanMS < budgetMS, "1000 custom rules stay within the architecture's mean request budget");
+    printf("Custom filter request cost: 1000 rules, %lu nonmatching requests, mean %.3f ms, slowest %.3f ms (mean budget %.3f ms)\n",
+           (unsigned long)requests.count, meanMS, slowest * 1000, budgetMS);
+}
+
 int main(void) {
     @autoreleasepool {
         NSString *directory = [NSTemporaryDirectory() stringByAppendingPathComponent:NSUUID.UUID.UUIDString];
@@ -242,6 +336,7 @@ int main(void) {
         TestInput();
         TestMatching(bundle, replacement);
         TestConcurrentReplacement();
+        TestRequestCost();
         TestPersistence(directory);
         [NSFileManager.defaultManager removeItemAtPath:directory error:nil];
         printf("%d custom filter checks passed, %d failed\n", passed, failed);

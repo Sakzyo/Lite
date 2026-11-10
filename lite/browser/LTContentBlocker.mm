@@ -137,16 +137,27 @@ BOOL ParseCustomFilters(id value, std::vector<Rule> *rules, NSError **error) {
     if (![text canBeConvertedToEncoding:NSUTF8StringEncoding] || [text lengthOfBytesUsingEncoding:NSUTF8StringEncoding] > 256 * 1024)
         return CustomFilterError(error, 0, @"The list must fit within 256 KiB of UTF-8 text.");
     NSUInteger number = 0, count = 0;
+    BOOL firstNonempty = YES;
+    NSCharacterSet *padding = [NSCharacterSet characterSetWithCharactersInString:@" \t"];
     for (NSString *raw in [text componentsSeparatedByString:@"\n"]) {
         ++number;
         NSString *line = [raw hasSuffix:@"\r"] ? [raw substringToIndex:raw.length - 1] : raw;
         if (line.length > 2048) return CustomFilterError(error, number, @"A line cannot exceed 2,048 characters.");
-        if (!line.length || [line hasPrefix:@"!"]) continue;
+        line = [line stringByTrimmingCharactersInSet:padding];
+        if (!line.length) continue;
+        if ([line hasPrefix:@"["] && [line hasSuffix:@"]"]) {
+            if (!firstNonempty || ![@[@"[Adblock]", @"[Adblock Plus 2.0]"] containsObject:line])
+                return CustomFilterError(error, number, @"Remove this list header. Only [Adblock] or [Adblock Plus 2.0] is accepted as the first nonempty line.");
+            firstNonempty = NO;
+            continue;
+        }
+        firstNonempty = NO;
+        if ([line hasPrefix:@"!"]) continue;
         if (++count > 1000) return CustomFilterError(error, number, @"The list cannot exceed 1,000 rules.");
         BOOL allow = [line hasPrefix:@"@@"];
         NSString *pattern = allow ? [line substringFromIndex:2] : line;
         if (!pattern.length) return CustomFilterError(error, number, @"A rule needs a URL pattern.");
-        if ([pattern hasPrefix:@"/"] && [pattern hasSuffix:@"/"])
+        if (pattern.length >= 2 && [pattern hasPrefix:@"/"] && [pattern hasSuffix:@"/"])
             return CustomFilterError(error, number, @"Regular expressions are not supported.");
         for (NSUInteger i = 0; i < pattern.length; ++i) {
             unichar c = [pattern characterAtIndex:i];
@@ -163,6 +174,12 @@ BOOL ParseCustomFilters(id value, std::vector<Rule> *rules, NSError **error) {
             Rule rule;
             rule.allow = allow;
             SetPattern(rule, pattern);
+            // Every match must contain this literal, including domain-anchored rules.
+            std::string run;
+            for (char ch : rule.pattern) {
+                if (ch == '*' || ch == '^') run.clear();
+                else { run += ch; if (run.size() > rule.token.size()) rule.token = run; }
+            }
             rules->push_back(std::move(rule));
         }
     }
@@ -197,6 +214,7 @@ BOOL LTValidateCustomFilters(id text, NSError **error) {
     std::string full = S(url), lower = Lower(full), host = Host(url), resource = S(type);
     LTNetworkDecision decision = LTNetworkNoMatch;
     for (const Rule &rule : _rules) {
+        if (rule.token.size() >= 5 && lower.find(rule.token) == std::string::npos) continue;
         if (!rule.matches(full, lower, host, "", resource, "", false)) continue;
         if (rule.allow) return LTNetworkAllow;
         decision = LTNetworkBlock;

@@ -79,12 +79,20 @@ an object/array value; ordinary escaped mentions are preserved.
 ## Custom network filters
 
 Open **Content Blocking → Custom Filters…** to enter one network filter per line.
-An empty line is ignored, and a line starting with `!` is a comment. Patterns are
+Opening the editor first saves the switches in the Content Blocking sheet, without
+reloading the page. Cancel in the editor leaves those switches saved and discards
+only the filter draft. Return inserts a newline in the editor; use **Apply and
+Reload** to save the text.
+
+Surrounding spaces and tabs are ignored. An empty line is ignored, and a line
+starting with `!` is a comment. `[Adblock]` or `[Adblock Plus 2.0]` is accepted on
+the first nonempty line; other or misplaced list headers must be removed. Patterns are
 case-insensitive ASCII and match anywhere in the request URL unless anchored:
 
 | Syntax | Meaning |
 | --- | --- |
 | `tracker.example/pixel` | Block a URL containing this text |
+| `/` | Match a literal slash, as a broad URL pattern |
 | `*` | Match any run of characters |
 | `^` | Match a URL separator or the end of the URL |
 | `|https://example.com/pixel|` | Match this complete URL |
@@ -100,7 +108,7 @@ For example:
 ```
 
 The editor accepts at most 1,000 active rules, 2,048 characters per line (including
-comments), and 256 KiB of UTF-8 text in total. It refuses the entire edit if any line
+comments and surrounding whitespace), and 256 KiB of UTF-8 text in total. It refuses the entire edit if any line
 is invalid, reports its line number and reason, and keeps the saved filters. The
 same validation applies when reading or saving a profile. Unsupported forms include
 `$` options such as `$third-party` and `$domain=`, cosmetic rules such as `##`,
@@ -128,6 +136,36 @@ The editor makes no network requests and never uploads the text. Bookmarks and
 organization exports do not include settings, so they do not include custom filters.
 Custom cosmetic filters, regular expressions, scriptlets and an element picker
 remain outside this first part of the roadmap goal.
+
+### Matching cost
+
+On 10 November 2026, a Release build on local Apple Silicon measured 1,000 custom
+rules against 3,000 distinct nonmatching URLs. Each request considers every custom
+rule. A rule's longest mandatory literal of at least five characters is checked
+first; if the URL lacks it, Lite skips the full wildcard match. Shorter literals
+and patterns without a literal still use the full matcher. This is a substring
+precheck, not an index.
+
+| Run | Average per request | Slowest request |
+| --- | --- | --- |
+| Before literal prefilter | 0.270 ms | 0.446 ms |
+| Before prefilter, during native-window validation | 0.294 ms | 0.780 ms |
+| After literal prefilter | 0.113 ms | 0.173 ms |
+
+`LiteCustomFilterTests` uses mixed hostname anchors and substring globs, prebuilt
+URLs no longer than 512 characters, 30 warm-up requests, and a small bundled-rule
+fixture. The timed policy calls include the fallback to that fixture; generating
+the rules and URLs is outside the measurement. This is a synthetic matching
+measurement, not page-load time or a bound for every possible glob and URL.
+
+The test prints both the average and slowest call. Its mean budget is **0.350 ms
+on arm64**, about three times the new local baseline, and **0.700 ms on Intel**,
+allowing another factor of two for the slower hosted CPU. These budgets were set
+before the hosted measurements. The release gate repeats this focused test with
+verbose output so CI records the timings even on a pass. The matcher still scans
+a list, and matching cost adds up across a page's requests; these figures do not
+qualify adversarial patterns or very long URLs. The slowest call is reported
+without a hard gate because scheduling can interrupt an individual call.
 
 ## Source, updates, and licensing
 
