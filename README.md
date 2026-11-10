@@ -47,6 +47,9 @@ launched process. The Codex Run action uses the same script.
   multiple containers, and safe rejection of broken references. HTML, Chromium JSON,
   and Safari plist bookmark import are separate workflows.
 - Command Bar with direct address entry, search-first text queries, exact saved URL/title matches, and fuzzy browser commands.
+- Seven built-in search engines and your own custom ones. Search suggestions in the
+  Command Bar are off by default; when you turn them on, what you type there goes to your
+  search engine, except addresses and anything in a private window.
 - Reopen Closed Tab and Reopen Closed Window, which keep the 30 most recently closed
   tabs and windows across quitting. Deleting history removes them too.
 - Real Chromium pages, navigation, TLS status, DevTools, find, zoom, print, HTML save,
@@ -103,4 +106,4 @@ measured results and remaining qualification work.
 
 CEF, Chromium, uBlock Origin Lite, and Public Suffix List notices are included in the application Resources directory.
 Lite contains no account service, telemetry SDK, analytics, AI subsystem, or proprietary
-Arc assets. Consented crash reports are the only data Lite itself sends about the app. Arc names occur only when identifying an import source or imported data.
+Arc assets. Consented crash reports are the only data Lite itself sends about the app. Search suggestions, when you turn them on, send the text you type in the Command Bar to the search engine you chose. Arc names occur only when identifying an import source or imported data.
