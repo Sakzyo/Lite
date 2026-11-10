@@ -17,7 +17,7 @@ from unittest import mock
 import fetch_cef
 import update_cef
 from sdk_support import digest, download, extract_tar, recover, replace_directory, valid_receipt
-from package import crash_configuration, release_configuration
+from package import crash_configuration, filter_configuration, release_configuration
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 ARCH = 'macosarm64' if platform.machine() == 'arm64' else 'macosx64'
@@ -177,6 +177,27 @@ class CrashConfigurationTests(unittest.TestCase):
                       'https://user:secret@o1.ingest.sentry.io/', 'not a url']:
             with self.assertRaises(ValueError, msg=value):
                 crash_configuration({}, value)
+
+
+class FilterConfigurationTests(unittest.TestCase):
+    KEY = 'MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE/eSuEG+xnhiwzt/9ax1u2hlYz8uMubIwYTbssz6EQUClaHRCycC6W3t4pgLebt7gR/pp45H1RxSTWhu81utj0Q=='
+
+    def test_feed_and_key_are_both_required_and_checked(self):
+        info = {}
+        filter_configuration(info, None, None, production=True)
+        self.assertEqual(info, {})
+        filter_configuration(info, 'https://filters.example/lite/', self.KEY, production=True)
+        self.assertEqual(info, dict(LTFilterFeedURL='https://filters.example/lite/', LTFilterPublicKey=self.KEY))
+        point = base64.b64encode(base64.b64decode(self.KEY)[26:]).decode()
+        filter_configuration({}, 'https://filters.example/', point, production=True)
+        filter_configuration({}, 'http://127.0.0.1:18743/filters/', self.KEY)
+        for feed, key, production in [('https://filters.example/', None, True), (None, self.KEY, True),
+                                      ('http://filters.example/', self.KEY, False), ('http://127.0.0.1/filters/', self.KEY, True),
+                                      ('https://user:pw@filters.example/', self.KEY, True), ('https://filters.example/?a=1', self.KEY, True),
+                                      ('https://filters.example/', base64.b64encode(b'\x04' + b'\0' * 31).decode(), True),
+                                      ('https://filters.example/', 'not base64!', True)]:
+            with self.subTest(feed=feed, key=key, production=production), self.assertRaises(ValueError):
+                filter_configuration({}, feed, key, production)
 
 
 class CEFPinTests(unittest.TestCase):

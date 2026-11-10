@@ -50,7 +50,7 @@ static BOOL Settings(NSDictionary *settings) {
     NSDictionary *blocking = settings[@"contentBlocking"];
     if (blocking) {
         if (![blocking isKindOfClass:NSDictionary.class]) return NO;
-        for (NSString *key in @[@"disabled", @"cosmeticDisabled"])
+        for (NSString *key in @[@"disabled", @"cosmeticDisabled", @"updatesDisabled"])
             if (blocking[key] && !BoolValue(blocking[key])) return NO;
         if (blocking[@"disabledSites"]) {
             if (![blocking[@"disabledSites"] isKindOfClass:NSArray.class]) return NO;

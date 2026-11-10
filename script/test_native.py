@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import pathlib
+import shutil
 import signal
 import sqlite3
 import subprocess
@@ -34,7 +35,29 @@ REQUIRED = ['nativeMainWindow', 'nativeAccessibleNavigation', 'nativeFixtureSeed
             'nativePrivateClearStorageEmpty', 'nativePrivateClearPreservesRegularData',
             'nativeRegularWindowClosure', 'nativeTabClosure', 'nativeClosedTabRecorded',
             'nativeClosedWindowRecorded', 'nativeReopenClosedTab', 'nativeReopenClosedWindow', 'nativeAuthenticationDialog',
-            'nativeAuthenticationSucceeded', 'nativeCrashPromptDisclosure', 'nativeCrashPromptDefaultsToDecline']
+            'nativeAuthenticationSucceeded', 'nativeCrashPromptDisclosure', 'nativeCrashPromptDefaultsToDecline',
+            'nativeFilterUpdateControls', 'nativeFilterUpdateInstalled']
+
+
+def publish_test_filters(profile):
+    """Sign a filter set with one extra rule, blocking filter-update.test, with a key made for this run.
+    The fixture server serves it at /filters/. Returns the public key."""
+    feed = ROOT / '.build/native-filter-feed'
+    shutil.rmtree(feed, ignore_errors=True)
+    source = profile / 'filter-source'
+    shutil.copytree(ROOT / 'resources/ContentBlocking', source)
+    rules = json.loads((source / 'network.json').read_text())
+    rules.append({'action': {'type': 'block'}, 'condition': {'urlFilter': '||filter-update.test^'}, 'priority': 1})
+    (source / 'network.json').write_text(json.dumps(rules, separators=(',', ':')))
+    provenance = json.loads((source / 'provenance.json').read_text())
+    provenance['sha256']['network.json'] = hashlib.sha256((source / 'network.json').read_bytes()).hexdigest()
+    provenance['networkRules'] = len(rules)
+    (source / 'provenance.json').write_text(json.dumps(provenance))
+    script = [sys.executable, str(ROOT / 'script/sign_filters.py')]
+    created = subprocess.run(script + ['key', str(profile / 'filter-key.pem')], check=True, capture_output=True, text=True).stdout
+    subprocess.run(script + ['serial', '--source', str(source)], check=True, capture_output=True)
+    subprocess.run(script + ['publish', str(feed), '--key', str(profile / 'filter-key.pem'), '--source', str(source)], check=True, capture_output=True)
+    return next(line.split('=', 1)[1] for line in created.splitlines() if line.startswith('LITE_FILTER_PUBLIC_KEY='))
 
 
 def main():
@@ -72,6 +95,7 @@ def main():
         os.utime(dump, (now - age, now - age))
     (profile / 'PrivateSession.marker').touch()
     os.utime(profile / 'PrivateSession.marker', (now - 60, now - 60))
+    filter_key = publish_test_filters(profile)
     server = None
     output = profile / 'native-results.json'
     try:
@@ -87,7 +111,8 @@ def main():
         subprocess.run(['open', '-n', str(app), '--stdout', str(profile / 'stdout.log'), '--stderr',
                         str(profile / 'stderr.log'), '--args', '--lite-test-profile=' + str(profile),
                         '--lite-native-smoke', '--use-mock-keychain',
-                        '--lite-crash-upload=http://127.0.0.1:18743/crash-upload'], check=True)
+                        '--lite-crash-upload=http://127.0.0.1:18743/crash-upload',
+                        '--lite-filter-feed=http://127.0.0.1:18743/filters/', '--lite-filter-key=' + filter_key], check=True)
         deadline = time.monotonic() + 115
         while not output.exists() and time.monotonic() < deadline:
             time.sleep(.2)
@@ -113,6 +138,8 @@ def main():
             uploads = json.load(response)
         with urllib.request.urlopen('http://127.0.0.1:18743/suggest-log', timeout=5) as response:
             suggested = json.load(response)
+        with urllib.request.urlopen('http://127.0.0.1:18743/filter-log', timeout=5) as response:
+            filter_requests = json.load(response)
         checks = {'nativeCrashUploadOnlyApprovedReport': len(uploads) == 1 and 'synthetic-offered' in uploads[0]['body'] and uploads[0]['contentType'].startswith('multipart/form-data'),
                   'nativeCrashUploadNoCookies': bool(uploads) and not uploads[0]['cookie'],
                   'nativeCrashReportsRemovedAfterHandling': not list(profile.glob('Chromium/*/*.dmp')),
@@ -120,7 +147,10 @@ def main():
                   # Not the page address the Command Bar opened with, not text replaced before
                   # typing paused, and nothing typed in the private window.
                   'nativeSuggestionsOnlyTypedSearch': [entry['query'] for entry in suggested] == ['lite fixt'],
-                  'nativeSuggestionsNoCookies': bool(suggested) and not any(entry['cookie'] for entry in suggested)}
+                  'nativeSuggestionsNoCookies': bool(suggested) and not any(entry['cookie'] for entry in suggested),
+                  # The manifest, its signature and the seven files, once each, without cookies.
+                  'nativeFilterUpdateRequests': len(filter_requests) == 9 and len({e['path'] for e in filter_requests}) == 9 and
+                      not any(e['cookie'] for e in filter_requests) and all(e['agent'] == 'Lite-Browser' for e in filter_requests)}
         result.update(checks)
         failures += [key for key, passed in checks.items() if not passed]
         if failures and window_failure(result):

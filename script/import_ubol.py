@@ -5,6 +5,7 @@ Usage: python3 script/import_ubol.py CHECKOUT PUBLIC_SUFFIX_LIST
 The app loads only generated data. Updating filters is an explicit maintainer step.
 """
 import collections
+import datetime
 import hashlib
 import json
 import pathlib
@@ -105,6 +106,8 @@ def main():
     write('provenance.json', {
         'project': 'uBlock Origin Lite', 'source': 'https://github.com/uBlockOrigin/uBOL-home',
         'revision': revision, 'version': json.loads((upstream/'manifest.json').read_text())['version'],
+        # When this set was made, as YYYYMMDDHHMM in UTC. Filter updates must carry a larger serial.
+        'serial': int(datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%d%H%M')),
         'publicSuffixSource': 'https://publicsuffix.org/list/public_suffix_list.dat',
         'rulesets': counts, 'networkRules': len(rules), 'genericSelectors': len(generic - {''}),
         'sha256': {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(out.iterdir())
