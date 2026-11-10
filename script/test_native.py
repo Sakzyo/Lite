@@ -148,10 +148,12 @@ def main():
                   # typing paused, and nothing typed in the private window.
                   'nativeSuggestionsOnlyTypedSearch': [entry['query'] for entry in suggested] == ['lite fixt'],
                   'nativeSuggestionsNoCookies': bool(suggested) and not any(entry['cookie'] for entry in suggested),
-                  # The manifest, its signature and the seven files, once each, without cookies.
-                  'nativeFilterUpdateRequests': len(filter_requests) == 9 and len({e['path'] for e in filter_requests}) == 9 and
+                  # The manifest, its signature and the seven files, without cookies. A failed check is
+                  # retried, so a path may be asked for more than once.
+                  'nativeFilterUpdateRequests': len({e['path'] for e in filter_requests}) == 9 and
                       not any(e['cookie'] for e in filter_requests) and all(e['agent'] == 'Lite-Browser' for e in filter_requests)}
         result.update(checks)
+        result['filterRequests'] = filter_requests
         failures += [key for key, passed in checks.items() if not passed]
         if failures and window_failure(result):
             failures.insert(0, window_failure(result))

@@ -212,18 +212,22 @@ static std::string extensionSwitch;
 #endif
 }
 // Filter updates are checked 30 seconds after launch and then hourly, but the feed is asked at most
-// once a day unless the user asks from the Content Blocking sheet.
+// once a day, or an hour after a failed check, unless the user asks from the Content Blocking sheet.
 - (void)scheduleFilterChecks {
     if (!LTFilterUpdater.shared) return;
     double delay = 30;
 #ifdef LITE_TEST_BUILD
-    if (testProfile) delay = 1;
+    if (testProfile) {
+        delay = 1;
+        LTFilterUpdater.shared.retryInterval = 5;
+        LTFilterUpdater.shared.requestTimeout = 10;
+    }
 #endif
     __weak typeof(self) weak = self;
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         [weak checkFiltersIfDue];
     });
-    _filterTimer = [NSTimer scheduledTimerWithTimeInterval:3600 repeats:YES block:^(NSTimer *timer) {
+    _filterTimer = [NSTimer scheduledTimerWithTimeInterval:MIN(3600, LTFilterUpdater.shared.retryInterval) repeats:YES block:^(NSTimer *timer) {
         [weak checkFiltersIfDue];
     }];
 }

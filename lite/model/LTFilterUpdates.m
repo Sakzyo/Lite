@@ -156,6 +156,7 @@ static LTFilterUpdater *sharedUpdater;
 @implementation LTFilterUpdater {
     SecKeyRef _key;
     dispatch_queue_t _queue;
+    BOOL _lastFailed;
 }
 + (LTFilterUpdater *)shared { return sharedUpdater; }
 + (void)setShared:(LTFilterUpdater *)updater { sharedUpdater = updater; }
@@ -177,7 +178,10 @@ static LTFilterUpdater *sharedUpdater;
     if ([saved isKindOfClass:NSDictionary.class]) {
         if (Integer(saved[@"lastCheck"], 0, INT64_MAX)) _lastCheck = [saved[@"lastCheck"] doubleValue];
         if ([saved[@"lastResult"] isKindOfClass:NSString.class]) _lastResult = [saved[@"lastResult"] copy];
+        _lastFailed = [saved[@"failed"] isEqual:@YES];
     }
+    _retryInterval = 60 * 60;
+    _requestTimeout = 30;
     if (!_lastResult) _lastResult = @"";
     return self;
 }
@@ -192,7 +196,8 @@ static LTFilterUpdater *sharedUpdater;
     }];
 }
 - (BOOL)isDue:(double)now {
-    return _lastCheck <= 0 || now - _lastCheck >= CheckInterval || now < _lastCheck;
+    return _lastCheck <= 0 || now - _lastCheck >= (_lastFailed ? MIN(_retryInterval, CheckInterval) : CheckInterval) ||
+           now < _lastCheck;
 }
 - (NSString *)path:(NSString *)name {
     return [_directory stringByAppendingPathComponent:name];
@@ -235,7 +240,7 @@ static LTFilterUpdater *sharedUpdater;
     c.URLCredentialStorage = nil;
     c.URLCache = nil;
     c.requestCachePolicy = NSURLRequestReloadIgnoringLocalAndRemoteCacheData;
-    c.timeoutIntervalForRequest = 30;
+    c.timeoutIntervalForRequest = _requestTimeout;
     c.timeoutIntervalForResource = 300;
     c.HTTPAdditionalHeaders = @{@"User-Agent" : @"Lite-Browser"};
     if (_protocolClasses) c.protocolClasses = [_protocolClasses arrayByAddingObjectsFromArray:c.protocolClasses];
@@ -249,7 +254,7 @@ static LTFilterUpdater *sharedUpdater;
     [[session dataTaskWithURL:url completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
         NSInteger status = [response isKindOfClass:NSHTTPURLResponse.class] ? ((NSHTTPURLResponse *)response).statusCode : 0;
         if (error || status != 200)
-            completion(nil, LTError(error ? [@"The filter server could not be reached: " stringByAppendingString:error.localizedDescription]
+            completion(nil, LTError(error ? [NSString stringWithFormat:@"The filter server could not be reached for %@: %@", path, error.localizedDescription]
                                           : [NSString stringWithFormat:@"The filter server answered %ld for %@.", (long)status, path]));
         else if ((int64_t)data.length > limit)
             completion(nil, LTError(@"The filter server sent more data than expected."));
@@ -263,11 +268,13 @@ static LTFilterUpdater *sharedUpdater;
     completion:(void (^)(LTContentBlocker *, NSError *))completion {
     double now = NSDate.date.timeIntervalSince1970;
     NSString *text = error ? [@"Failed: " stringByAppendingString:error.localizedDescription] : result ?: @"Failed";
-    NSData *state = [NSJSONSerialization dataWithJSONObject:@{@"lastCheck" : @(floor(now)), @"lastResult" : text} options:0 error:nil];
+    NSData *state = [NSJSONSerialization dataWithJSONObject:@{@"lastCheck" : @(floor(now)), @"lastResult" : text, @"failed" : @(error != nil)}
+                                                    options:0 error:nil];
     [state writeToFile:[self path:@"state.json"] options:NSDataWritingAtomic error:nil];
     dispatch_async(dispatch_get_main_queue(), ^{
         self->_lastCheck = floor(now);
         self->_lastResult = text;
+        self->_lastFailed = error != nil;
         self->_checking = NO;
         completion(blocker, error);
     });
@@ -293,34 +300,48 @@ static LTFilterUpdater *sharedUpdater;
             int64_t offered = [m[@"serial"] longLongValue];
             if (offered <= serial) { done(nil, nil, @"Up to date"); return; }
             NSMutableDictionary *contents = [NSMutableDictionary new];
-            __block NSError *failure = nil;
-            dispatch_group_t group = dispatch_group_create();
-            for (NSString *name in LTFilterFiles()) {
-                NSDictionary *file = m[@"files"][name];
-                dispatch_group_enter(group);
-                [self get:[NSString stringWithFormat:@"%lld/%@", offered, name] session:session
-                    limit:[file[@"size"] longLongValue] completion:^(NSData *data, NSError *error) {
-                    NSError *problem = error;
-                    if (data && !Matches(data, file))
-                        problem = LTError([name stringByAppendingString:@" does not match the signed filter manifest."]);
-                    else if (data && [name isEqual:@"provenance.json"] && !ProvenanceMatches(data, offered))
-                        problem = LTError(@"The filter provenance does not match the signed filter manifest.");
-                    dispatch_async(self->_queue, ^{
-                        if (problem && !failure) failure = problem;
-                        if (!problem) contents[name] = data;
-                        dispatch_group_leave(group);
-                    });
-                }];
-            }
-            dispatch_group_notify(group, self->_queue, ^{
-                if (failure) { done(nil, failure, nil); return; }
-                NSError *installError = nil;
-                LTContentBlocker *blocker = [self install:contents manifest:manifest signature:signature
-                                                   serial:offered error:&installError];
-                done(blocker, installError, blocker ? [@"Installed filters published " stringByAppendingString:
-                                                       LTFilterSerialDate(offered) ?: @(offered).stringValue] : nil);
-            });
+            [self fetch:LTFilterFiles() from:0 manifest:m serial:offered session:session into:contents
+             completion:^(NSError *failure) {
+                dispatch_async(self->_queue, ^{
+                    if (failure) { done(nil, failure, nil); return; }
+                    NSError *installError = nil;
+                    LTContentBlocker *blocker = [self install:contents manifest:manifest signature:signature
+                                                       serial:offered error:&installError];
+                    done(blocker, installError, blocker ? [@"Installed filters published " stringByAppendingString:
+                                                           LTFilterSerialDate(offered) ?: @(offered).stringValue] : nil);
+                });
+            }];
         }];
+    }];
+}
+// Downloads the files one at a time, checking each against the manifest, so a check holds at most
+// one connection to the feed host.
+- (void)fetch:(NSArray<NSString *> *)names
+         from:(NSUInteger)index
+     manifest:(NSDictionary *)manifest
+       serial:(int64_t)serial
+      session:(NSURLSession *)session
+         into:(NSMutableDictionary *)contents
+   completion:(void (^)(NSError *failure))completion {
+    if (index == names.count) {
+        completion(nil);
+        return;
+    }
+    NSString *name = names[index];
+    NSDictionary *file = manifest[@"files"][name];
+    [self get:[NSString stringWithFormat:@"%lld/%@", serial, name] session:session
+        limit:[file[@"size"] longLongValue] completion:^(NSData *data, NSError *error) {
+        if (!data) { completion(error); return; }
+        if (!Matches(data, file)) {
+            completion(LTError([name stringByAppendingString:@" does not match the signed filter manifest."]));
+            return;
+        }
+        if ([name isEqual:@"provenance.json"] && !ProvenanceMatches(data, serial)) {
+            completion(LTError(@"The filter provenance does not match the signed filter manifest."));
+            return;
+        }
+        contents[name] = data;
+        [self fetch:names from:index + 1 manifest:manifest serial:serial session:session into:contents completion:completion];
     }];
 }
 // Writes the set beside the installed one, compiles it, then makes it current. Runs on `_queue`.

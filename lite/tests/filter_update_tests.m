@@ -263,8 +263,12 @@ int main(void) {
         bad = Set(202611111200, @"bad.test");
         Serve(key, Manifest(202611111200, bad), bad, 202611111200);
         @synchronized(served) { [served removeObjectForKey:@"/lite/202611111200/youtube.js"]; }
-        CHECK(!Check(updater, installed.serial) && [lastError.localizedDescription containsString:@"404"] && [Entries(directory) isEqual:before],
-              "a missing file installs nothing");
+        CHECK(!Check(updater, installed.serial) && [lastError.localizedDescription containsString:@"404"] &&
+                  [lastError.localizedDescription containsString:@"youtube.js"] && [Entries(directory) isEqual:before],
+              "a missing file installs nothing, and the error names it");
+        double failedAt = updater.lastCheck;
+        CHECK(![updater isDue:failedAt + 60] && [updater isDue:failedAt + 3600] && [Updater(directory, publicKey) isDue:failedAt + 3600],
+              "a failed check is retried an hour later, also after relaunching");
         Serve(other, Manifest(202611111200, bad), bad, 202611111200);
         CHECK(!Check(updater, installed.serial) && [lastError.localizedDescription containsString:@"signature"], "a feed signed by another key is refused");
         @synchronized(served) { served[@"/lite/filters.json"] = @302; }

@@ -40,6 +40,10 @@ FOUNDATION_EXPORT NSDictionary *_Nullable LTVerifiedFilterManifest(NSData *manif
 @property (nonatomic, readonly) double lastCheck;
 @property (nonatomic, readonly, copy) NSString *lastResult;
 @property (nonatomic, readonly) BOOL checking;
+// How long after a failed check the next one is due, and how long a request may wait for data.
+// One hour and 30 seconds unless changed, for tests.
+@property (nonatomic) double retryInterval;
+@property (nonatomic) double requestTimeout;
 // Extra NSURLProtocol classes, for tests.
 @property (nonatomic, copy, nullable) NSArray<Class> *protocolClasses;
 // nil unless the feed passes LTFilterFeedURL and the key LTFilterPublicKeyCreate. `directory` is
@@ -58,7 +62,8 @@ FOUNDATION_EXPORT NSDictionary *_Nullable LTVerifiedFilterManifest(NSData *manif
 // Checks for filters newer than the ones in use and installs them with +[LTContentBlocker install:].
 // Posts LTFilterUpdatesChanged when finished.
 - (void)updateFilters;
-// Whether a scheduled check is due: never checked, or at least 24 hours since the last one.
+// Whether a scheduled check is due: never checked, 24 hours since the last check, or
+// `retryInterval` since the last check failed.
 - (BOOL)isDue:(double)now;
 @end
 NS_ASSUME_NONNULL_END

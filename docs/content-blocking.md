@@ -130,8 +130,9 @@ Upload them in that order so a client never reads a manifest whose files are mis
 Any static HTTPS host works. Choosing it is a release decision, not yet made.
 
 **Checking.** Lite looks 30 seconds after launch and then hourly, but asks the feed only
-if 24 hours have passed since its last check, or when **Check Now** is pressed in the
-Content Blocking sheet. **Update filters automatically** there turns scheduled checks
+if 24 hours have passed since its last check, an hour since a check that failed, or when
+**Check Now** is pressed in the Content Blocking sheet. It downloads the files one at a
+time, so a check holds at most one connection to the feed host. **Update filters automatically** there turns scheduled checks
 off; it is saved in the regular profile and cannot be changed from a private window.
 Requests are GETs with no cookies, credentials or cache, `Lite-Browser` as the user
 agent, and no redirects. The feed host learns the Mac's IP address and that it runs Lite,
