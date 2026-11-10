@@ -2009,12 +2009,17 @@
     alert.accessoryView = options;
     [alert addButtonWithTitle:@"Apply and Reload"];
     [alert addButtonWithTitle:@"Cancel"];
+    [alert addButtonWithTitle:@"Custom Filters…"];
     [alert beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse response) {
         BOOL siteSettable = site.enabled, siteDisabled = site.state == NSControlStateValueOn;
         BOOL blockingOn = enabled.state == NSControlStateValueOn, cosmeticOn = cosmetic.state == NSControlStateValueOn;
         BOOL updatesSettable = automatic.enabled, updatesOn = automatic.state == NSControlStateValueOn;
         if (self->_filterObserver) [NSNotificationCenter.defaultCenter removeObserver:self->_filterObserver];
         self->_filterObserver = nil;
+        if (response == NSAlertThirdButtonReturn) {
+            [self editCustomFilters:self->_store.profile.settings[@"contentBlocking"][@"customFilters"] ?: @"" problem:nil];
+            return;
+        }
         if (response != NSAlertFirstButtonReturn) return; // Cancel changes nothing and does not reload.
         [self commit:^(LTProfile *profile) {
             NSMutableDictionary *updated = [profile.settings[@"contentBlocking"] mutableCopy] ?: [NSMutableDictionary new];
@@ -2032,6 +2037,52 @@
             [page reload];
         }];
     }];
+}
+- (void)editCustomFilters:(NSString *)draft problem:(NSString *)problem {
+    NSAlert *alert = [NSAlert new];
+    alert.messageText = @"Custom network filters";
+    alert.informativeText = [NSString stringWithFormat:@"%@One URL pattern per line. Use ||ads.example^ to block a host’s requests, "
+        @"@@||ads.example/needed.js to allow a request, and ! for comments. *, ^, and | anchors are supported; "
+        @"options, regexes and cosmetic filters are not. Page navigation is not blocked.\n\n"
+        @"Up to 1,000 rules, 2,048 characters per line and 256 KiB total.%@",
+        problem.length ? [problem stringByAppendingString:@"\n\n"] : @"",
+        _store.privateMode ? @" Changes stay in this private window." : @" Saved locally in your profile."];
+    NSScrollView *scroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(0, 0, 480, 180)];
+    scroll.hasVerticalScroller = YES;
+    scroll.borderType = NSBezelBorder;
+    NSTextView *editor = [[NSTextView alloc] initWithFrame:scroll.bounds];
+    editor.richText = NO;
+    editor.automaticQuoteSubstitutionEnabled = NO;
+    editor.automaticDashSubstitutionEnabled = NO;
+    editor.automaticTextReplacementEnabled = NO;
+    editor.automaticSpellingCorrectionEnabled = NO;
+    editor.font = [NSFont monospacedSystemFontOfSize:12 weight:NSFontWeightRegular];
+    editor.textContainerInset = NSMakeSize(8, 8);
+    editor.autoresizingMask = NSViewWidthSizable;
+    editor.textContainer.widthTracksTextView = YES;
+    editor.accessibilityLabel = @"Custom network filters";
+    editor.string = draft;
+    scroll.documentView = editor;
+    alert.accessoryView = scroll;
+    [alert addButtonWithTitle:@"Apply and Reload"];
+    [alert addButtonWithTitle:@"Cancel"];
+    [alert beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse response) {
+        if (response != NSAlertFirstButtonReturn) return;
+        NSString *text = [editor.string copy];
+        NSError *error = nil;
+        if (!LTValidateCustomFilters(text, &error)) {
+            // Keep the draft available for correction as well as preserving the saved rules.
+            [self editCustomFilters:text problem:error.localizedDescription];
+            return;
+        }
+        LTPage *page = [self activePage];
+        [self commit:^(LTProfile *profile) {
+            NSMutableDictionary *preferences = [profile.settings[@"contentBlocking"] mutableCopy] ?: [NSMutableDictionary new];
+            preferences[@"customFilters"] = text;
+            profile.settings[@"contentBlocking"] = preferences;
+        } then:^{ [page reload]; }];
+    }];
+    [alert.window makeFirstResponder:editor];
 }
 - (NSString *)filterStatusText {
     LTFilterUpdater *updater = LTFilterUpdater.shared;

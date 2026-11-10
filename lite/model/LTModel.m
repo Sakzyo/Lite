@@ -1,5 +1,6 @@
 #import "LTModel.h"
 #import "LTExtensions.h"
+#import "../browser/LTContentBlocker.h"
 #include <math.h>
 #include <float.h>
 
@@ -52,6 +53,7 @@ static BOOL Settings(NSDictionary *settings) {
         if (![blocking isKindOfClass:NSDictionary.class]) return NO;
         for (NSString *key in @[@"disabled", @"cosmeticDisabled", @"updatesDisabled"])
             if (blocking[key] && !BoolValue(blocking[key])) return NO;
+        if (blocking[@"customFilters"] && !LTValidateCustomFilters(blocking[@"customFilters"], nil)) return NO;
         if (blocking[@"disabledSites"]) {
             if (![blocking[@"disabledSites"] isKindOfClass:NSArray.class]) return NO;
             for (id host in blocking[@"disabledSites"])

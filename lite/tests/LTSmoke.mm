@@ -442,9 +442,62 @@ static LTSmoke *running;
             // fixture's asynchronous load handler has read its elements.
             if (![NSProcessInfo.processInfo.arguments containsObject:@"--lite-blocking-smoke"])
                 [self checkPrivateLoginCapture];
-            [self.normalContext updateBlockingPreferences:nil];
-            self.stage = 29;
-            [self.normal navigate:@"https://www.youtube.com:18744/watch?v=first"];
+            [self.normalContext updateBlockingPreferences:@{@"customFilters":
+                @"/custom/probe\n/custom/filter-test\nwebtracking.min.js\n@@webtracking.min.js"}];
+            self.stage = 400;
+            [self.normal navigate:[self.origin stringByAppendingString:@"custom/filter-test?phase=custom-enabled"]];
+        }];
+    } else if ((_stage == 400 || _stage == 402 || _stage == 404 || _stage == 406 ||
+                _stage == 408 || _stage == 410) &&
+               !((_stage == 406 || _stage == 408) ? _privatePage.loading : _normal.loading)) {
+        NSInteger phase = _stage++;
+        LTPage *page = (phase == 406 || phase == 408) ? _privatePage : _normal;
+        [page evaluateForTesting:@"window.customFilterResult || null" completion:^(id value, BOOL success) {
+            NSString *expectedPhase = @[@"custom-enabled", @"custom-site-pause", @"custom-global-pause",
+                @"custom-private-seed", @"custom-private-edit", @"custom-regular-unchanged"][(phase - 400) / 2];
+            if (!success || ![value isKindOfClass:NSDictionary.class] || ![value[@"phase"] isEqual:expectedPhase]) {
+                self.stage = phase; return;
+            }
+            BOOL customBlocked = phase == 400 || phase == 406 || phase == 410;
+            BOOL exceptionAllowed = phase != 408;
+            NSString *key = phase == 400 ? @"customFiltersEnabled" : phase == 402 ? @"customFiltersSitePause" :
+                phase == 404 ? @"customFiltersGlobalPause" : phase == 406 ? @"customFiltersPrivateSeed" :
+                phase == 408 ? @"customFiltersPrivateEdit" : @"customFiltersRegularUnchanged";
+            self.results[key] = @([value[@"direct"] boolValue] != customBlocked &&
+                [value[@"redirected"] boolValue] != customBlocked &&
+                [value[@"workerBlocked"] isKindOfClass:NSNumber.class] && [value[@"workerBlocked"] boolValue] == customBlocked &&
+                [value[@"exception"] boolValue] == exceptionAllowed &&
+                [value[@"hits"] integerValue] == (customBlocked ? 0 : 3) &&
+                [value[@"exceptionHits"] integerValue] == (exceptionAllowed ? 1 : 0));
+            self.results[[key stringByAppendingString:@"Details"]] = value;
+            NSString *text = @"/custom/probe\n/custom/filter-test\nwebtracking.min.js\n@@webtracking.min.js";
+            if (phase == 410) {
+                [self.normalContext updateBlockingPreferences:nil];
+                [self.privateContext updateBlockingPreferences:nil];
+                self.stage = 29;
+                [self.normal navigate:@"https://www.youtube.com:18744/watch?v=first"];
+                return;
+            }
+            NSString *nextPhase;
+            LTPage *next = self.normal;
+            if (phase == 400) {
+                [self.normalContext updateBlockingPreferences:@{@"customFilters": text, @"disabledSites": @[@"127.0.0.1"]}];
+                nextPhase = @"custom-site-pause";
+            } else if (phase == 402) {
+                [self.normalContext updateBlockingPreferences:@{@"customFilters": text, @"disabled": @YES}];
+                nextPhase = @"custom-global-pause";
+            } else if (phase == 404) {
+                [self.normalContext updateBlockingPreferences:@{@"customFilters": text}];
+                [self.privateContext updateBlockingPreferences:@{@"customFilters": text}];
+                next = self.privatePage;
+                nextPhase = @"custom-private-seed";
+            } else if (phase == 406) {
+                [self.privateContext updateBlockingPreferences:@{@"customFilters": @""}];
+                next = self.privatePage;
+                nextPhase = @"custom-private-edit";
+            } else nextPhase = @"custom-regular-unchanged";
+            self.stage = phase + 2;
+            [next navigate:[self.origin stringByAppendingFormat:@"custom/filter-test?phase=%@", nextPhase]];
         }];
     } else if ((_stage == 29 || _stage == 31 || _stage == 33 || _stage == 35 || _stage == 37) &&
                !(_stage == 37 ? _privatePage.loading : _normal.loading)) {

@@ -5,6 +5,8 @@
 #import "../model/LTExtensions.h"
 #import "../model/LTFilterUpdates.h"
 
+static NSString *const CustomFilterFixture = @"! Native editor\n||custom-native.test^\n@@||custom-native.test/needed.js";
+
 // Exercise the same native command paths as the UI without exposing test flags
 // in the browser engine or changing lifecycle state to manufacture a pass.
 @interface LTWindow (NativeVerification)
@@ -344,6 +346,9 @@ static LTNativeSmoke *runningNative;
         }
         case 76:
             if (_owner.window.attachedSheet) return;
+            // Apply reloads the focused page; keep the primary page's unload fixture intact.
+            [_secondary focus]; [self advance:79 delay:.2]; break;
+        case 79:
             [_owner performCommand:@"contentBlocking"]; [self advance:77 delay:.2]; break;
         case 77: {
             NSWindow *sheet = _owner.window.attachedSheet;
@@ -351,10 +356,58 @@ static LTNativeSmoke *runningNative;
             if (!automatic) return;
             [self record:@"nativeFilterUpdateControls" passed:automatic.enabled && automatic.state == NSControlStateValueOn &&
                 Button(sheet, @"Check Now") && Label(sheet, @"Filter update status")];
+            [Button(sheet, @"Custom Filters…") performClick:nil]; [self advance:100 delay:.2]; break;
+        }
+        case 100: {
+            NSWindow *sheet = _owner.window.attachedSheet;
+            NSTextView *editor = (NSTextView *)Label(sheet, @"Custom network filters");
+            if (![editor isKindOfClass:NSTextView.class]) return;
+            [self record:@"nativeCustomFilterEditor" passed:editor.editable && !editor.richText &&
+                sheet.firstResponder == editor && Button(sheet, @"Apply and Reload") && Button(sheet, @"Cancel")];
+            editor.string = CustomFilterFixture;
+            [Button(sheet, @"Apply and Reload") performClick:nil]; [self advance:101 delay:.2]; break;
+        }
+        case 101:
+            if (_owner.window.attachedSheet || ![_owner.store.profile.settings[@"contentBlocking"][@"customFilters"] isEqual:CustomFilterFixture]) return;
+            [_owner performCommand:@"contentBlocking"]; [self advance:102 delay:.2]; break;
+        case 102:
+            [Button(_owner.window.attachedSheet, @"Custom Filters…") performClick:nil]; [self advance:103 delay:.2]; break;
+        case 103: {
+            NSWindow *sheet = _owner.window.attachedSheet;
+            NSTextView *editor = (NSTextView *)Label(sheet, @"Custom network filters");
+            if (![editor isKindOfClass:NSTextView.class]) return;
+            [self record:@"nativeCustomFilterApply" passed:[editor.string isEqual:CustomFilterFixture]];
+            editor.string = @"||canceled-native.test^";
+            [Button(sheet, @"Cancel") performClick:nil]; [self advance:104 delay:.2]; break;
+        }
+        case 104:
+            if (_owner.window.attachedSheet) return;
+            [self record:@"nativeCustomFilterCancel" passed:[_owner.store.profile.settings[@"contentBlocking"][@"customFilters"] isEqual:CustomFilterFixture]];
+            [_owner performCommand:@"contentBlocking"]; [self advance:105 delay:.2]; break;
+        case 105:
+            [Button(_owner.window.attachedSheet, @"Custom Filters…") performClick:nil]; [self advance:106 delay:.2]; break;
+        case 106: {
+            NSWindow *sheet = _owner.window.attachedSheet;
+            NSTextView *editor = (NSTextView *)Label(sheet, @"Custom network filters");
+            if (![editor isKindOfClass:NSTextView.class]) return;
+            editor.string = @"||valid-native.test^\n||unsupported.test^$third-party";
+            [Button(sheet, @"Apply and Reload") performClick:nil]; [self advance:107 delay:.2]; break;
+        }
+        case 107: {
+            NSWindow *sheet = _owner.window.attachedSheet;
+            NSTextView *editor = (NSTextView *)Label(sheet, @"Custom network filters");
+            if (![editor isKindOfClass:NSTextView.class]) return;
+            BOOL lineError = NO;
+            for (NSView *view in Views(sheet.contentView))
+                if ([view isKindOfClass:NSTextField.class] && [((NSTextField *)view).stringValue containsString:@"line 2"])
+                    lineError = YES;
+            [self record:@"nativeCustomFilterRejectsWholeDraft" passed:lineError && [editor.string containsString:@"$third-party"] &&
+                [_owner.store.profile.settings[@"contentBlocking"][@"customFilters"] isEqual:CustomFilterFixture]];
             [Button(sheet, @"Cancel") performClick:nil]; [self advance:78 delay:.2]; break;
         }
         case 78:
             if (_owner.window.attachedSheet) return;
+            [_primary focus];
             [_owner performCommand:@"downloads"]; [self advance:10 delay:.2]; break;
         case 10:
             _panel = VisibleWindow(@"Lite — Downloads");
@@ -423,6 +476,21 @@ static LTNativeSmoke *runningNative;
             NSDictionary *privateSettings = _privateWindow.store.profile.settings;
             [self record:@"nativePrivateSearchEngine" passed:[LTSelectedSearchEngine(privateSettings)[@"name"] isEqual:@"Fixture Search"] &&
                 !privateSettings[@"searchSuggestions"]];
+            [self record:@"nativePrivateCustomFiltersCopied" passed:[privateSettings[@"contentBlocking"][@"customFilters"] isEqual:CustomFilterFixture]];
+            [_privateWindow performCommand:@"contentBlocking"]; [self advance:110 delay:.2]; break;
+        }
+        case 110:
+            [Button(_privateWindow.window.attachedSheet, @"Custom Filters…") performClick:nil]; [self advance:111 delay:.2]; break;
+        case 111: {
+            NSWindow *sheet = _privateWindow.window.attachedSheet;
+            NSTextView *editor = (NSTextView *)Label(sheet, @"Custom network filters");
+            if (![editor isKindOfClass:NSTextView.class]) return;
+            editor.string = @"||private-native.test^";
+            [Button(sheet, @"Apply and Reload") performClick:nil]; [self advance:112 delay:.2]; break;
+        }
+        case 112: {
+            if (_privateWindow.window.attachedSheet || ![_privateWindow.store.profile.settings[@"contentBlocking"][@"customFilters"] isEqual:@"||private-native.test^"]) return;
+            [self record:@"nativePrivateCustomFilterEditsIsolated" passed:[_owner.store.profile.settings[@"contentBlocking"][@"customFilters"] isEqual:CustomFilterFixture]];
             [self advance:90 delay:0];
             [_privateWindow openURL:@"http://127.0.0.1:18743/storage" then:^{
                 self.privatePage = [self.privateWindow activePage];

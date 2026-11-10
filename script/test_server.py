@@ -7,6 +7,7 @@ from urllib.parse import urlsplit, parse_qs
 from pathlib import Path
 
 blocking_hits = {}
+custom_filter_hits = {}
 
 def png():
     def chunk(kind, data):
@@ -145,6 +146,49 @@ addEventListener('load',async()=>{
   normalVisible:getComputedStyle(document.querySelector('#normal-content')).display!=='none'};
 });</script>'''.encode()
             content = 'text/html'
+        elif parsed.path == '/custom/filter-test':
+            body = '''<!doctype html><meta charset="utf-8"><title>Lite custom filter test</title>
+<h1>Custom network filter verification</h1>
+<script nonce="lite-test">addEventListener('load',async()=>{
+ const phase=new URL(location.href).searchParams.get('phase');
+ const get=async path=>{try{return (await fetch(path,{cache:'no-store'})).ok}catch{return false}};
+ const direct=await get('/custom/probe?phase='+phase);
+ const redirected=await get('/custom/redirect?phase='+phase);
+ const exception=await get('/webtracking.min.js?phase='+phase);
+ const registration=await navigator.serviceWorker.register('/custom-worker.js',{scope:'/custom/'});
+ const worker=registration.installing||registration.waiting||registration.active;
+ if(worker.state!=='activated')await new Promise(resolve=>{
+  worker.addEventListener('statechange',()=>{if(worker.state==='activated')resolve()});
+ });
+ const workerBlocked=await new Promise(resolve=>{const channel=new MessageChannel();
+  const timer=setTimeout(()=>resolve(null),10000);
+  channel.port1.onmessage=e=>{clearTimeout(timer);resolve(e.data)};
+  registration.active.postMessage(phase,[channel.port2]);});
+ const hits=await(await fetch('/custom/hits?phase='+phase)).json();
+ const exceptionHits=await(await fetch('/blocking-hits?phase='+phase)).json();
+ window.customFilterResult={phase,direct,redirected,exception,workerBlocked,hits,exceptionHits};
+});</script>'''.encode()
+            content = 'text/html'
+        elif parsed.path == '/custom-worker.js':
+            body = b'''self.addEventListener('install',()=>self.skipWaiting());
+self.addEventListener('activate',e=>e.waitUntil(self.clients.claim()));
+self.addEventListener('message',e=>e.waitUntil((async()=>{
+ let blocked=false;try{await fetch('/custom/probe?phase='+e.data,{cache:'no-store'})}catch{blocked=true}
+ e.ports[0].postMessage(blocked);
+})()));'''
+            content = 'application/javascript'
+        elif parsed.path == '/custom/redirect':
+            self.send_response(302)
+            self.send_header('Location', '/custom/probe?phase='+phase)
+            self.send_header('Cache-Control', 'no-store')
+            self.send_header('Content-Length', '0')
+            self.end_headers()
+            return
+        elif parsed.path == '/custom/probe':
+            custom_filter_hits[phase] = custom_filter_hits.get(phase, 0) + 1
+            body, content = b'custom filter probe', 'text/plain'
+        elif parsed.path == '/custom/hits':
+            body, content = json.dumps(custom_filter_hits.get(phase, 0)).encode(), 'application/json'
         elif parsed.path == '/blocking-worker.js':
             body = b'''self.addEventListener('install',()=>self.skipWaiting());
 self.addEventListener('activate',e=>e.waitUntil(self.clients.claim()));
@@ -217,7 +261,7 @@ self.addEventListener('message',e=>e.waitUntil((async()=>{
         if parsed.path == '/scroll':
             body += b'<style>body{min-height:5000px}</style>'
         self.send_response(200)
-        if parsed.path in ('/content-blocking', '/watch'):
+        if parsed.path in ('/content-blocking', '/custom/filter-test', '/watch'):
             self.send_header('Content-Security-Policy', "default-src 'self'; script-src 'self' 'nonce-lite-test'; style-src 'none'")
         if parsed.path == '/lifecycle-probe':
             self.send_header('Content-Security-Policy', "default-src 'self' blob:; script-src 'nonce-lite-test'; style-src 'none'")
