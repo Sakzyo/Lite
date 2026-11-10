@@ -327,9 +327,23 @@ static LTNativeSmoke *runningNative;
             [self record:@"nativeSettingsSearchEngines" passed:[engines isKindOfClass:NSPopUpButton.class] && [engines.itemTitles containsObject:@"Kagi"] &&
                 [engines.titleOfSelectedItem isEqual:@"Fixture Search"] && Label(_panel, @"Add search engine") && remove.enabled &&
                 Button(_panel, @"Show search suggestions in the Command Bar").state == NSControlStateValueOn];
+            [self record:@"nativeSettingsExportControls" passed:Button(_panel, @"Export bookmarks (HTML)…") &&
+                Button(_panel, @"Export Lite organization…") && Button(_panel, @"Import bookmarks (HTML, Chromium, Safari, Lite)…")];
             [_panel performClose:nil];
-            [_owner performCommand:@"downloads"]; [self advance:10 delay:.2]; break;
+            [_owner performCommand:@"exportOrganization"]; [self advance:75 delay:.2]; break;
         }
+        case 75: {
+            NSSavePanel *save = (NSSavePanel *)_owner.window.attachedSheet;
+            if (![save isKindOfClass:NSSavePanel.class]) return;
+            NSMenu *library = [NSApp.mainMenu itemWithTitle:@"Library"].submenu;
+            [self record:@"nativeExportSavePanel" passed:[save.nameFieldStringValue hasPrefix:@"Lite Organization "] &&
+                [save.nameFieldStringValue hasSuffix:@".json"] && [save.message containsString:@"Temporary tabs are not included"] &&
+                [library itemWithTitle:@"Export Bookmarks…"] && [library itemWithTitle:@"Export Organization…"]];
+            [save cancel:nil]; [self advance:76 delay:.2]; break;
+        }
+        case 76:
+            if (_owner.window.attachedSheet) return;
+            [_owner performCommand:@"downloads"]; [self advance:10 delay:.2]; break;
         case 10:
             _panel = VisibleWindow(@"Lite — Downloads");
             [self record:@"nativeDownloadsAccessibleControls" passed:_panel && Label(_panel, @"Search downloads") && Label(_panel, @"Downloads") && Button(_panel, @"Pause / Resume")];

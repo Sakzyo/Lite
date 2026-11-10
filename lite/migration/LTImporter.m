@@ -1,4 +1,6 @@
 #import "LTImporter.h"
+#import "LTExporter.h"
+#include <math.h>
 static NSDictionary *D(id v) {
     return [v isKindOfClass:NSDictionary.class] ? v : @{};
 }
@@ -180,6 +182,106 @@ static NSString *ContainerID(NSDictionary *s, NSString *kind) {
     return YES;
 }
 @end
+// Reads the nested items of a Lite organization file. Items are created directly, in file order,
+// so a large file imports in linear time.
+static const NSUInteger OrganizationDepthLimit = 64;
+static const NSUInteger OrganizationItemLimit = 100000;
+@interface LTOrganizationReader : NSObject
+@property LTProfile *profile;
+@property NSUInteger count;
+@property NSUInteger skipped;
+@property (copy) NSString *damaged;
+@property (copy) NSString *problem;
+- (BOOL)fail:(NSString *)problem;
+- (BOOL)optionalString:(NSDictionary *)object key:(NSString *)key;
+- (BOOL)tab:(NSDictionary *)tab kind:(NSString *)kind space:(NSString *)space parent:(NSString *)parent;
+- (BOOL)items:(id)items space:(NSString *)space parent:(NSString *)parent depth:(NSUInteger)depth;
+@end
+@implementation LTOrganizationReader {
+    NSMutableDictionary<NSString *, NSNumber *> *_nextOrder;
+}
+- (BOOL)fail:(NSString *)problem {
+    if (!_problem)
+        _problem = problem;
+    return NO;
+}
+- (BOOL)optionalString:(NSDictionary *)object key:(NSString *)key {
+    return !object[key] || [object[key] isKindOfClass:NSString.class];
+}
+- (BOOL)counted {
+    if (++_count > OrganizationItemLimit)
+        return [self fail:@"This organization file has more than 100,000 items. Nothing was imported."];
+    return YES;
+}
+- (LTNode *)add:(NSString *)kind title:(NSString *)title url:(NSString *)url space:(NSString *)space parent:(NSString *)parent {
+    if (!_nextOrder)
+        _nextOrder = [NSMutableDictionary new];
+    NSString *key = [NSString stringWithFormat:@"%@/%@", space, parent];
+    LTNode *n = [LTNode new];
+    n.kind = kind;
+    n.title = title;
+    n.url = url;
+    n.spaceID = space;
+    n.parentID = parent;
+    n.order = [_nextOrder[key] integerValue];
+    _nextOrder[key] = @(n.order + 1);
+    [_profile.nodes addObject:n];
+    return n;
+}
+- (BOOL)tab:(NSDictionary *)tab kind:(NSString *)kind space:(NSString *)space parent:(NSString *)parent {
+    if (![tab[@"url"] isKindOfClass:NSString.class] || ![self optionalString:tab key:@"title"] ||
+        ![self optionalString:tab key:@"customTitle"])
+        return [self fail:_damaged];
+    if (![self counted])
+        return NO;
+    NSString *url = tab[@"url"];
+    if (!LTValidURL(url)) {
+        _skipped++;
+        return YES;
+    }
+    NSString *title = S(tab[@"title"]);
+    LTNode *n = [self add:kind
+                    title:title.length ? title : ([NSURL URLWithString:url].host ?: url)
+                      url:url
+                    space:space
+                   parent:parent];
+    n.customTitle = S(tab[@"customTitle"]);
+    n.pinnedURL = url;
+    return YES;
+}
+- (BOOL)items:(id)items space:(NSString *)space parent:(NSString *)parent depth:(NSUInteger)depth {
+    if (![items isKindOfClass:NSArray.class])
+        return [self fail:_damaged];
+    if (depth >= OrganizationDepthLimit)
+        return [self fail:@"Folders in this organization file are nested more than 64 deep. Nothing "
+                          @"was imported."];
+    for (NSDictionary *item in items) {
+        if (![item isKindOfClass:NSDictionary.class])
+            return [self fail:_damaged];
+        if ([item[@"type"] isEqual:@"tab"]) {
+            if (![self tab:item kind:@"pinned" space:space parent:parent])
+                return NO;
+        } else if ([item[@"type"] isEqual:@"folder"]) {
+            if (![self optionalString:item key:@"title"] ||
+                (item[@"open"] && ![item[@"open"] isKindOfClass:NSNumber.class]))
+                return [self fail:_damaged];
+            if (![self counted])
+                return NO;
+            NSString *title = S(item[@"title"]);
+            LTNode *folder = [self add:@"folder"
+                                 title:title.length ? title : @"Imported Folder"
+                                   url:@""
+                                 space:space
+                                parent:parent];
+            folder.expanded = item[@"open"] ? [item[@"open"] boolValue] : YES;
+            if (![self items:item[@"items"] ?: @[] space:space parent:folder.identifier depth:depth + 1])
+                return NO;
+        } else
+            return [self fail:_damaged];
+    }
+    return YES;
+}
+@end
 @implementation LTImporter
 + (NSArray<NSURL *> *)discoverArcFiles {
     NSFileManager *fm = NSFileManager.defaultManager;
@@ -348,6 +450,13 @@ static NSString *ContainerID(NSDictionary *s, NSString *kind) {
             n.order = i++;
     profile.activeSpaceID = result.profile.activeSpaceID;
     profile.settings[@"onboarded"] = @YES;
+    if (result.spaceThemes.count) {
+        NSDictionary *saved = profile.settings[@"spaceThemes"];
+        NSMutableDictionary *themes =
+            [saved isKindOfClass:NSDictionary.class] ? [saved mutableCopy] : [NSMutableDictionary new];
+        [themes addEntriesFromDictionary:result.spaceThemes];
+        profile.settings[@"spaceThemes"] = themes;
+    }
 }
 static void BookmarkTree(id entry, LTProfile *p, NSString *sid, NSString *parent) {
     NSDictionary *d = D(entry);
@@ -367,16 +476,21 @@ static void BookmarkTree(id entry, LTProfile *p, NSString *sid, NSString *parent
 + (LTImportResult *)parseBookmarks:(NSData *)data
                             format:(NSString *)format
                              error:(NSError **)error {
+    if ([format isEqual:@"json"] && data.length <= 64 * 1024 * 1024) {
+        id j = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+        if ([D(j)[@"format"] isEqual:LTOrganizationFormat])
+            return [self parseOrganization:data error:error];
+    }
     LTProfile *p = [LTProfile fresh];
     p.spaces.firstObject.name = @"Bookmarks";
     NSString *sid = p.activeSpaceID;
     NSString *root =
         [p addNode:@"folder" title:@"Imported Bookmarks" url:@"" space:sid parent:@""].identifier;
     if ([format isEqual:@"json"]) {
-        NSDictionary *j = [NSJSONSerialization JSONObjectWithData:data options:0 error:error];
+        id j = [NSJSONSerialization JSONObjectWithData:data options:0 error:error];
         if (!j)
             return nil;
-        NSDictionary *roots = D(j[@"roots"]);
+        NSDictionary *roots = D(D(j)[@"roots"]);
         if (!roots.count) {
             if (error)
                 *error = LTError(@"No Chromium bookmark roots were found.");
@@ -455,5 +569,86 @@ static void BookmarkTree(id entry, LTProfile *p, NSString *sid, NSString *parent
     r.profile = p;
     r.warnings = @[];
     return r;
+}
++ (LTImportResult *)parseOrganization:(NSData *)data error:(NSError **)error {
+    NSString *damaged =
+        @"This organization file is damaged or was edited incorrectly. Nothing was imported.";
+    if (data.length > 64 * 1024 * 1024) {
+        if (error)
+            *error = LTError(@"This organization file exceeds the 64 MB safety limit.");
+        return nil;
+    }
+    NSDictionary *j = D([NSJSONSerialization JSONObjectWithData:data options:0 error:nil]);
+    if (![j[@"format"] isEqual:LTOrganizationFormat]) {
+        if (error)
+            *error = LTError(@"This is not a Lite organization file.");
+        return nil;
+    }
+    id version = j[@"version"];
+    if (![version isKindOfClass:NSNumber.class] ||
+        CFGetTypeID((__bridge CFTypeRef)version) == CFBooleanGetTypeID() ||
+        floor([version doubleValue]) != [version doubleValue] || [version doubleValue] < 1) {
+        if (error)
+            *error = LTError(damaged);
+        return nil;
+    }
+    if ([version doubleValue] > LTOrganizationVersion) {
+        if (error)
+            *error = LTError(@"This organization file was made by a newer version of Lite. Update "
+                             @"Lite and try again.");
+        return nil;
+    }
+    NSArray *spaces = j[@"spaces"];
+    id favorites = j[@"favorites"] ?: @[];
+    if (![spaces isKindOfClass:NSArray.class] || !spaces.count || spaces.count > 4096 ||
+        ![favorites isKindOfClass:NSArray.class]) {
+        if (error)
+            *error = LTError(damaged);
+        return nil;
+    }
+    LTOrganizationReader *r = [LTOrganizationReader new];
+    r.profile = [LTProfile new];
+    r.damaged = damaged;
+    NSMutableDictionary *themes = [NSMutableDictionary new];
+    for (NSDictionary *space in spaces) {
+        if (![space isKindOfClass:NSDictionary.class] || ![r optionalString:space key:@"name"] ||
+            ![r optionalString:space key:@"theme"] || S(space[@"theme"]).length > 64) {
+            [r fail:damaged];
+            break;
+        }
+        NSString *name = S(space[@"name"]);
+        LTSpace *s = [r.profile addSpace:name.length ? name : @"Imported Space"];
+        if (S(space[@"theme"]).length)
+            themes[s.identifier] = space[@"theme"];
+        if (![r items:space[@"items"] ?: @[] space:s.identifier parent:@"" depth:0])
+            break;
+    }
+    if (!r.problem)
+        for (NSDictionary *favorite in favorites) {
+            if (![favorite isKindOfClass:NSDictionary.class]) {
+                [r fail:damaged];
+                break;
+            }
+            if (![r tab:favorite kind:@"favorite" space:@"" parent:@""])
+                break;
+        }
+    if (r.problem) {
+        if (error)
+            *error = LTError(r.problem);
+        return nil;
+    }
+    r.profile.activeSpaceID = r.profile.spaces.firstObject.identifier;
+    if (![r.profile validate:error])
+        return nil;
+    LTImportResult *result = [LTImportResult new];
+    result.profile = r.profile;
+    result.spaceThemes = themes;
+    result.warnings =
+        r.skipped == 1 ? @[ @"One tab with an empty or unsupported address was skipped." ]
+        : r.skipped    ? @[ [NSString stringWithFormat:@"%lu tabs with an empty or unsupported "
+                                                       @"address were skipped.",
+                                                       (unsigned long)r.skipped] ]
+                       : @[];
+    return result;
 }
 @end
