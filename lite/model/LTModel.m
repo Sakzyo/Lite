@@ -43,9 +43,8 @@ static BOOL JSONTree(id value, NSUInteger depth) {
 }
 static BOOL Settings(NSDictionary *settings) {
     if (![settings isKindOfClass:NSDictionary.class] || !JSONTree(settings, 0) ||
-        !Strings(settings, @[@"performance", @"search"], NO)) return NO;
+        !Strings(settings, @[@"performance"], NO) || !LTValidSearchSettings(settings)) return NO;
     if (settings[@"performance"] && ![@[@"Balanced", @"Efficient", @"Maximum Saving"] containsObject:settings[@"performance"]]) return NO;
-    if (settings[@"search"] && ![@[@"DuckDuckGo", @"Google"] containsObject:settings[@"search"]]) return NO;
     for (NSString *key in @[@"externalMini", @"onboarded"])
         if (settings[key] && !BoolValue(settings[key])) return NO;
     NSDictionary *blocking = settings[@"contentBlocking"];
@@ -159,7 +158,7 @@ BOOL LTValidURL(NSString *text) {
     if ([u.scheme isEqual:@"chrome-extension"]) return LTValidExtensionID(u.host);
     return [text isEqual:@"about:blank"] || ([u.scheme isEqual:@"chrome"] && u.host.length > 0);
 }
-NSString *LTURLFromInput(NSString *input, NSString *provider) {
+NSString *LTURLFromInput(NSString *input, NSDictionary *settings) {
     NSString *text =
         [input stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     if (LTValidURL(text))
@@ -174,14 +173,7 @@ NSString *LTURLFromInput(NSString *input, NSString *provider) {
         if (LTValidURL(candidate))
             return candidate;
     }
-    return LTSearchURL(text, provider);
-}
-NSString *LTSearchURL(NSString *query, NSString *provider) {
-    NSURLComponents *u = [NSURLComponents
-        componentsWithString:[provider isEqual:@"Google"] ? @"https://www.google.com/search"
-                                                          : @"https://duckduckgo.com/"];
-    u.queryItems = @[ [NSURLQueryItem queryItemWithName:@"q" value:query] ];
-    return u.URL.absoluteString;
+    return LTSearchURL(text, settings);
 }
 @implementation LTNode
 - (instancetype)init {
@@ -319,7 +311,7 @@ static NSDictionary *GroupChildren(NSArray<LTNode *> *nodes) {
     p.activeSpaceID = [p addSpace:@"Personal"].identifier;
     p.settings = [@{
         @"performance" : @"Efficient",
-        @"search" : @"DuckDuckGo",
+        @"search" : LTDefaultSearchEngine,
         @"externalMini" : @YES,
         @"onboarded" : @NO
     } mutableCopy];

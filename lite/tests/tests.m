@@ -402,9 +402,9 @@ int main(int argc, char **argv) {
             [NSFileManager.defaultManager removeItemAtPath:loginPath error:nil];
             [NSFileManager.defaultManager removeItemAtPath:[loginPath stringByAppendingString:@"-other"] error:nil];
         }
-        CHECK([LTURLFromInput(@"example.org", @"DuckDuckGo") isEqual:@"https://example.org"],
+        CHECK([LTURLFromInput(@"example.org", nil) isEqual:@"https://example.org"],
               "URL normalization");
-        CHECK([LTURLFromInput(@"two words", @"DuckDuckGo") containsString:@"q=two%20words"],
+        CHECK([LTURLFromInput(@"two words", nil) containsString:@"q=two%20words"],
               "search encoding");
         CHECK(!LTValidURL(@"javascript:alert(1)") && !LTValidURL(@"https://") &&
                   !LTValidURL(@"https://user:password@example.org"),
@@ -413,7 +413,7 @@ int main(int argc, char **argv) {
                   LTFuzzyScore(@"xyz", @"New Tab") == 0,
               "fuzzy matching");
         NSArray *results =
-            LTCommandResults(@"example.org", p, @[], [NSSet setWithObject:a.identifier]);
+            LTCommandResults(@"example.org", p, @[], [NSSet setWithObject:a.identifier], nil);
         CHECK([results.firstObject[@"detail"] isEqual:@"Open address"] &&
                   [results.firstObject[@"value"] isEqual:@"https://example.org"],
               "bare web address opens directly");
@@ -421,72 +421,72 @@ int main(int argc, char **argv) {
                  @"https://unvisited.example/path?q=hello#section",
                  @"http://unvisited.example/path", @"http://127.0.0.1:18743/second"
              ]) {
-            results = LTCommandResults(url, p, @[], [NSSet new]);
+            results = LTCommandResults(url, p, @[], [NSSet new], nil);
             CHECK(
                 [results.firstObject[@"detail"] isEqual:@"Open address"] &&
                     [results.firstObject[@"value"] isEqual:url],
                 "explicit HTTP or HTTPS link opens directly with path, query and fragment intact");
         }
-        results = LTCommandResults(@"  example.org/path  ", p, @[], [NSSet new]);
+        results = LTCommandResults(@"  example.org/path  ", p, @[], [NSSet new], nil);
         CHECK([results.firstObject[@"value"] isEqual:@"https://example.org/path"],
               "bare link trims surrounding whitespace and preserves path");
-        results = LTCommandResults(@"localhost:18743/second", p, @[], [NSSet new]);
+        results = LTCommandResults(@"localhost:18743/second", p, @[], [NSSet new], nil);
         CHECK([results.firstObject[@"value"] isEqual:@"http://localhost:18743/second"],
               "local address opens directly");
-        results = LTCommandResults(@"learn example.org", p, @[], [NSSet new]);
+        results = LTCommandResults(@"learn example.org", p, @[], [NSSet new], nil);
         CHECK([results.firstObject[@"icon"] isEqual:@"magnifyingglass"],
               "search text containing a domain remains a search");
-        results = LTCommandResults(@"Personal name", p, @[], [NSSet setWithObject:a.identifier]);
+        results = LTCommandResults(@"Personal name", p, @[], [NSSet setWithObject:a.identifier], nil);
         CHECK([results.firstObject[@"value"] isEqual:a.identifier], "open-tab search");
-        results = LTCommandResults(@"Split Right", p, @[], [NSSet new]);
+        results = LTCommandResults(@"Split Right", p, @[], [NSSet new], nil);
         CHECK([results.firstObject[@"icon"] isEqual:@"magnifyingglass"] &&
                   [[results valueForKey:@"value"] containsObject:@"splitRight"],
               "search leads while browser commands remain selectable");
-        results = LTCommandResults(@"Personal", p, @[], [NSSet setWithObject:a.identifier]);
+        results = LTCommandResults(@"Personal", p, @[], [NSSet setWithObject:a.identifier], nil);
         CHECK([results.firstObject[@"icon"] isEqual:@"magnifyingglass"] &&
                   ![[results valueForKey:@"type"] containsObject:@"tab"],
               "partial titles do not suggest saved tabs");
-        results = LTCommandResults(@"Prsnlnm", p, @[], [NSSet setWithObject:a.identifier]);
+        results = LTCommandResults(@"Prsnlnm", p, @[], [NSSet setWithObject:a.identifier], nil);
         CHECK(![[results valueForKey:@"type"] containsObject:@"tab"],
               "fuzzy titles do not suggest saved tabs");
-        results = LTCommandResults(@"personal name", p, @[], [NSSet setWithObject:a.identifier]);
+        results = LTCommandResults(@"personal name", p, @[], [NSSet setWithObject:a.identifier], nil);
         CHECK([results.firstObject[@"icon"] isEqual:@"magnifyingglass"],
               "title matching is case sensitive");
         results = LTCommandResults([@"  " stringByAppendingFormat:@"%@  ", a.url], p, @[],
-                                   [NSSet setWithObject:a.identifier]);
+                                   [NSSet setWithObject:a.identifier], nil);
         CHECK([results.firstObject[@"detail"] isEqual:@"Open address"] &&
                   [results.firstObject[@"value"] isEqual:a.url],
               "typed link opens directly even when it matches a saved tab");
         NSArray *history = @[ @{@"title" : @"Saved Page", @"url" : @"https://saved.example/Path"} ];
-        results = LTCommandResults(@"Saved", p, history, [NSSet new]);
+        results = LTCommandResults(@"Saved", p, history, [NSSet new], nil);
         CHECK([results.firstObject[@"icon"] isEqual:@"magnifyingglass"] &&
                   ![[results valueForKey:@"icon"] containsObject:@"clock"],
               "history rows the store did not match are omitted");
         NSArray *matched = @[ @{@"title" : @"Saved Page", @"url" : @"https://saved.example/Path",
                                 @"match" : LTHistoryMatchWord} ];
-        results = LTCommandResults(@"Page", p, matched, [NSSet new]);
+        results = LTCommandResults(@"Page", p, matched, [NSSet new], nil);
         CHECK([results.firstObject[@"icon"] isEqual:@"magnifyingglass"] &&
                   [results[1][@"value"] isEqual:@"https://saved.example/Path"],
               "a partial history match follows web search");
         matched = @[ @{@"title" : @"Saved Page", @"url" : @"https://saved.example/Path",
                        @"match" : LTHistoryMatchAddress} ];
-        results = LTCommandResults(@"sav", p, matched, [NSSet new]);
+        results = LTCommandResults(@"sav", p, matched, [NSSet new], nil);
         CHECK([results.firstObject[@"value"] isEqual:@"https://saved.example/Path"] &&
                   [results[1][@"icon"] isEqual:@"magnifyingglass"],
               "the best address-prefix history match leads web search");
-        results = LTCommandResults(@"Saved Page", p, history, [NSSet new]);
+        results = LTCommandResults(@"Saved Page", p, history, [NSSet new], nil);
         CHECK([results.firstObject[@"value"] isEqual:@"https://saved.example/Path"],
               "exact history title wins");
-        results = LTCommandResults(@"https://saved.example/Path", p, history, [NSSet new]);
+        results = LTCommandResults(@"https://saved.example/Path", p, history, [NSSet new], nil);
         CHECK([results.firstObject[@"detail"] isEqual:@"Open address"] &&
                   [results.firstObject[@"value"] isEqual:@"https://saved.example/Path"],
               "typed link opens directly even when it matches history");
-        results = LTCommandResults(@"https://saved.example/path", p, matched, [NSSet new]);
+        results = LTCommandResults(@"https://saved.example/path", p, matched, [NSSet new], nil);
         CHECK([results.firstObject[@"value"] isEqual:@"https://saved.example/path"] &&
                   ![[results valueForKey:@"icon"] containsObject:@"clock"],
               "typed URL path case is preserved without suggesting a different history URL");
-        CHECK([LTSearchURL(@"example.com?a=1&b=2", @"Google")
-                  hasPrefix:@"https://www.google.com/search?q=example.com?a%3D1%26b%3D2"],
+        CHECK([LTSearchURL(@"example.com?a=1&b=2", @{@"search" : @"Google"})
+                  isEqual:@"https://www.google.com/search?q=example.com%3Fa%3D1%26b%3D2"],
               "search provider receives the literal query even for URL-like input");
         [store recordVisit:@"https://old.example/exact" title:@"Exact History"];
         for (int i = 0; i < 35; i++)

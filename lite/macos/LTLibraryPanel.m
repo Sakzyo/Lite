@@ -10,6 +10,8 @@
     NSTableView *_table;
     NSStackView *_content;
     NSArray *_downloads;
+    NSPopUpButton *_engines;
+    NSButton *_removeEngine;
 }
 - (instancetype)initWithStore:(LTStore *)store {
     NSPanel *panel =
@@ -34,7 +36,7 @@
     _content = LTStack(@[], NSUserInterfaceLayoutOrientationVertical, 16);
     LTPin(_content, root, 22);
     if ([mode isEqual:@"settings"]) {
-        [self.window setContentSize:NSMakeSize(620, 640)];
+        [self.window setContentSize:NSMakeSize(620, 770)];
         [self buildSettings];
     } else {
         _search = [NSSearchField new];
@@ -72,18 +74,31 @@
 - (void)buildSettings {
     [_content addArrangedSubview:LTLabel(@"Settings", 26, NSFontWeightSemibold)];
     for (NSArray *setting in @[
-             @[ @"Search engine", @"search", @"DuckDuckGo", @"Google" ],
+             @[ @"Search engine", @"search" ],
              @[ @"Memory policy", @"performance", @"Balanced", @"Efficient", @"Maximum Saving" ]
          ]) {
+        BOOL search = [setting[1] isEqual:@"search"];
         NSPopUpButton *p = [NSPopUpButton new];
-        [p addItemsWithTitles:[setting subarrayWithRange:NSMakeRange(2, setting.count - 2)]];
-        [p selectItemWithTitle:_store.profile.settings[setting[1]]];
         p.identifier = setting[1];
         p.accessibilityLabel = setting[0];
         p.target = self;
         p.action = @selector(setting:);
-        [_content addArrangedSubview:LTStack(@[ LTLabel(setting[0], 13, NSFontWeightMedium), p ],
-                                             NSUserInterfaceLayoutOrientationHorizontal, 18)];
+        NSMutableArray *row = [@[ LTLabel(setting[0], 13, NSFontWeightMedium), p ] mutableCopy];
+        if (search) {
+            _engines = p;
+            NSButton *add = [NSButton buttonWithTitle:@"Add…" target:self action:@selector(addEngine:)];
+            add.accessibilityLabel = @"Add search engine";
+            _removeEngine = [NSButton buttonWithTitle:@"Remove" target:self action:@selector(removeEngine:)];
+            _removeEngine.accessibilityLabel = @"Remove search engine";
+            [row addObjectsFromArray:@[ add, _removeEngine ]];
+            [self reloadEngines];
+        } else {
+            [p addItemsWithTitles:[setting subarrayWithRange:NSMakeRange(2, setting.count - 2)]];
+            [p selectItemWithTitle:_store.profile.settings[setting[1]]];
+        }
+        [_content addArrangedSubview:LTStack(row, NSUserInterfaceLayoutOrientationHorizontal, search ? 10 : 18)];
+        if (search)
+            [_content addArrangedSubview:[self suggestionsSetting]];
     }
     NSButton *mini = [NSButton checkboxWithTitle:@"Open external links in Mini Lite"
                                           target:self
@@ -122,10 +137,143 @@
     [_content addArrangedSubview:about];
     [_content addArrangedSubview:[NSView new]];
 }
+- (NSView *)suggestionsSetting {
+    NSButton *suggestions = [NSButton checkboxWithTitle:@"Show search suggestions in the Command Bar"
+                                                 target:self
+                                                 action:@selector(searchSuggestions:)];
+    suggestions.state = [_store.profile.settings[@"searchSuggestions"] boolValue];
+    NSTextField *sent = [NSTextField wrappingLabelWithString:
+        @"Sends what you type in the Command Bar to your search engine as you type. Addresses and private windows are never sent."];
+    sent.font = [NSFont systemFontOfSize:11];
+    sent.textColor = NSColor.secondaryLabelColor;
+    sent.selectable = NO;
+    [sent.widthAnchor constraintEqualToConstant:540].active = YES;
+    return LTStack(@[ suggestions, sent ], NSUserInterfaceLayoutOrientationVertical, 4);
+}
 - (void)setting:(NSPopUpButton *)b {
     NSString *setting = b.identifier, *value = b.titleOfSelectedItem;
+    BOOL search = b == _engines;
     [_store commit:^(LTProfile *p) {
-      p.settings[setting] = value;
+      // An engine removed by a save still queued is no longer there to select.
+      if (!search || [[LTSearchEngines(p.settings) valueForKey:@"name"] containsObject:value])
+          p.settings[setting] = value;
+    } completion:nil];
+    if (search)
+        _removeEngine.enabled = [self customEngineNamed:value] != nil;
+}
+// Fills the search engine menu from the profile: the built-in engines, then the user's own.
+- (void)reloadEngines {
+    NSDictionary *settings = _store.profile.settings;
+    [_engines removeAllItems];
+    [_engines addItemsWithTitles:[LTSearchEngines(settings) valueForKey:@"name"]];
+    NSString *selected = LTSelectedSearchEngine(settings)[@"name"];
+    [_engines selectItemWithTitle:selected];
+    _removeEngine.enabled = [self customEngineNamed:selected] != nil;
+}
+- (NSDictionary *)customEngineNamed:(NSString *)name {
+    NSArray *custom = _store.profile.settings[@"searchEngines"];
+    for (NSDictionary *engine in [custom isKindOfClass:NSArray.class] ? custom : @[])
+        if ([engine[@"name"] isEqual:name])
+            return engine;
+    return nil;
+}
+- (void)addEngine:(id)sender {
+    [self askForEngine:@{} problem:nil];
+}
+// Asks for a search engine of the user's own. After a mistake it asks again with what was entered.
+- (void)askForEngine:(NSDictionary *)draft problem:(NSString *)problem {
+    NSAlert *a = [NSAlert new];
+    a.messageText = @"Add a search engine";
+    a.informativeText = problem ?: @"Use %s where the search text goes. The suggestions address is optional.";
+    NSMutableArray<NSTextField *> *fields = [NSMutableArray new];
+    NSMutableArray *rows = [NSMutableArray new];
+    for (NSArray *f in @[
+             @[ @"Name", @"name", @"Example Search" ],
+             @[ @"Search address", @"url", @"https://example.com/search?q=%s" ],
+             @[ @"Suggestions address", @"suggest", @"https://example.com/suggest?q=%s" ]
+         ]) {
+        NSTextField *field = [NSTextField new];
+        field.stringValue = draft[f[1]] ?: @"";
+        field.placeholderString = f[2];
+        field.accessibilityLabel = f[0];
+        [field.widthAnchor constraintEqualToConstant:340].active = YES;
+        [fields addObject:field];
+        [rows addObject:LTStack(@[ LTLabel(f[0], 12, NSFontWeightMedium), field ],
+                                NSUserInterfaceLayoutOrientationVertical, 4)];
+    }
+    NSStackView *form = LTStack(rows, NSUserInterfaceLayoutOrientationVertical, 10);
+    form.translatesAutoresizingMaskIntoConstraints = YES;
+    form.frame = NSMakeRect(0, 0, 340, form.fittingSize.height);
+    a.accessoryView = form;
+    [a addButtonWithTitle:@"Add"];
+    [a addButtonWithTitle:@"Cancel"];
+    [a beginSheetModalForWindow:self.window
+              completionHandler:^(NSModalResponse r) {
+                if (r != NSAlertFirstButtonReturn)
+                    return;
+                NSDictionary *entered = @{
+                    @"name" : fields[0].stringValue,
+                    @"url" : fields[1].stringValue,
+                    @"suggest" : fields[2].stringValue
+                };
+                NSError *error = nil;
+                NSDictionary *engine =
+                    LTCustomSearchEngine(entered[@"name"], entered[@"url"], entered[@"suggest"],
+                                         self->_store.profile.settings[@"searchEngines"], &error);
+                if (!engine) {
+                    // The first sheet is still closing; ask again once it has gone.
+                    dispatch_async(dispatch_get_main_queue(), ^{
+                      [self askForEngine:entered problem:error.localizedDescription];
+                    });
+                    return;
+                }
+                [self->_store commit:^(LTProfile *p) {
+                  // Checked again against the list as it is when this save runs.
+                  NSArray *custom = p.settings[@"searchEngines"];
+                  NSDictionary *checked = LTCustomSearchEngine(engine[@"name"], engine[@"url"],
+                                                               engine[@"suggest"], custom, NULL);
+                  if (!checked)
+                      return;
+                  p.settings[@"searchEngines"] = [custom ?: @[] arrayByAddingObject:checked];
+                  p.settings[@"search"] = checked[@"name"];
+                } completion:^(NSError *failure) {
+                  if (failure)
+                      [self->_store reportWriteFailure:failure];
+                  [self reloadEngines];
+                }];
+              }];
+    [a.window makeFirstResponder:fields[problem && [draft[@"name"] length] ? 1 : 0]];
+}
+- (void)removeEngine:(id)sender {
+    NSString *name = _engines.titleOfSelectedItem;
+    if (![self customEngineNamed:name])
+        return;
+    LTConfirm(self.window, [NSString stringWithFormat:@"Remove “%@”?", name],
+              [NSString stringWithFormat:@"Lite will search with %@ until you choose another search engine.",
+                                         LTDefaultSearchEngine],
+              @"Remove", ^{
+                [self->_store commit:^(LTProfile *p) {
+                  NSMutableArray *kept = [NSMutableArray new];
+                  for (NSDictionary *engine in p.settings[@"searchEngines"])
+                      if (![engine[@"name"] isEqual:name])
+                          [kept addObject:engine];
+                  if (kept.count)
+                      p.settings[@"searchEngines"] = kept;
+                  else
+                      [p.settings removeObjectForKey:@"searchEngines"];
+                  if ([p.settings[@"search"] isEqual:name])
+                      p.settings[@"search"] = LTDefaultSearchEngine;
+                } completion:^(NSError *failure) {
+                  if (failure)
+                      [self->_store reportWriteFailure:failure];
+                  [self reloadEngines];
+                }];
+              });
+}
+- (void)searchSuggestions:(NSButton *)b {
+    BOOL enabled = b.state == NSControlStateValueOn;
+    [_store commit:^(LTProfile *p) {
+      p.settings[@"searchSuggestions"] = @(enabled);
     } completion:nil];
 }
 - (void)externalMini:(NSButton *)b {

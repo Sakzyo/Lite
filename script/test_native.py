@@ -21,7 +21,8 @@ REQUIRED = ['nativeMainWindow', 'nativeAccessibleNavigation', 'nativeFixtureSeed
             'nativeSplitPrimaryFocused', 'nativeSplitFocusForward', 'nativeSplitFocusBackward',
             'nativeSidebarCollapsed', 'nativeFullScreenChrome', 'nativeFullScreenRestored',
             'nativeSidebarRevealed', 'nativeSidebarFollowsSaves', 'nativeCommandShortcutAndNames',
-            'nativeCommandArrowNavigation', 'nativeCommandHistoryPrefix', 'nativeCommandEscape', 'nativeSettingsAccessibleControls',
+            'nativeCommandArrowNavigation', 'nativeCommandHistoryPrefix', 'nativeCommandSearchSuggestions', 'nativeCommandEscape',
+            'nativeSettingsAccessibleControls', 'nativeSettingsSearchEngines', 'nativePrivateSearchEngine', 'nativePrivateCommandWithoutSuggestions',
             'nativeDownloadsAccessibleControls', 'nativeWindowCloseDialog',
             'nativeWindowCancelPreservesEveryPage', 'nativeBeforeUnloadDialog',
             'nativeBeforeUnloadCancelPreservesTab', 'nativeCanceledPageStateIntact',
@@ -46,7 +47,10 @@ def main():
         raise ValueError('Native verification requires a fresh synthetic profile under .build')
     profile.mkdir(parents=True)
     data = dict(version=1, spaces=[dict(id='native-space', name='Personal', selected='')], nodes=[],
-                activeSpace='native-space', settings=dict(performance='Efficient', search='DuckDuckGo',
+                activeSpace='native-space', settings=dict(performance='Efficient', search='Fixture Search',
+                # Searches and suggestions go to the loopback fixture, never to a real search engine.
+                searchEngines=[dict(name='Fixture Search', url='http://127.0.0.1:18743/search?q=%s',
+                                    suggest='http://127.0.0.1:18743/suggest?q=%s')], searchSuggestions=True,
                 externalMini=True, onboarded=True), windows=[])
     with sqlite3.connect(profile / 'Lite.sqlite') as db:
         db.execute('CREATE TABLE profile (id INTEGER PRIMARY KEY CHECK(id=1),json BLOB NOT NULL)')
@@ -107,10 +111,16 @@ def main():
             failures.append('native test app did not exit gracefully')
         with urllib.request.urlopen('http://127.0.0.1:18743/crash-uploads', timeout=5) as response:
             uploads = json.load(response)
+        with urllib.request.urlopen('http://127.0.0.1:18743/suggest-log', timeout=5) as response:
+            suggested = json.load(response)
         checks = {'nativeCrashUploadOnlyApprovedReport': len(uploads) == 1 and 'synthetic-offered' in uploads[0]['body'] and uploads[0]['contentType'].startswith('multipart/form-data'),
                   'nativeCrashUploadNoCookies': bool(uploads) and not uploads[0]['cookie'],
                   'nativeCrashReportsRemovedAfterHandling': not list(profile.glob('Chromium/*/*.dmp')),
-                  'nativePrivateSessionRecorded': (profile / 'PrivateSession.marker').exists()}
+                  'nativePrivateSessionRecorded': (profile / 'PrivateSession.marker').exists(),
+                  # Not the page address the Command Bar opened with, not text replaced before
+                  # typing paused, and nothing typed in the private window.
+                  'nativeSuggestionsOnlyTypedSearch': [entry['query'] for entry in suggested] == ['lite fixt'],
+                  'nativeSuggestionsNoCookies': bool(suggested) and not any(entry['cookie'] for entry in suggested)}
         result.update(checks)
         failures += [key for key, passed in checks.items() if not passed]
         if failures and window_failure(result):

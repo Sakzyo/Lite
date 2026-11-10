@@ -213,14 +213,14 @@ static void RankingTests(NSString *root) {
 
     // The Command Bar keeps the store's order and puts only the best address match above web search.
     LTProfile *profile = store.profile;
-    NSArray *results = LTCommandResults(@"zeb", profile, zebra, [NSSet new]);
+    NSArray *results = LTCommandResults(@"zeb", profile, zebra, [NSSet new], nil);
     CHECK([results[0][@"value"] isEqual:@"https://zebra.example/"] && [results[1][@"icon"] isEqual:@"magnifyingglass"] &&
               [results[2][@"value"] isEqual:@"https://docs.example/zebra"],
           "Command Bar: the best address match leads, web search next, other history after");
-    results = LTCommandResults(@"handbook", profile, [store searchHistory:@"handbook" limit:30], [NSSet new]);
+    results = LTCommandResults(@"handbook", profile, [store searchHistory:@"handbook" limit:30], [NSSet new], nil);
     CHECK([results[0][@"icon"] isEqual:@"magnifyingglass"] && [results[1][@"value"] isEqual:@"https://docs.example/zebra"],
           "Command Bar: a word match follows web search");
-    results = LTCommandResults(@"zebra.example", profile, [store searchHistory:@"zebra.example" limit:30], [NSSet new]);
+    results = LTCommandResults(@"zebra.example", profile, [store searchHistory:@"zebra.example" limit:30], [NSSet new], nil);
     CHECK([results[0][@"detail"] isEqual:@"Open address"], "Command Bar: a typed address still opens first");
 }
 
@@ -399,7 +399,7 @@ static NSDictionary *MeasureCommandBar(NSString *root, NSUInteger rows, int runs
         for (int run = 0; run < runs; run++) {
             double t = Now();
             NSArray *history = [store searchHistory:query limit:30];
-            LTCommandResults(query, store.profile, history, [NSSet new]);
+            LTCommandResults(query, store.profile, history, [NSSet new], nil);
             [times addObject:@((Now() - t) * 1000)];
             found = history.count;
         }

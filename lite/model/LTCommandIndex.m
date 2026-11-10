@@ -25,7 +25,8 @@ NSInteger LTFuzzyScore(NSString *query, NSString *text) {
 }
 NSArray<NSDictionary *> *LTCommandResults(NSString *query, LTProfile *profile,
                                           NSArray<NSDictionary *> *history,
-                                          NSSet<NSString *> *openIDs) {
+                                          NSSet<NSString *> *openIDs,
+                                          NSArray<NSString *> *suggestions) {
     NSMutableArray *r = [NSMutableArray new];
     NSString *q =
         [query stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
@@ -41,8 +42,9 @@ NSArray<NSDictionary *> *LTCommandResults(NSString *query, LTProfile *profile,
               @"icon" : icon
           }];
         };
-    NSString *searchURL = LTSearchURL(q, profile.settings[@"search"]);
-    NSString *address = LTURLFromInput(q, profile.settings[@"search"]);
+    NSString *searchURL = LTSearchURL(q, profile.settings);
+    NSString *address = LTURLFromInput(q, profile.settings);
+    NSString *engine = LTSelectedSearchEngine(profile.settings)[@"name"];
     if (q.length && ![address isEqual:searchURL])
         add(address, @"Open address", @"url", address, 30000, @"globe");
     for (LTNode *n in profile.nodes) {
@@ -133,10 +135,17 @@ NSArray<NSDictionary *> *LTCommandResults(NSString *query, LTProfile *profile,
         if (score)
             add(c[0], @"Browser command", @"command", c[1], 3000 + score, c[2]);
     }
-    if (q.length)
-        add([@"Search for “" stringByAppendingFormat:@"%@”", q],
-            profile.settings[@"search"] ?: @"DuckDuckGo", @"url", searchURL, 15000,
+    if (q.length) {
+        add([@"Search for “" stringByAppendingFormat:@"%@”", q], engine, @"url", searchURL, 15000,
             @"magnifyingglass");
+        NSInteger shown = 0;
+        for (NSString *suggestion in suggestions) {
+            if (shown == (NSInteger)LTSearchSuggestionLimit)
+                break;
+            add(suggestion, [engine stringByAppendingString:@" suggestion"], @"url",
+                LTSearchURL(suggestion, profile.settings), 14900 - shown++, @"magnifyingglass");
+        }
+    }
     [r sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
       NSComparisonResult c = [b[@"rank"] compare:a[@"rank"]];
       return c == NSOrderedSame ? [a[@"title"] compare:b[@"title"]] : c;

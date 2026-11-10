@@ -17,6 +17,7 @@ def png():
 
 class Handler(BaseHTTPRequestHandler):
     crash_uploads = []
+    suggestion_requests = []
     def do_POST(self):
         if self.path == '/crash-upload':
             body = self.rfile.read(int(self.headers.get('Content-Length', 0)))
@@ -185,6 +186,13 @@ self.addEventListener('message',e=>e.waitUntil((async()=>{
             content = 'text/html'
         elif parsed.path == '/crash-uploads':
             body, content = json.dumps(Handler.crash_uploads).encode(), 'application/json'
+        elif parsed.path == '/suggest':
+            # An OpenSearch suggestions answer; each request is kept for /suggest-log.
+            query = parse_qs(parsed.query).get('q', [''])[0]
+            Handler.suggestion_requests.append(dict(query=query, cookie=self.headers.get('Cookie')))
+            body, content = json.dumps([query, [query + 'ure suggestion', query + ' again']]).encode(), 'application/x-suggestions+json'
+        elif parsed.path == '/suggest-log':
+            body, content = json.dumps(Handler.suggestion_requests).encode(), 'application/json'
         elif parsed.path == '/lifecycle-probe':
             body = (Path(__file__).resolve().parents[1]/'lite/tests/fixtures/lifecycle-probe.html').read_bytes()
             content = 'text/html'
