@@ -127,6 +127,9 @@ NSArray<NSDictionary *> *LTCommandResults(NSString *query, LTProfile *profile,
         @[ @"Clear Browsing Data", @"clearData", @"trash" ],
         @[ @"Enter Full Screen", @"fullScreen", @"arrow.up.left.and.arrow.down.right" ],
         @[ @"Import from Arc", @"importArc", @"square.and.arrow.down" ],
+        @[ @"Import Bookmarks", @"importBookmarks", @"square.and.arrow.down" ],
+        @[ @"Export Bookmarks", @"exportBookmarks", @"square.and.arrow.up" ],
+        @[ @"Export Organization", @"exportOrganization", @"square.and.arrow.up" ],
         @[ @"Picture in Picture", @"pip", @"pip.enter" ],
         @[ @"Show Developer Tools", @"devTools", @"chevron.left.forwardslash.chevron.right" ]
     ];

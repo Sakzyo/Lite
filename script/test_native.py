@@ -22,7 +22,7 @@ REQUIRED = ['nativeMainWindow', 'nativeAccessibleNavigation', 'nativeFixtureSeed
             'nativeSidebarCollapsed', 'nativeFullScreenChrome', 'nativeFullScreenRestored',
             'nativeSidebarRevealed', 'nativeSidebarFollowsSaves', 'nativeCommandShortcutAndNames',
             'nativeCommandArrowNavigation', 'nativeCommandHistoryPrefix', 'nativeCommandSearchSuggestions', 'nativeCommandEscape',
-            'nativeSettingsAccessibleControls', 'nativeSettingsSearchEngines', 'nativePrivateSearchEngine', 'nativePrivateCommandWithoutSuggestions',
+            'nativeSettingsAccessibleControls', 'nativeSettingsSearchEngines', 'nativeSettingsExportControls', 'nativeExportSavePanel', 'nativePrivateSearchEngine', 'nativePrivateCommandWithoutSuggestions',
             'nativeDownloadsAccessibleControls', 'nativeWindowCloseDialog',
             'nativeWindowCancelPreservesEveryPage', 'nativeBeforeUnloadDialog',
             'nativeBeforeUnloadCancelPreservesTab', 'nativeCanceledPageStateIntact',

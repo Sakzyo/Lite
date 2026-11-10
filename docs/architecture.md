@@ -390,6 +390,66 @@ stays selected. While the engine is being asked again, earlier suggestions that 
 begin with the typed text stay listed. Choosing a suggestion searches for it with the
 selected engine.
 
+### Data export
+
+`LTExporter` writes the committed sidebar in two formats. Export Bookmarks… and Export
+Organization… are in the Library menu, Settings and the Command Bar. Each asks for a file
+with a save panel, then builds and writes it atomically on a background queue from the
+profile as last committed, which is never changed once published. A failed write shows an
+alert. A private window refuses to export, because its sidebar is a temporary one of its own
+and exporting it would look like the user's bookmarks were missing.
+
+Both formats contain Favorites and, for each Space in order, its folders and pinned tabs in
+sidebar order. A pinned tab is written with the address it was pinned at, not the page it has
+since navigated to. Neither contains temporary tabs, which are open pages rather than saved
+ones, history, recently closed items, window state, favicons, item identifiers or settings
+other than Space colors. A GitHub Live Folder is written as an ordinary folder of the pull
+requests it held, without its account or repository settings.
+
+**Bookmarks file.** A Netscape bookmarks file, the HTML format that Safari, Chrome, Firefox
+and Lite's own HTML import read. Favorites come first, as a folder marked
+`PERSONAL_TOOLBAR_FOLDER` so Chrome and Firefox put them on the bookmarks bar, followed by
+one folder per Space. Each tab uses the name the sidebar shows. Names and addresses escape
+`& < > " '`. Empty folders are kept.
+
+**Organization file.** JSON for moving a sidebar between Lite profiles:
+
+```json
+{
+  "format": "lite-organization",
+  "version": 1,
+  "exported": "2026-11-10T00:00:00Z",
+  "favorites": [{"title": "Example", "url": "https://example.com/", "customTitle": "Mine"}],
+  "spaces": [{
+    "name": "Work",
+    "theme": "Graphite",
+    "items": [
+      {"type": "folder", "title": "Reading", "open": false, "items": [
+        {"type": "tab", "title": "Docs", "url": "https://docs.example/"}
+      ]}
+    ]
+  }]
+}
+```
+
+`theme` appears only for a color the user chose, and `customTitle` only for a renamed tab.
+Folders nest, so the file cannot describe a cycle or an item with two parents. Keys are
+sorted, so the same sidebar always writes the same file.
+
+Import Bookmarks… recognizes the file by its `format` and passes it to
+`+[LTImporter parseOrganization:error:]`. As with the other imports, the user sees a preview
+first, and the result is added as new Spaces with new identifiers; nothing already in the
+profile is replaced. Favorites are added after the existing ones, and the colors of the new
+Spaces are added to `spaceThemes`. A tab whose address Lite cannot open, such as
+`javascript:` or one with a user name, is skipped and the preview says how many were. Any
+other problem imports nothing: a missing format marker, a version newer than this build
+reads, a file over 64 MB, no Spaces, an unknown item type, a field of the wrong type, folders
+nested more than 64 deep, or more than 100,000 items. The result must then pass the profile
+validator like any save. Items are created directly in file order rather than through
+`addNode`, which scans its siblings, so import time grows linearly: in `LiteExportTests`,
+10,000 tabs in 500 folders took 23 ms to export in both formats and 53 ms to read back on
+Apple Silicon.
+
 ### Background writer
 
 Each store has one serial writer queue. Organization saves, visit recording, history

@@ -48,8 +48,13 @@ apply: meeting these goals does not by itself qualify Lite as a production brows
   window, are not sent. A query's `+` now reaches the engine as typed; before, engines
   read it as a space. See
   [search engines and suggestions](architecture.md#search-engines-and-suggestions).
-- **Add data export.** Bookmarks and the profile's organization can be exported, not
-  only imported.
+- **Add data export.** Done: Settings, the Library menu and the Command Bar export
+  Favorites and every Space's folders and pinned tabs as a bookmarks file, which Safari,
+  Chrome, Firefox and Lite import, or as a Lite organization file. The organization file
+  also keeps Space colors, which folders are open, and both a tab's page title and the name
+  you gave it, and Import Bookmarks reads it back into new Spaces. Temporary tabs, history
+  and window state are not exported, and private windows cannot export. See
+  [data export](architecture.md#data-export).
 
 ### Performance
 

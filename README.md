@@ -46,6 +46,9 @@ launched process. The Codex Run action uses the same script.
 - Read-only Arc migration with preview, schema variations, ordering, nested folders,
   multiple containers, and safe rejection of broken references. HTML, Chromium JSON,
   and Safari plist bookmark import are separate workflows.
+- Export to a bookmarks file that Safari, Chrome and Firefox import, or to a Lite
+  organization file that keeps Spaces, their colors, folders and names for importing into
+  Lite again. Temporary tabs are not exported.
 - Command Bar with direct address entry, search-first text queries, exact saved URL/title matches, and fuzzy browser commands.
 - Seven built-in search engines and your own custom ones. Search suggestions in the
   Command Bar are off by default; when you turn them on, what you type there goes to your

@@ -1,5 +1,6 @@
 #import "LTWindow.h"
 #import "../browser/LTContentBlocker.h"
+#import "../migration/LTExporter.h"
 #import "../migration/LTImporter.h"
 #import "../model/LTGitHub.h"
 #import "LTCommandPanel.h"
@@ -1103,6 +1104,8 @@
         [self importArc];
     else if ([command isEqual:@"importBookmarks"])
         [self importBookmarks];
+    else if ([command isEqual:@"exportBookmarks"] || [command isEqual:@"exportOrganization"])
+        [self exportData:[command isEqual:@"exportBookmarks"]];
     else if ([command isEqual:@"saveLogin"] || [command isEqual:@"fillLogin"] ||
              [command isEqual:@"passwords"]) {
         if (!_passwords)
@@ -1439,8 +1442,8 @@
 }
 - (void)importBookmarks {
     NSOpenPanel *p = [NSOpenPanel openPanel];
-    p.message =
-        @"Choose an HTML bookmarks export, Chromium Bookmarks JSON, or Safari Bookmarks.plist.";
+    p.message = @"Choose an HTML bookmarks export, Chromium Bookmarks JSON, Safari Bookmarks.plist, "
+                @"or a Lite organization file.";
     [p beginSheetModalForWindow:self.window
               completionHandler:^(NSModalResponse response) {
                 if (response != NSModalResponseOK)
@@ -1457,6 +1460,49 @@
                 else
                     LTAlert(self.window, @"Import failed", e.localizedDescription);
               }];
+}
+// Writes the committed sidebar to a file the user chooses: a bookmarks file other browsers import,
+// or a Lite organization file. The profile is an immutable snapshot, so it is written off the main
+// thread.
+- (void)exportData:(BOOL)bookmarks {
+    if (_store.privateMode) {
+        LTAlert(self.window, @"Export from a regular window",
+                @"This private window has its own temporary sidebar. Open a regular Lite window to "
+                @"export your bookmarks and organization.");
+        return;
+    }
+    NSDateFormatter *day = [NSDateFormatter new];
+    day.locale = [NSLocale localeWithLocaleIdentifier:@"en_US_POSIX"];
+    day.dateFormat = @"yyyy-MM-dd";
+    NSSavePanel *panel = [NSSavePanel savePanel];
+    panel.allowedContentTypes = @[ bookmarks ? UTTypeHTML : UTTypeJSON ];
+    panel.nameFieldStringValue =
+        [NSString stringWithFormat:@"Lite %@ %@.%@", bookmarks ? @"Bookmarks" : @"Organization",
+                                   [day stringFromDate:NSDate.date], bookmarks ? @"html" : @"json"];
+    panel.message = bookmarks ? @"Favorites and each Space’s folders and pinned tabs, for Safari, "
+                                @"Chrome, Firefox and other browsers. Temporary tabs are not included."
+                              : @"Spaces, their colors, folders, pinned tabs and Favorites, to import "
+                                @"into Lite on this or another Mac. Temporary tabs are not included.";
+    [panel beginSheetModalForWindow:self.window
+                  completionHandler:^(NSModalResponse response) {
+                    if (response != NSModalResponseOK)
+                        return;
+                    NSURL *url = panel.URL;
+                    LTProfile *profile = self->_store.profile;
+                    NSDate *now = NSDate.date;
+                    __weak LTWindow *weak = self;
+                    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+                      NSData *data = bookmarks ? [LTExporter bookmarksHTML:profile]
+                                               : [LTExporter organizationJSON:profile date:now];
+                      NSError *e = nil;
+                      if ([data writeToURL:url options:NSDataWritingAtomic error:&e])
+                          return;
+                      dispatch_async(dispatch_get_main_queue(), ^{
+                        LTAlert(weak.window, @"Export failed",
+                                e.localizedDescription ?: @"The file could not be written.");
+                      });
+                    });
+                  }];
 }
 - (void)showOnboarding {
     if (_mini || _store.privateMode || [_store.profile.settings[@"onboarded"] boolValue])

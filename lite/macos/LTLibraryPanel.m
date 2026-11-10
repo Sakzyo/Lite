@@ -108,7 +108,9 @@
     NSArray *actions = @[
         @[ @"Make Lite the default browser…", @"defaultBrowser" ],
         @[ @"Import Sidebar from Arc…", @"importArc" ],
-        @[ @"Import bookmarks (HTML, Chromium, Safari)…", @"importBookmarks" ],
+        @[ @"Import bookmarks (HTML, Chromium, Safari, Lite)…", @"importBookmarks" ],
+        @[ @"Export bookmarks (HTML)…", @"exportBookmarks" ],
+        @[ @"Export Lite organization…", @"exportOrganization" ],
         @[ @"Clear browsing data…", @"clearData" ], @[ @"Manage saved logins…", @"passwords" ],
         @[ @"Keyboard shortcuts…", @"shortcuts" ],
         @[ @"Browser task manager…", @"taskManager" ],

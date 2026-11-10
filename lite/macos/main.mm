@@ -583,6 +583,8 @@ static std::string extensionSwitch;
             @[ @"Open Google Password Manager", @"googlePasswords", @"" ], @[ @"-" ],
             @[ @"Import from Arc…", @"importArc", @"" ],
             @[ @"Import Bookmarks…", @"importBookmarks", @"" ],
+            @[ @"Export Bookmarks…", @"exportBookmarks", @"" ],
+            @[ @"Export Organization…", @"exportOrganization", @"" ],
             @[ @"Clear Browsing Data…", @"clearData", @"" ]
         ],
         @[
