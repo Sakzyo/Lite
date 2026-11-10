@@ -268,9 +268,11 @@ static std::string extensionSwitch;
         NSDictionary *settings = _store.profile.settings;
         NSString *search = settings[@"search"];
         NSArray *engines = settings[@"searchEngines"] ? [[NSArray alloc] initWithArray:settings[@"searchEngines"] copyItems:YES] : nil;
+        NSString *customFilters = [settings[@"contentBlocking"][@"customFilters"] copy];
         [store commit:^(LTProfile *p) {
           p.settings[@"searchEngines"] = engines;
           p.settings[@"search"] = search;
+          if (customFilters) p.settings[@"contentBlocking"] = @{@"customFilters": customFilters};
         } error:nil];
     }
     if (websiteDataCleared && !privateMode) {

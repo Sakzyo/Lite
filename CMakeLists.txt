@@ -79,6 +79,10 @@ target_include_directories(LiteBlockingTests PRIVATE "${CEF_ROOT}")
 target_compile_options(LiteBlockingTests PRIVATE -fobjc-arc -Wall)
 target_link_libraries(LiteBlockingTests PRIVATE LiteCore)
 add_test(NAME LiteBlockingTests COMMAND LiteBlockingTests "${CMAKE_SOURCE_DIR}/resources/ContentBlocking")
+add_executable(LiteCustomFilterTests lite/tests/custom_filter_tests.m)
+target_compile_options(LiteCustomFilterTests PRIVATE -fobjc-arc -Wall)
+target_link_libraries(LiteCustomFilterTests PRIVATE LiteCore)
+add_test(NAME LiteCustomFilterTests COMMAND LiteCustomFilterTests)
 
 # Sparkle is vendored from its upstream checksum-pinned binary distribution.
 set(SPARKLE_FRAMEWORK "${CMAKE_SOURCE_DIR}/vendor/sparkle/Sparkle.framework")

@@ -113,7 +113,115 @@ struct Rule {
         return false;
     }
 };
+void SetPattern(Rule &rule, NSString *pattern) {
+    rule.pattern = S(pattern);
+    if (!rule.sensitive) rule.pattern = Lower(rule.pattern);
+    rule.domainAnchor = rule.pattern.starts_with("||");
+    bool left = rule.pattern.starts_with('|');
+    if (left) rule.pattern.erase(0, rule.domainAnchor ? 2 : 1);
+    if (!left) rule.pattern.insert(0, "*");
+    if (rule.pattern.ends_with('|')) rule.pattern.pop_back();
+    else rule.pattern += '*';
 }
+BOOL CustomFilterError(NSError **error, NSUInteger line, NSString *message) {
+    if (error) {
+        NSString *where = line ? [NSString stringWithFormat:@"Custom filters, line %lu: ", (unsigned long)line] : @"Custom filters: ";
+        *error = [NSError errorWithDomain:@"Lite" code:1 userInfo:@{NSLocalizedDescriptionKey:
+            [[where stringByAppendingString:message] stringByAppendingString:@" Your previous filters were kept."]}];
+    }
+    return NO;
+}
+BOOL ParseCustomFilters(id value, std::vector<Rule> *rules, NSError **error) {
+    if (![value isKindOfClass:NSString.class]) return CustomFilterError(error, 0, @"Enter a plain-text filter list.");
+    NSString *text = value;
+    if (![text canBeConvertedToEncoding:NSUTF8StringEncoding] || [text lengthOfBytesUsingEncoding:NSUTF8StringEncoding] > 256 * 1024)
+        return CustomFilterError(error, 0, @"The list must fit within 256 KiB of UTF-8 text.");
+    NSUInteger number = 0, count = 0;
+    BOOL firstNonempty = YES;
+    NSCharacterSet *padding = [NSCharacterSet characterSetWithCharactersInString:@" \t"];
+    for (NSString *raw in [text componentsSeparatedByString:@"\n"]) {
+        ++number;
+        NSString *line = [raw hasSuffix:@"\r"] ? [raw substringToIndex:raw.length - 1] : raw;
+        if (line.length > 2048) return CustomFilterError(error, number, @"A line cannot exceed 2,048 characters.");
+        line = [line stringByTrimmingCharactersInSet:padding];
+        if (!line.length) continue;
+        if ([line hasPrefix:@"["] && [line hasSuffix:@"]"]) {
+            if (!firstNonempty || ![@[@"[Adblock]", @"[Adblock Plus 2.0]"] containsObject:line])
+                return CustomFilterError(error, number, @"Remove this list header. Only [Adblock] or [Adblock Plus 2.0] is accepted as the first nonempty line.");
+            firstNonempty = NO;
+            continue;
+        }
+        firstNonempty = NO;
+        if ([line hasPrefix:@"!"]) continue;
+        if (++count > 1000) return CustomFilterError(error, number, @"The list cannot exceed 1,000 rules.");
+        BOOL allow = [line hasPrefix:@"@@"];
+        NSString *pattern = allow ? [line substringFromIndex:2] : line;
+        if (!pattern.length) return CustomFilterError(error, number, @"A rule needs a URL pattern.");
+        if (pattern.length >= 2 && [pattern hasPrefix:@"/"] && [pattern hasSuffix:@"/"])
+            return CustomFilterError(error, number, @"Regular expressions are not supported.");
+        for (NSUInteger i = 0; i < pattern.length; ++i) {
+            unichar c = [pattern characterAtIndex:i];
+            if (c <= 32 || c >= 127) return CustomFilterError(error, number, @"URL patterns must use ASCII without spaces or control characters.");
+            if (c == '$' || c == '#') return CustomFilterError(error, number, @"Filter options and cosmetic rules are not supported.");
+        }
+        NSString *body = pattern;
+        if ([body hasPrefix:@"||"]) body = [body substringFromIndex:2];
+        else if ([body hasPrefix:@"|"]) body = [body substringFromIndex:1];
+        if ([body hasSuffix:@"|"]) body = [body substringToIndex:body.length - 1];
+        if (!body.length || [body containsString:@"|"])
+            return CustomFilterError(error, number, @"Use | only at the ends, or || at the start, of a nonempty pattern.");
+        if (rules) {
+            Rule rule;
+            rule.allow = allow;
+            SetPattern(rule, pattern);
+            // Every match must contain this literal, including domain-anchored rules.
+            std::string run;
+            for (char ch : rule.pattern) {
+                if (ch == '*' || ch == '^') run.clear();
+                else { run += ch; if (run.size() > rule.token.size()) rule.token = run; }
+            }
+            rules->push_back(std::move(rule));
+        }
+    }
+    return YES;
+}
+}
+
+BOOL LTValidateCustomFilters(id text, NSError **error) {
+    return ParseCustomFilters(text, nullptr, error);
+}
+
+// A policy swaps this immutable matcher as a whole; request threads retain their snapshot.
+@interface LTCustomFilterSet : NSObject
+@property (nonatomic, copy, readonly) NSString *text;
+- (instancetype)initWithText:(NSString *)text;
+- (LTNetworkDecision)decisionForURL:(NSString *)url type:(NSString *)type;
+@end
+@implementation LTCustomFilterSet {
+    std::vector<Rule> _rules;
+}
+- (instancetype)initWithText:(NSString *)text {
+    if ((self = [super init])) {
+        _text = [text copy];
+        if (!ParseCustomFilters(_text, &_rules, nil)) return nil;
+    }
+    return self;
+}
+- (LTNetworkDecision)decisionForURL:(NSString *)url type:(NSString *)type {
+    if (_rules.empty() || [type isEqual:@"main_frame"]) return LTNetworkNoMatch;
+    NSString *scheme = [NSURL URLWithString:url].scheme.lowercaseString;
+    if (![@[@"http", @"https", @"ws", @"wss"] containsObject:scheme]) return LTNetworkNoMatch;
+    std::string full = S(url), lower = Lower(full), host = Host(url), resource = S(type);
+    LTNetworkDecision decision = LTNetworkNoMatch;
+    for (const Rule &rule : _rules) {
+        if (rule.token.size() >= 5 && lower.find(rule.token) == std::string::npos) continue;
+        if (!rule.matches(full, lower, host, "", resource, "", false)) continue;
+        if (rule.allow) return LTNetworkAllow;
+        decision = LTNetworkBlock;
+    }
+    return decision;
+}
+@end
 
 @implementation LTContentBlocker {
     std::vector<Rule> _rules;
@@ -182,14 +290,7 @@ static os_unfair_lock blockerLock = OS_UNFAIR_LOCK_INIT;
             r.allow = [entry[@"action"][@"type"] isEqual:@"allow"];
             r.priority = entry[@"priority"] ? [entry[@"priority"] intValue] : 1;
             r.sensitive = [c[@"isUrlFilterCaseSensitive"] boolValue];
-            r.pattern = S(c[@"urlFilter"] ?: @"*");
-            if (!r.sensitive) r.pattern = Lower(r.pattern);
-            r.domainAnchor = r.pattern.starts_with("||");
-            bool left = r.pattern.starts_with('|');
-            if (left) r.pattern.erase(0, r.domainAnchor ? 2 : 1);
-            if (!left) r.pattern.insert(0, "*");
-            if (r.pattern.ends_with('|')) r.pattern.pop_back();
-            else r.pattern += '*';
+            SetPattern(r, c[@"urlFilter"] ?: @"*");
             r.domains = Set(c[@"requestDomains"]); r.excludedDomains = Set(c[@"excludedRequestDomains"]);
             r.initiators = Set(c[@"initiatorDomains"]); r.excludedInitiators = Set(c[@"excludedInitiatorDomains"]);
             r.types = Set(c[@"resourceTypes"]); r.excludedTypes = Set(c[@"excludedResourceTypes"]);
@@ -235,8 +336,11 @@ static os_unfair_lock blockerLock = OS_UNFAIR_LOCK_INIT;
     return N(parts.size() > 1 ? parts[parts.size() - 2] : host);
 }
 - (BOOL)blocksURL:(NSString *)url initiator:(NSString *)initiator type:(NSString *)type method:(NSString *)method {
+    return [self decisionForURL:url initiator:initiator type:type method:method] == LTNetworkBlock;
+}
+- (LTNetworkDecision)decisionForURL:(NSString *)url initiator:(NSString *)initiator type:(NSString *)type method:(NSString *)method {
     NSString *scheme = [NSURL URLWithString:url].scheme.lowercaseString;
-    if (![@[@"http", @"https", @"ws", @"wss"] containsObject:scheme]) return NO;
+    if (![@[@"http", @"https", @"ws", @"wss"] containsObject:scheme]) return LTNetworkNoMatch;
     std::string full = S(url), lower = Lower(full), host = Host(url), source = Host(initiator);
     // Opaque/missing initiators are distinct from the destination, as in DNR.
     bool thirdParty = source.empty() || ![[self siteForHost:N(host)] isEqual:[self siteForHost:N(source)]];
@@ -264,7 +368,7 @@ static os_unfair_lock blockerLock = OS_UNFAIR_LOCK_INIT;
             allow = r.allow;
         }
     }
-    return !allow;
+    return priority < 0 ? LTNetworkNoMatch : allow ? LTNetworkAllow : LTNetworkBlock;
 }
 - (NSString *)youtubeScriptForURL:(NSString *)url {
     return LTIsYouTubeURL(url) ? _youtubeScript : @"";
@@ -309,12 +413,29 @@ static os_unfair_lock blockerLock = OS_UNFAIR_LOCK_INIT;
 @implementation LTBlockingPolicy {
     BOOL _disabled, _cosmeticDisabled;
     NSSet<NSString *> *_disabledSites;
+    LTCustomFilterSet *_custom;
 }
 - (void)updatePreferences:(NSDictionary *)preferences {
+    if (preferences && ![preferences isKindOfClass:NSDictionary.class]) return;
+    for (NSString *key in @[@"disabled", @"cosmeticDisabled", @"updatesDisabled"]) {
+        id value = preferences[key];
+        if (value && (![value isKindOfClass:NSNumber.class] || (![value isEqual:@0] && ![value isEqual:@1]))) return;
+    }
+    id sites = preferences[@"disabledSites"] ?: @[];
+    if (![sites isKindOfClass:NSArray.class]) return;
+    for (id host in sites) if (![host isKindOfClass:NSString.class] || ![host length]) return;
+    id text = preferences[@"customFilters"] ?: @"";
+    if (![text isKindOfClass:NSString.class]) return;
+    LTCustomFilterSet *custom;
+    @synchronized (self) { custom = _custom; }
+    if (![custom.text isEqual:text]) custom = [[LTCustomFilterSet alloc] initWithText:text];
+    if (!custom) return; // Reject the entire update, including toggles, if any rule is invalid.
+    NSSet *disabledSites = [NSSet setWithArray:sites];
     @synchronized (self) {
         _disabled = [preferences[@"disabled"] boolValue];
         _cosmeticDisabled = [preferences[@"cosmeticDisabled"] boolValue];
-        _disabledSites = [NSSet setWithArray:preferences[@"disabledSites"] ?: @[]];
+        _disabledSites = disabledSites;
+        _custom = custom;
     }
 }
 - (BOOL)enabledForURL:(NSString *)url {
@@ -324,5 +445,18 @@ static os_unfair_lock blockerLock = OS_UNFAIR_LOCK_INIT;
 }
 - (BOOL)cosmeticEnabledForURL:(NSString *)url {
     @synchronized (self) { return !_cosmeticDisabled && [self enabledForURL:url]; }
+}
+- (BOOL)blocksURL:(NSString *)url initiator:(NSString *)initiator type:(NSString *)type
+          method:(NSString *)method topURL:(NSString *)topURL {
+    NSString *host = N(Host(topURL));
+    LTCustomFilterSet *custom;
+    @synchronized (self) {
+        if (_disabled || [_disabledSites containsObject:host]) return NO;
+        custom = _custom;
+    }
+    LTNetworkDecision decision = [custom decisionForURL:url type:type];
+    if (decision == LTNetworkNoMatch)
+        decision = [[LTContentBlocker shared] decisionForURL:url initiator:initiator type:type method:method];
+    return decision == LTNetworkBlock;
 }
 @end

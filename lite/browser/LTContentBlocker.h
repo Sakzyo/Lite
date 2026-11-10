@@ -3,6 +3,14 @@ NS_ASSUME_NONNULL_BEGIN
 
 FOUNDATION_EXPORT BOOL LTFilterYouTubeResponse(NSString *url, NSString *type, NSString *mimeType);
 FOUNDATION_EXPORT BOOL LTIsYouTubeURL(NSString *url);
+// Validates the whole custom network filter list; errors identify the offending line.
+FOUNDATION_EXPORT BOOL LTValidateCustomFilters(id _Nullable text, NSError * _Nullable * _Nullable error);
+
+typedef NS_ENUM(NSInteger, LTNetworkDecision) {
+    LTNetworkNoMatch,
+    LTNetworkBlock,
+    LTNetworkAllow,
+};
 
 // Immutable compiled rules, shared by every regular and private browser context.
 @interface LTContentBlocker : NSObject
@@ -18,6 +26,8 @@ FOUNDATION_EXPORT BOOL LTIsYouTubeURL(NSString *url);
 + (void)install:(LTContentBlocker *)blocker;
 + (NSString *)bundledDirectory;
 - (nullable instancetype)initWithDirectory:(NSString *)directory;
+- (LTNetworkDecision)decisionForURL:(NSString *)url initiator:(NSString *)initiator
+                              type:(NSString *)type method:(NSString *)method;
 - (BOOL)blocksURL:(NSString *)url initiator:(NSString *)initiator
             type:(NSString *)type method:(NSString *)method;
 - (NSString *)cosmeticScriptForURL:(NSString *)url;
@@ -31,5 +41,7 @@ FOUNDATION_EXPORT BOOL LTIsYouTubeURL(NSString *url);
 - (void)updatePreferences:(nullable NSDictionary *)preferences;
 - (BOOL)enabledForURL:(NSString *)url;
 - (BOOL)cosmeticEnabledForURL:(NSString *)url;
+- (BOOL)blocksURL:(NSString *)url initiator:(NSString *)initiator type:(NSString *)type
+          method:(NSString *)method topURL:(NSString *)topURL;
 @end
 NS_ASSUME_NONNULL_END

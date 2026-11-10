@@ -22,6 +22,9 @@ resources; it does not automatically pause other subdomains.
   types, priorities, and allow-rule precedence at equal priority.
 - First/third-party classification using a bundled Public Suffix List, including
   private suffixes and wildcard/exception entries.
+- Local custom network filters with URL patterns and allow exceptions, edited from
+  **Content Blocking → Custom Filters…**. They remain in effect when bundled or
+  downloaded filters are replaced. See [custom network filters](#custom-network-filters).
 - Generic and hostname/entity-specific CSS selectors with cosmetic exceptions;
   constructed stylesheets apply to dynamically added elements and respect site
   pause settings. No upstream JavaScript runs inside a page.
@@ -57,7 +60,7 @@ Missing exceptions or anti-adblock workarounds can affect compatibility: pause t
 site if it breaks. Cosmetic styles are page-level CSS, not privileged browser user
 styles; pages can override/remove them, and closed shadow trees are not filtered.
 
-There is no element picker, user-authored filter editor, regional/annoyance-list
+There is no element picker, custom cosmetic filter editor, regional/annoyance-list
 selector, dedicated popup-filter list, or strict-block interstitial. Lite's existing gesture-based popup handling remains in place.
 WebSocket handshakes are not intercepted by this CEF resource hook. No claim is
 made to remove all advertisements. YouTube can change its player format or deliver
@@ -72,6 +75,97 @@ reviewed on 2026-09-27. Lite implements its own bounded streaming adapter in
 `resources/ContentBlocking/youtube.js`; it does not download or execute these
 lists at runtime. Escaped-key rewriting requires a structural key boundary and
 an object/array value; ordinary escaped mentions are preserved.
+
+## Custom network filters
+
+Open **Content Blocking → Custom Filters…** to enter one network filter per line.
+Opening the editor first saves the switches in the Content Blocking sheet, without
+reloading the page. Cancel in the editor leaves those switches saved and discards
+only the filter draft. Return inserts a newline in the editor; use **Apply and
+Reload** to save the text.
+
+Surrounding spaces and tabs are ignored. An empty line is ignored, and a line
+starting with `!` is a comment. `[Adblock]` or `[Adblock Plus 2.0]` is accepted on
+the first nonempty line; other or misplaced list headers must be removed. Patterns are
+case-insensitive ASCII and match anywhere in the request URL unless anchored:
+
+| Syntax | Meaning |
+| --- | --- |
+| `tracker.example/pixel` | Block a URL containing this text |
+| `/` | Match a literal slash, as a broad URL pattern |
+| `*` | Match any run of characters |
+| `^` | Match a URL separator or the end of the URL |
+| `|https://example.com/pixel|` | Match this complete URL |
+| `||tracker.example^` | Match this hostname and its subdomains, followed by a separator or the end |
+| `@@||tracker.example/needed.js|` | Allow this URL, including on subdomains |
+
+For example:
+
+```text
+! Block this host's requests except one required script.
+||tracker.example^
+@@||tracker.example/needed.js|
+```
+
+The editor accepts at most 1,000 active rules, 2,048 characters per line (including
+comments and surrounding whitespace), and 256 KiB of UTF-8 text in total. It refuses the entire edit if any line
+is invalid, reports its line number and reason, and keeps the saved filters. The
+same validation applies when reading or saving a profile. Unsupported forms include
+`$` options such as `$third-party` and `$domain=`, cosmetic rules such as `##`,
+`#@#` and `#?#`, regular expressions, scriptlets, and replacement scripts. These
+are rejected rather than treated as ordinary URL text.
+
+A matching custom `@@` exception wins over all custom and bundled network blocks.
+A matching custom block wins over bundled exceptions. Line order does not change
+this precedence. Custom rules apply to subresources and subframes, including
+redirect destinations and network requests made by service workers. They do not
+block main-frame navigation: `||site.example^` does not prevent opening the site
+itself. A custom exception affects network cancellation only; it does not turn off
+cosmetic hiding or the YouTube response/player filters. The global switch and
+per-hostname pause still disable custom blocking along with the built-in filters.
+
+Applying saves the text and reloads the selected page. Regular windows share the
+saved text. Each new private window copies the regular profile's current custom
+filters; later edits in that private window stay in memory and affect neither the
+regular profile nor other private windows. Later regular edits do not change an
+already-open private window. The compiled custom rules belong to each browser
+context, separately from downloaded filter sets, so installing a filter update
+does not discard them.
+
+The editor makes no network requests and never uploads the text. Bookmarks and
+organization exports do not include settings, so they do not include custom filters.
+Custom cosmetic filters, regular expressions, scriptlets and an element picker
+remain outside this first part of the roadmap goal.
+
+### Matching cost
+
+On 10 November 2026, a Release build on local Apple Silicon measured 1,000 custom
+rules against 3,000 distinct nonmatching URLs. Each request considers every custom
+rule. A rule's longest mandatory literal of at least five characters is checked
+first; if the URL lacks it, Lite skips the full wildcard match. Shorter literals
+and patterns without a literal still use the full matcher. This is a substring
+precheck, not an index.
+
+| Run | Average per request | Slowest request |
+| --- | --- | --- |
+| Before literal prefilter | 0.270 ms | 0.446 ms |
+| Before prefilter, during native-window validation | 0.294 ms | 0.780 ms |
+| After literal prefilter | 0.113 ms | 0.173 ms |
+
+`LiteCustomFilterTests` uses mixed hostname anchors and substring globs, prebuilt
+URLs no longer than 512 characters, 30 warm-up requests, and a small bundled-rule
+fixture. The timed policy calls include the fallback to that fixture; generating
+the rules and URLs is outside the measurement. This is a synthetic matching
+measurement, not page-load time or a bound for every possible glob and URL.
+
+The test prints both the average and slowest call. Its mean budget is **0.350 ms
+on arm64**, about three times the new local baseline, and **0.700 ms on Intel**,
+allowing another factor of two for the slower hosted CPU. These budgets were set
+before the hosted measurements. The release gate repeats this focused test with
+verbose output so CI records the timings even on a pass. The matcher still scans
+a list, and matching cost adds up across a page's requests; these figures do not
+qualify adversarial patterns or very long URLs. The slowest call is reported
+without a hard gate because scheduling can interrupt an individual call.
 
 ## Source, updates, and licensing
 
@@ -168,6 +262,15 @@ every user of that build. It never enters the repository or the app, and the scr
 never prints it.
 
 ## Verification
+
+`LiteCustomFilterTests` covers the accepted grammar, hostname boundaries, exception
+precedence, the input limits, whole-edit rejection, profile persistence, private
+isolation, concurrent policy swaps, and keeping custom rules when the shared filter
+set is replaced. Native window checks exercise the editor's controls and saved/unsaved edits. The Chromium
+fixture sends requests sequentially and checks actual server hits for custom blocks,
+redirect destinations, worker requests and exceptions to bundled rules, then checks
+site/global pause and independent regular/private changes. These fixtures use only
+loopback addresses.
 
 `LiteFilterUpdateTests` uses real P-256 keys and serves feeds from an in-process
 stand-in for the network. It covers key and feed-address parsing, each manifest

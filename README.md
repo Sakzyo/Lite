@@ -41,7 +41,9 @@ launched process. The Codex Run action uses the same script.
   guarded process termination; customizable, persisted native menu shortcuts.
 - Native ad/tracker blocking and cosmetic hiding using bundled uBlock Origin Lite
   filter data, with YouTube player-response filtering and a player fallback for pre-roll ads, a sidebar
-  shield, and persistent per-site controls. Builds configured with a filter feed install
+  shield, persistent per-site controls, and local custom network filters with allow
+  exceptions. New private windows start with the saved custom filters and keep their
+  own edits in memory. Builds configured with a filter feed install
   signed filter updates without a new release of Lite. See the
   [supported subset and filter provenance](docs/content-blocking.md).
 - Read-only Arc migration with preview, schema variations, ordering, nested folders,
@@ -110,4 +112,4 @@ measured results and remaining qualification work.
 
 CEF, Chromium, uBlock Origin Lite, and Public Suffix List notices are included in the application Resources directory.
 Lite contains no account service, telemetry SDK, analytics, AI subsystem, or proprietary
-Arc assets. Consented crash reports are the only data Lite itself sends about the app. Search suggestions, when you turn them on, send the text you type in the Command Bar to the search engine you chose. A build configured with a filter feed asks that feed for new content-blocking filters at most once a day, without cookies; the request reveals only your IP address and that you use Lite. Arc names occur only when identifying an import source or imported data.
+Arc assets. Consented crash reports are the only data Lite itself sends about the app. Search suggestions, when you turn them on, send the text you type in the Command Bar to the search engine you chose. A build configured with a filter feed asks that feed for new content-blocking filters at most once a day, without cookies; the request reveals only your IP address and that you use Lite. Custom filter text stays in the profile and is never uploaded. Arc names occur only when identifying an import source or imported data.

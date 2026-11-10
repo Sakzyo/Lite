@@ -75,8 +75,11 @@ apply: meeting these goals does not by itself qualify Lite as a production brows
   key and publishes a feed. Choosing where the feed is hosted, and keeping the key, are
   still to do before a release uses it. See
   [filter updates](content-blocking.md#filter-updates).
-- **Close the filtering gaps.** Add scriptlets, regex network rules, custom filters
-  and an element picker.
+- **Close the filtering gaps.** Partly done: Content Blocking has a local custom
+  network-filter editor for URL patterns and `@@` allow exceptions, with whole-edit
+  validation and temporary private-window edits. Custom rules survive filter updates.
+  Scriptlets, regex network rules, custom cosmetic filters and an element picker
+  remain to do. See [custom network filters](content-blocking.md#custom-network-filters).
 
 ### Extensions
 

@@ -36,7 +36,11 @@ REQUIRED = ['nativeMainWindow', 'nativeAccessibleNavigation', 'nativeFixtureSeed
             'nativeRegularWindowClosure', 'nativeTabClosure', 'nativeClosedTabRecorded',
             'nativeClosedWindowRecorded', 'nativeReopenClosedTab', 'nativeReopenClosedWindow', 'nativeAuthenticationDialog',
             'nativeAuthenticationSucceeded', 'nativeCrashPromptDisclosure', 'nativeCrashPromptDefaultsToDecline',
-            'nativeFilterUpdateControls', 'nativeFilterUpdateInstalled']
+            'nativeFilterUpdateControls', 'nativeFilterUpdateInstalled',
+            'nativeCustomFilterEditor', 'nativeCustomFilterApply', 'nativeCustomFilterCancel',
+            'nativeCustomFilterSwitchesSaved', 'nativeCustomFilterReturnInsertsNewline', 'nativeCustomFilterSwitchesRestored',
+            'nativeCustomFilterRejectsWholeDraft', 'nativePrivateCustomFiltersCopied',
+            'nativePrivateCustomFilterEditsIsolated']
 
 
 def publish_test_filters(profile):

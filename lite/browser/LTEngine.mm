@@ -246,9 +246,9 @@ class BlockingRequest : public CefResourceRequestHandler {
             NSString *url = N(request->GetURL());
             auto main = browser ? browser->GetMainFrame() : nullptr;
             NSString *top = request->GetResourceType() == RT_MAIN_FRAME ? url : main ? N(main->GetURL()) : initiator_;
-            if ([policy_ enabledForURL:top] && [[LTContentBlocker shared] blocksURL:url
+            if ([policy_ blocksURL:url
                     initiator:initiator_ type:BlockingResourceType(request->GetResourceType())
-                    method:N(request->GetMethod())]) {
+                    method:N(request->GetMethod()) topURL:top]) {
                 if (state_ && generation_ == state_->generation.load()) ++state_->count;
                 return RV_CANCEL;
             }
