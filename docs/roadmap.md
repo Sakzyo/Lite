@@ -76,10 +76,13 @@ apply: meeting these goals does not by itself qualify Lite as a production brows
   still to do before a release uses it. See
   [filter updates](content-blocking.md#filter-updates).
 - **Close the filtering gaps.** Partly done: Content Blocking has a local custom
-  network-filter editor for URL patterns and `@@` allow exceptions, with whole-edit
-  validation and temporary private-window edits. Custom rules survive filter updates.
-  Scriptlets, regex network rules, custom cosmetic filters and an element picker
-  remain to do. See [custom network filters](content-blocking.md#custom-network-filters).
+  filter editor supports URL patterns, bounded regex network rules and `@@` exceptions,
+  plus generic/hostname cosmetic selectors and `#@#` exceptions. Whole-edit validation,
+  temporary private edits and filter-update isolation apply to all three. Regex work has
+  separate exception/block instruction budgets and falls back to ordinary filtering when
+  capped. Scriptlets and an element picker remain to do. See
+  [custom network filters](content-blocking.md#custom-network-filters) and
+  [custom cosmetics](content-blocking.md#custom-cosmetic-filters).
 
 ### Extensions
 

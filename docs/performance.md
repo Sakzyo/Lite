@@ -231,6 +231,41 @@ cmake --build .build --target LiteHistoryTests
 .build/LiteHistoryTests --measure
 ```
 
+## Custom cosmetic stylesheets
+
+On 11 November 2026, a local Apple Silicon Release build measured stylesheet creation
+using the full bundled filter set (13,935 generic selectors) and 50 fixed representative
+hostnames. This is a synthetic composition workload, not a traffic ranking or live-page
+benchmark. Bundle/policy creation and URL construction are outside the timings. The
+warm case primes `www.reddit.com` once, then measures 100 requests for that hostname.
+
+| Fixture | Before cache, mean / slowest | After cache, mean / slowest |
+| --- | --- | --- |
+| Bundled only, 50 distinct hosts | 8.117 / 13.810 ms | 7.678 / 8.203 ms |
+| Custom generic, 50 distinct hosts | 11.760 / 11.916 ms | 11.354 / 11.582 ms |
+| Unrelated scoped custom, 50 distinct hosts | 11.656 / 11.949 ms | 7.658 / 7.943 ms |
+| Bundled only, 100 warm requests | 0.003 / 0.005 ms | 0.003 / 0.004 ms |
+| Custom generic, 100 warm requests | 11.637 / 12.587 ms | 0.002 / 0.004 ms |
+| Unrelated scoped custom, 100 warm requests | 11.643 / 12.170 ms | 0.002 / 0.011 ms |
+
+Each immutable custom snapshot owns a hostname script cache with the bundled cache's
+16-entry / 8 MiB budget. A new bundled snapshot replaces that cache; a custom edit
+creates a new owner. Calls retain their original cache while building, so concurrent
+updates cannot seed a newer snapshot with old results. Global, cosmetic and top-page
+pauses are checked before cache lookup. Hosts with no applicable custom rules reuse
+the existing bundled script, avoiding selector splitting and recomposition.
+
+Cold builds and cache misses still perform the full composition on the CEF UI thread;
+this cache only removes repeated work while an entry remains resident. The 50-host
+fixture exceeds its entry budget. `LiteCustomFilterTests` prints both timings and
+requires warm requests to average under 1 ms on either architecture; this separate
+cosmetic regression guard leaves the network timing gates unchanged. Tests also cover
+custom edits, private isolation, pauses, bundled replacement and concurrent installs.
+
+```sh
+ctest --test-dir .build -R '^LiteCustomFilterTests$' --verbose
+```
+
 ## Current readiness measurements
 
 The [1 October 2026 record](readiness-2026-10-01.md) contains the current baseline,

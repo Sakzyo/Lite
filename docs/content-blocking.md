@@ -22,11 +22,11 @@ resources; it does not automatically pause other subdomains.
   types, priorities, and allow-rule precedence at equal priority.
 - First/third-party classification using a bundled Public Suffix List, including
   private suffixes and wildcard/exception entries.
-- Local custom network filters with URL patterns and allow exceptions, edited from
+- Local custom network filters with URL patterns, bounded regular expressions and allow exceptions, edited from
   **Content Blocking → Custom Filters…**. They remain in effect when bundled or
   downloaded filters are replaced. See [custom network filters](#custom-network-filters).
-- Generic and hostname/entity-specific CSS selectors with cosmetic exceptions;
-  constructed stylesheets apply to dynamically added elements and respect site
+- Generic and hostname/entity-specific bundled CSS selectors, plus custom generic and
+  hostname-scoped cosmetic filters and exceptions. Constructed stylesheets apply to dynamically added elements and respect site
   pause settings. No upstream JavaScript runs inside a page.
 - CEF request interception before transmission, including redirect destinations.
   Context handlers also filter service-worker network requests without an associated
@@ -52,15 +52,16 @@ resources; it does not automatically pause other subdomains.
 ## Deliberate limits
 
 This is a native subset, not full uBOL parity. It does not execute upstream scriptlets,
-replacement/redirect scripts, procedural cosmetic filters, regex-based network
-rules, response-header conditions, or header-modification rules. Apart from the
+replacement/redirect scripts, procedural cosmetic filters, response-header conditions,
+or header-modification rules. Regexes are supported only in the local custom list;
+upstream DNR regex rules remain omitted. Apart from the
 targeted native YouTube response filter, response-body rules are unsupported. Other rules are
 omitted rather than approximated; per-list counts are recorded in `provenance.json`.
 Missing exceptions or anti-adblock workarounds can affect compatibility: pause the
 site if it breaks. Cosmetic styles are page-level CSS, not privileged browser user
 styles; pages can override/remove them, and closed shadow trees are not filtered.
 
-There is no element picker, custom cosmetic filter editor, regional/annoyance-list
+There is no element picker, regional/annoyance-list
 selector, dedicated popup-filter list, or strict-block interstitial. Lite's existing gesture-based popup handling remains in place.
 WebSocket handshakes are not intercepted by this CEF resource hook. No claim is
 made to remove all advertisements. YouTube can change its player format or deliver
@@ -78,7 +79,7 @@ an object/array value; ordinary escaped mentions are preserved.
 
 ## Custom network filters
 
-Open **Content Blocking → Custom Filters…** to enter one network filter per line.
+Open **Content Blocking → Custom Filters…** to enter one network or cosmetic filter per line.
 Opening the editor first saves the switches in the Content Blocking sheet, without
 reloading the page. Cancel in the editor leaves those switches saved and discards
 only the filter draft. Return inserts a newline in the editor; use **Apply and
@@ -98,6 +99,8 @@ case-insensitive ASCII and match anywhere in the request URL unless anchored:
 | `|https://example.com/pixel|` | Match this complete URL |
 | `||tracker.example^` | Match this hostname and its subdomains, followed by a separator or the end |
 | `@@||tracker.example/needed.js|` | Allow this URL, including on subdomains |
+| `/ads[0-9]+/` | Block a URL matching the bounded regex subset below |
+| `@@/tracker[.]example/needed[.]js$/` | Allow a URL matching this regex |
 
 For example:
 
@@ -110,10 +113,10 @@ For example:
 The editor accepts at most 1,000 active rules, 2,048 characters per line (including
 comments and surrounding whitespace), and 256 KiB of UTF-8 text in total. It refuses the entire edit if any line
 is invalid, reports its line number and reason, and keeps the saved filters. The
-same validation applies when reading or saving a profile. Unsupported forms include
-`$` options such as `$third-party` and `$domain=`, cosmetic rules such as `##`,
-`#@#` and `#?#`, regular expressions, scriptlets, and replacement scripts. These
-are rejected rather than treated as ordinary URL text.
+same validation applies when reading or saving a profile. `$` options such as
+`$third-party` and `$domain=`, procedural cosmetics such as `#?#`, scriptlets and
+replacement scripts remain unsupported. Invalid regex or CSS syntax rejects the entire
+mixed list, including otherwise valid rules, rather than being treated as URL text.
 
 A matching custom `@@` exception wins over all custom and bundled network blocks.
 A matching custom block wins over bundled exceptions. Line order does not change
@@ -134,10 +137,92 @@ does not discard them.
 
 The editor makes no network requests and never uploads the text. Bookmarks and
 organization exports do not include settings, so they do not include custom filters.
-Custom cosmetic filters, regular expressions, scriptlets and an element picker
-remain outside this first part of the roadmap goal.
+Scriptlets and an element picker remain outside this part of the roadmap goal.
 
-### Matching cost
+### Regular expressions
+
+A network pattern enclosed in `/.../` is a case-insensitive ASCII byte expression;
+`@@/.../` is an exception. A lone `/` keeps its literal URL-pattern meaning. Regexes
+search anywhere in the complete URL unless anchored with `^` or `$`. Anchors mean
+absolute start/end, and `.` excludes CR and LF. There are no capture results.
+
+Supported syntax is literals, escaped punctuation, `.`, character classes and ranges
+(including negation), `^`, `$`, `?`, `*`, `+`, `{m}`, `{m,n}`, groups, `(?:...)` and
+alternation. Repeat counts are at most 32. `\d`, `\w`, `\s` and their uppercase
+inverses use ASCII character sets; `\n`, `\r`, `\t`, `\f` and `\v` represent controls.
+Lookaround, backreferences, inline flags, word boundaries, lazy/possessive quantifiers
+and open-ended `{m,}` repeats are rejected with a precise error. Literal controls and
+non-ASCII pattern text are rejected; URL percent encoding remains literal URL text.
+
+`LTRegex.h` implements a Thompson NFA with request-local scratch state. It has no
+backtracking and adds no external dependency. Compilation is bounded to 512 pattern
+bytes, 16 nested groups and 256 instructions per expression, including expanded
+repeats. A list can contain at most 32 regexes and 2,048 regex instructions in total;
+these also count toward the existing 1,000-rule limit. Over-budget edits are rejected.
+
+At request time, regex exceptions run first with **50,000 instruction visits** shared
+across the exception pass. Blocks then get their own **50,000 visits**. A matched
+exception returns immediately, so expensive block rules cannot consume its budget.
+Every instruction visit, including epsilon transitions, is charged; programs and
+scratch space are bounded independently of matching input. Regex matching is skipped
+for URLs over **8,192 UTF-8 bytes**; the URL is never truncated.
+
+If either pass exhausts its budget, regex decisions for that request are discarded and
+ordinary custom URL patterns and bundled filtering continue. A regex exception that
+itself exceeds the cap cannot unblock the request. Reaching a cap never blocks a request
+by itself. This is a deliberate compatibility fallback, so these regex rules are not a
+strict navigation or security boundary. Global/site pause, custom precedence, private
+isolation and the main-frame exclusion are the same as for URL patterns.
+
+## Custom cosmetic filters
+
+Use `example.com##.advert` to hide matching elements on that hostname and its
+subdomains, or `##.advert` on every HTTP(S) page. `example.com#@#.advert` is a scoped
+exception; `#@#.advert` is generic. A scope is one ASCII hostname (including localhost,
+IPv4 or a punycode hostname), normalized to lowercase without a final dot. Domain
+lists, exclusions, entities, ports and schemes are rejected. Matching uses the frame's
+hostname, while the top page's pause preference controls all its frames, as before.
+
+Supported CSS is type/universal selectors, classes, IDs, attribute selectors and
+compounds, with descendant, `>`, `+` and `~` combinators. Attributes support presence,
+`=`, `^=`, `$=`, `*=`, `~=` and `|=`; quote a value unless it is an ASCII CSS identifier.
+Comma-separated selector lists are accepted and split at top-level commas, preserving
+commas inside quoted attribute values. For example:
+
+```text
+##.advert, [id^="ad-"]
+example.com##section > div[class*="sponsor"]
+example.com#@#.advert
+```
+
+Selectors preserve case. This initial grammar is printable ASCII, with no CSS escapes,
+pseudo-classes/elements (including `:not()` and `:has()`), namespaces or attribute flags.
+Declarations, scriptlets and malformed selectors reject the whole edit. The list is
+limited to 1,000 expanded cosmetic selectors as well as the common line/text limits.
+
+Precedence is **bundled hides minus bundled exceptions, then custom hides, then custom
+exceptions**. A custom hide can override a bundled exception, and a custom `#@#` removes
+the identical selector from either source regardless of line order. Selector-list
+members are compared separately after trimming their surrounding whitespace; other
+whitespace/spelling differences are not canonicalized. An exception for `.advert` does
+not cancel a different selector that also happens to match that element.
+
+The policy retains one immutable custom snapshot and composes one stylesheet with the
+currently installed bundled filters. Each custom snapshot owns a separate hostname
+script cache with a 16-entry / 8 MiB budget. Replacing the bundled snapshot replaces
+that cache; editing custom rules creates a new owner. In-flight builds retain their
+original cache, so they cannot seed a newer snapshot with stale styles. Hosts without
+applicable custom cosmetics reuse the bundled script. Custom selectors never enter the
+shared bundled matcher or its cache, so filter updates cannot erase them. Composition
+timings are recorded in [Performance](performance.md#custom-cosmetic-stylesheets).
+The existing constructed-stylesheet path handles dynamic
+elements and strict page CSP. Hiding remains page-level CSS, with the same closed-shadow
+and page-override limits as bundled cosmetics. Preferences affect newly loaded pages;
+Apply reloads the selected page, and other open pages must be reloaded. This does not
+live-rewrite styles already injected into a document. Disabling cosmetic hiding leaves
+custom network rules active.
+
+## Matching cost
 
 On 10 November 2026, a Release build on local Apple Silicon measured 1,000 custom
 rules against 3,000 distinct nonmatching URLs. Each request considers every custom
@@ -162,10 +247,29 @@ The test prints both the average and slowest call. Its mean budget is **0.350 ms
 on arm64**, about three times the new local baseline, and **0.700 ms on Intel**,
 allowing another factor of two for the slower hosted CPU. These budgets were set
 before the hosted measurements. The release gate repeats this focused test with
-verbose output so CI records the timings even on a pass. The matcher still scans
-a list, and matching cost adds up across a page's requests; these figures do not
-qualify adversarial patterns or very long URLs. The slowest call is reported
+verbose output so CI records the timings even on a pass. The glob matcher still scans
+a list, and matching cost adds up across a page's requests; the older glob figures do
+not qualify adversarial patterns or very long URLs. The slowest call is reported
 without a hard gate because scheduling can interrupt an individual call.
+
+The regex suite compares its supported subset against `NSRegularExpression` on 57,535
+short pattern/input pairs, and checks instruction exhaustion on pathological inputs.
+On 11 November 2026, the full local Release validation measured:
+
+| Fixture | Average per request | Slowest request |
+| --- | --- | --- |
+| 32 regexes, 3,000 nonmatching 512-byte URLs | 0.054 ms | 0.090 ms |
+| 32 adversarial regexes, 1,000 nonmatching 512-byte URLs | 0.045 ms | 0.056 ms |
+| 968 globs + 32 regexes, 3,000 nonmatching URLs up to 512 bytes | 0.140 ms | 0.201 ms |
+
+Ordinary regex requests finished within the 50,000-step block budget; every adversarial
+request exhausted that budget and exercised the bounded fallback. All three fixtures
+use the same 0.350/0.700 ms mean gates. Both suites print mean and slowest timings in CI;
+instruction caps, rather than a wall-clock timeout, bound regex work under scheduling
+variability. The 328 regex checks include the differential corpus; 238 custom-filter
+checks cover validation, precedence, isolation, replacement and persistence. The focused
+Chromium suite passed 22 checks including scoped/dynamic/frame cosmetics and regex
+requests; the native editor/private-window suite passed all 73 checks.
 
 ## Source, updates, and licensing
 

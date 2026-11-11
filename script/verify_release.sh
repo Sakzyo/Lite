@@ -12,7 +12,7 @@ cmake -S . -B .build -DCMAKE_BUILD_TYPE=Release -DPROJECT_ARCH="$(uname -m)"
 cmake --build .build -j 8
 ctest --test-dir .build --output-on-failure | tee test-results/release/ctest.log
 # Keep the request-cost measurement in CI logs even when the focused test passes.
-ctest --test-dir .build -R '^LiteCustomFilterTests$' --verbose --output-on-failure | tee test-results/release/custom-filters.log
+ctest --test-dir .build -R '^(LiteCustomFilterTests|LiteRegexTests)$' --verbose --output-on-failure | tee test-results/release/custom-filters.log
 python3 script/test_updates.py 2>&1 | tee test-results/release/updates.log
 python3 script/test_endurance.py 2>&1 | tee test-results/release/endurance-runner.log
 python3 script/package.py 2>&1 | tee test-results/release/package.log
