@@ -107,8 +107,10 @@ apply: meeting these goals does not by itself qualify Lite as a production brows
 - **Correct stale docs.** Done: [release status](release-status.md) and the
   [readiness record](readiness-2026-10-01.md) now say hosted CI has passed on `master`
   since 2 November 2026, on macOS 15 arm64 and Intel runners.
-- **Split up `LTWindow.mm`.** Move string-based command dispatch into its own testable
-  router.
+- **Split up `LTWindow.mm`.** Done: `LTCommandRouter` maps window command strings to
+  typed actions through a small target protocol. Routing, unknown commands and item
+  identifiers are tested without a window or CEF; window operations keep their existing
+  behavior. See [command routing](architecture.md#command-routing).
 
 ### Not 1.0 goals
 
