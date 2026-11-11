@@ -583,6 +583,30 @@ Window chrome is drawn with layer-backed AppKit views only (`LTTheme`): a
 rounded, clipped content cards hosting each split page. No image assets or extra
 frameworks beyond QuartzCore are used.
 
+### Display settings
+
+Lite follows the macOS Accessibility > Display settings in the chrome it draws itself.
+System label colors and the Command Bar's and find bar's visual-effect materials already
+follow them through AppKit; `LTTheme` covers the rest.
+
+- **Reduce Transparency** draws each Space backdrop as one flat color instead of a
+  gradient.
+- **Increase Contrast** mutes the Space tint toward the window's base color, so black
+  (light) or white (dark) labels keep at least 7:1 contrast for every Space color, both
+  on the bare backdrop and on the selected, hovered and Favorite tile washes drawn over
+  it. In light appearance those washes are raised; in dark appearance they are capped at
+  20% white, since a lighter wash would lower white-text contrast. Selected rows and
+  Favorites get a 1-point outline, floating-sidebar and page-card borders get stronger,
+  and the selected Space dot darkens until its white initial reaches 4.5:1.
+- **Reduce Motion** already skipped the Space tint fade and other animations.
+
+The settings are read when drawing, and `LTObserveDisplayOptions` redraws every window
+on `NSWorkspaceAccessibilityDisplayOptionsDidChangeNotification`, so changing them takes
+effect without a relaunch. `LiteCoreTests` checks the contrast ratios on every wash
+composited over each backdrop stop, flat backdrops and wash bounds for every palette color
+with explicit options; it does not change the Mac's
+own settings.
+
 ## Upstream references
 
 - [CEF architecture](https://chromiumembedded.github.io/cef/architecture)
