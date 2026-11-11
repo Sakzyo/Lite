@@ -198,6 +198,9 @@
     double _splitRatio;
     NSTimer *_saveTimer;
     NSMutableSet<NSString *> *_pendingClose;
+    // Tabs being closed by auto-archive, with the archive interval, so the writer can re-check
+    // their age against the latest selection before removing them.
+    NSMutableDictionary<NSString *, NSNumber *> *_archiving;
 }
 - (instancetype)initWithStore:(LTStore *)store
                          mini:(BOOL)mini
@@ -313,6 +316,8 @@
     if (_mini || interval <= 0 || ![n.kind isEqual:@"temporary"] || [self.tabsInUse containsObject:identifier] ||
         NSDate.date.timeIntervalSince1970 - n.lastUsed < interval)
         return;
+    if (!_archiving) _archiving = [NSMutableDictionary new];
+    _archiving[identifier] = @(interval);
     [self closeTabID:identifier];
 }
 - (void)setDownloadHistory:(LTDownloadHistory *)history {
@@ -1339,12 +1344,18 @@
     BOOL temporary = [n.kind isEqual:@"temporary"];
     NSString *spaceID = _spaceID, *activeID = _activeID;
     double closedAt = NSDate.date.timeIntervalSince1970;
+    double archiveInterval = _archiving[identifier].doubleValue;
+    [_archiving removeObjectForKey:identifier];
     [self commit:^(LTProfile *p) {
       if (temporary) {
           // Read on the writer, so the tab is recorded at the address its last queued save gave it.
           LTNode *closed = [p node:identifier];
-          if (closed) [p noteClosedTab:closed time:closedAt];
-          [p removeNode:identifier];
+          // A selection saved after the sweep looked means the tab was used again: keep it, unloaded.
+          BOOL usedAgain = archiveInterval > 0 && closed && closedAt - closed.lastUsed < archiveInterval;
+          if (!usedAgain) {
+              if (closed) [p noteClosedTab:closed time:closedAt];
+              [p removeNode:identifier];
+          }
       }
       if (!activeID.length || [p node:activeID])
           [p space:spaceID].selectedID = activeID;

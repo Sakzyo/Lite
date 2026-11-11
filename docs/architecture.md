@@ -331,7 +331,9 @@ tabs at once. These are always kept:
 - every tab in a private window, which has its own store and is never swept.
 
 `LTProfile -idleTabsAt:excluding:` chooses the tabs, oldest first; the window re-checks the
-tab's kind, use and age just before closing it. When no regular window is open, the app
+tab's kind, use and age just before closing it. Selection times reach the main thread's
+profile only after their save, so the close itself checks the age once more on the writer,
+after any selection queued before it; a tab used again in between stays, unloaded. When no regular window is open, the app
 archives on the profile writer and checks the age again there. Recently Closed holds 30
 entries, so archiving many tabs at once can push older closed tabs out. Archived tabs are
 not a separate list. `LiteArchiveTests` covers the choices, idle selection and everything
