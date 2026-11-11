@@ -297,6 +297,24 @@
 - (NSArray<LTPage *> *)pages {
     return _pageMap.allValues;
 }
+- (NSSet<NSString *> *)tabsInUse {
+    NSMutableSet *inUse = [NSMutableSet new];
+    for (NSString *identifier in @[ _activeID ?: @"", _secondaryID ?: @"", _focusedID ?: @"" ])
+        if (identifier.length) [inUse addObject:identifier];
+    for (LTPage *page in _pageMap.allValues)
+        if (page.identifier && (page.visible || page.audible || page.capturing || page.dirty ||
+                                page.downloading || page.keepAwake || page.pictureInPicture || page.closing))
+            [inUse addObject:page.identifier];
+    return inUse;
+}
+- (void)archiveTab:(NSString *)identifier {
+    LTNode *n = [_store.profile node:identifier];
+    double interval = LTArchiveInterval(_store.profile.settings);
+    if (_mini || interval <= 0 || ![n.kind isEqual:@"temporary"] || [self.tabsInUse containsObject:identifier] ||
+        NSDate.date.timeIntervalSince1970 - n.lastUsed < interval)
+        return;
+    [self closeTabID:identifier];
+}
 - (void)setDownloadHistory:(LTDownloadHistory *)history {
     if (_downloadHistory) [NSNotificationCenter.defaultCenter removeObserver:self name:LTDownloadHistoryChanged object:_downloadHistory];
     _downloadHistory = history;

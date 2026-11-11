@@ -310,6 +310,34 @@ windows. The validator rejects an entry of an unknown type, a tab that is not te
 has an address Lite cannot open, an invalid window state, and a list over the limit. A
 profile saved before the list existed loads with an empty one.
 
+### Auto-archive
+
+Settings > "Archive unused tabs after" offers Never (the default), 12 Hours, 1 Day, 7 Days
+and 30 Days, stored as `settings.archiveTabs`. Every five minutes the app delegate closes
+temporary tabs that have not been selected for that long. Each one goes through the
+window's normal close path, so it lands in Recently Closed like a tab closed by hand, and
+Reopen Closed Tab brings it back, also after quitting.
+
+A tab's age is its `lastUsed` time, which selecting the tab updates. A new tab starts
+aging when it is created, and a tab from a profile saved before `lastUsed` was recorded
+starts aging at the first sweep, so turning the setting on never closes a pile of old
+tabs at once. These are always kept:
+
+- pinned tabs, Favorites and folders, which are not temporary;
+- each Space's selected tab, and any tab a window shows, including the other side of a
+  split;
+- a tab whose page is playing audio, capturing, downloading, holding unsaved work,
+  kept awake, in Picture in Picture, or already closing;
+- every tab in a private window, which has its own store and is never swept.
+
+`LTProfile -idleTabsAt:excluding:` chooses the tabs, oldest first; the window re-checks the
+tab's kind, use and age just before closing it. When no regular window is open, the app
+archives on the profile writer and checks the age again there. Recently Closed holds 30
+entries, so archiving many tabs at once can push older closed tabs out. Archived tabs are
+not a separate list. `LiteArchiveTests` covers the choices, idle selection and everything
+that is kept, older profiles, validation, and reopening an archived tab after the store is
+reopened.
+
 ### Search engines and suggestions
 
 Three profile settings hold the search configuration:

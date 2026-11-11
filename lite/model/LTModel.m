@@ -44,8 +44,9 @@ static BOOL JSONTree(id value, NSUInteger depth) {
 }
 static BOOL Settings(NSDictionary *settings) {
     if (![settings isKindOfClass:NSDictionary.class] || !JSONTree(settings, 0) ||
-        !Strings(settings, @[@"performance"], NO) || !LTValidSearchSettings(settings)) return NO;
+        !Strings(settings, @[@"performance", @"archiveTabs"], NO) || !LTValidSearchSettings(settings)) return NO;
     if (settings[@"performance"] && ![@[@"Balanced", @"Efficient", @"Maximum Saving"] containsObject:settings[@"performance"]]) return NO;
+    if (settings[@"archiveTabs"] && ![LTArchiveChoices() containsObject:settings[@"archiveTabs"]]) return NO;
     for (NSString *key in @[@"externalMini", @"onboarded"])
         if (settings[key] && !BoolValue(settings[key])) return NO;
     NSDictionary *blocking = settings[@"contentBlocking"];
@@ -118,6 +119,15 @@ static BOOL Windows(NSArray *windows) {
 }
 static BOOL NodeFields(NSDictionary *node);
 const NSUInteger LTClosedLimit = 30;
+NSArray<NSString *> *LTArchiveChoices(void) {
+    return @[ @"Never", @"12 Hours", @"1 Day", @"7 Days", @"30 Days" ];
+}
+double LTArchiveInterval(NSDictionary *settings) {
+    NSDictionary<NSString *, NSNumber *> *seconds =
+        @{@"12 Hours" : @(12 * 3600), @"1 Day" : @(86400), @"7 Days" : @(7 * 86400), @"30 Days" : @(30 * 86400)};
+    id choice = settings[@"archiveTabs"];
+    return [choice isKindOfClass:NSString.class] ? seconds[choice].doubleValue : 0;
+}
 static BOOL Closed(NSArray *closed) {
     if (![closed isKindOfClass:NSArray.class] || closed.count > LTClosedLimit) return NO;
     for (NSDictionary *entry in closed) {
@@ -392,6 +402,31 @@ static NSDictionary *GroupChildren(NSArray<LTNode *> *nodes) {
 - (void)noteClosedWindow:(NSDictionary *)state time:(double)time {
     if (!Windows(@[state])) return;
     [self noteClosed:@{@"id" : LTUUID(), @"type" : @"window", @"closed" : @(time), @"state" : CopyJSON(state)}];
+}
+- (NSArray<NSString *> *)idleTabsAt:(double)now excluding:(NSSet<NSString *> *)inUse {
+    double interval = LTArchiveInterval(_settings);
+    if (interval <= 0) return @[];
+    NSMutableSet *kept = [inUse mutableCopy] ?: [NSMutableSet new];
+    for (LTSpace *space in _spaces)
+        if (space.selectedID.length) [kept addObject:space.selectedID];
+    NSMutableArray<LTNode *> *idle = [NSMutableArray new];
+    for (LTNode *node in _nodes)
+        if ([node.kind isEqual:@"temporary"] && node.lastUsed > 0 && now - node.lastUsed >= interval &&
+            ![kept containsObject:node.identifier])
+            [idle addObject:node];
+    [idle sortUsingComparator:^NSComparisonResult(LTNode *a, LTNode *b) {
+      return a.lastUsed < b.lastUsed ? NSOrderedAscending : a.lastUsed > b.lastUsed ? NSOrderedDescending : NSOrderedSame;
+    }];
+    return [idle valueForKey:@"identifier"];
+}
+- (BOOL)stampUnusedTabs:(double)now {
+    BOOL changed = NO;
+    for (LTNode *node in _nodes)
+        if ([node.kind isEqual:@"temporary"] && node.lastUsed <= 0) {
+            node.lastUsed = now;
+            changed = YES;
+        }
+    return changed;
 }
 - (NSDictionary *)latestClosed:(NSString *)type {
     for (NSDictionary *entry in _closed.reverseObjectEnumerator)

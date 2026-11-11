@@ -10,6 +10,10 @@ FOUNDATION_EXPORT BOOL LTValidURL(NSString *url);
 FOUNDATION_EXPORT NSString *LTURLFromInput(NSString *input, NSDictionary *_Nullable settings);
 // How many recently closed tabs and windows a profile keeps.
 FOUNDATION_EXPORT const NSUInteger LTClosedLimit;
+// Auto-archive choices, as stored in settings[@"archiveTabs"]: "Never" first, then periods.
+FOUNDATION_EXPORT NSArray<NSString *> *LTArchiveChoices(void);
+// Seconds a temporary tab may go unused before it is archived; 0 when archiving is off.
+FOUNDATION_EXPORT double LTArchiveInterval(NSDictionary *_Nullable settings);
 
 @interface LTNode : NSObject <NSCopying>
 @property (nonatomic, copy) NSString *identifier;
@@ -87,5 +91,11 @@ FOUNDATION_EXPORT const NSUInteger LTClosedLimit;
 - (BOOL)forgetClosedSince:(double)time;
 // Drops closed tabs at `url` and that address's saved scroll positions in closed windows.
 - (BOOL)forgetClosedURL:(NSString *)url;
+// Temporary tabs unused for the archive interval at `now`, oldest first. Tabs in `inUse`, each
+// Space's selected tab and tabs with no recorded use are kept. Empty when archiving is off.
+- (NSArray<NSString *> *)idleTabsAt:(double)now excluding:(NSSet<NSString *> *)inUse;
+// Gives temporary tabs with no recorded use (from older profiles) `now`, so they start aging
+// instead of being archived at once. Returns whether anything changed.
+- (BOOL)stampUnusedTabs:(double)now;
 @end
 NS_ASSUME_NONNULL_END

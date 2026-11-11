@@ -22,6 +22,12 @@
 // `next` runs once the tab exists and is selected. Saves are queued, so that is not before this returns.
 - (void)openURL:(NSString *)url then:(nullable void (^)(void))next;
 - (void)performCommand:(NSString *)command;
+// Tabs this window shows, or whose pages are busy: playing, capturing, downloading, holding
+// unsaved work, kept awake or in Picture in Picture. Auto-archive never closes these.
+- (NSSet<NSString *> *)tabsInUse;
+// Closes an idle temporary tab into Recently Closed without asking. Does nothing for a tab that
+// is in use, no longer temporary, or was used again within the archive interval.
+- (void)archiveTab:(NSString *)identifier;
 - (NSDictionary *)restorationState;
 - (void)showOnboarding;
 @end
