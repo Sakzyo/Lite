@@ -318,7 +318,14 @@
         return;
     if (!_archiving) _archiving = [NSMutableDictionary new];
     _archiving[identifier] = @(interval);
-    [self closeTabID:identifier];
+    LTPage *page = _pageMap[identifier];
+    if (page.alive) {
+        // Never a Leave Site prompt for a close the user did not ask for: a page that wants to
+        // stay is kept, and stays kept awake, so later sweeps skip it.
+        [_pendingClose addObject:identifier];
+        [page closeAutomatically];
+    } else
+        [self completeClose:identifier];
 }
 - (void)setDownloadHistory:(LTDownloadHistory *)history {
     if (_downloadHistory) [NSNotificationCenter.defaultCenter removeObserver:self name:LTDownloadHistoryChanged object:_downloadHistory];

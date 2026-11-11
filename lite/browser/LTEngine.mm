@@ -1099,6 +1099,12 @@ static void CancelBrowserRequests(CefRefPtr<CefBrowser> browser) {
         _browser->GetHost()->CloseBrowser(false);
     }
 }
+- (void)closeAutomatically {
+    if (!_browser) return;
+    // Shares the discard path's silent answer to beforeunload.
+    _discarding = YES;
+    [self close];
+}
 - (void)closeConfirmed {
     if (_browser) {
         static_cast<Client *>(_browser->GetHost()->GetClient().get())->CancelRequests();

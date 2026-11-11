@@ -330,6 +330,11 @@ tabs at once. These are always kept:
   kept awake, in Picture in Picture, or already closing;
 - every tab in a private window, which has its own store and is never swept.
 
+A loaded page is closed with `-[LTPage closeAutomatically]`, which never shows a Leave
+Site prompt: the renderer does not report every `beforeunload` handler, so a page that
+asks to stay is silently kept, marked kept awake like a page that refuses to be discarded,
+and skipped by later sweeps.
+
 `LTProfile -idleTabsAt:excluding:` chooses the tabs, oldest first; the window re-checks the
 tab's kind, use and age just before closing it. Selection times reach the main thread's
 profile only after their save, so the close itself checks the age once more on the writer,
