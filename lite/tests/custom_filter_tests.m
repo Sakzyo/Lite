@@ -572,7 +572,139 @@ static void TestMixedRequestCost(void) {
            (unsigned long)requests.count, meanMS, slowest * 1000, budgetMS);
 }
 
-int main(void) {
+static void TestCosmeticCacheLifecycle(LTContentBlocker *bundle, LTContentBlocker *replacement) {
+    [LTContentBlocker install:bundle];
+    NSString *page = @"https://page.example/";
+    LTBlockingPolicy *regular = Policy(@"##.regular-old\n#@#.bundled");
+    LTBlockingPolicy *privatePolicy = Policy(@"##.private\n#@#.bundled");
+    NSSet *regularInitial = Hidden(regular, page, page), *privateInitial = Hidden(privatePolicy, page, page);
+    BOOL stable = YES;
+    for (NSUInteger i = 0; i < 100; ++i) {
+        NSString *url = [NSString stringWithFormat:@"https://PAGE.EXAMPLE./reload-%lu", (unsigned long)i];
+        stable &= [Hidden(regular, url, page) isEqual:regularInitial] && [Hidden(privatePolicy, url, page) isEqual:privateInitial];
+    }
+    CHECK(stable && [regularInitial containsObject:@".regular-old"] && ![regularInitial containsObject:@".private"] &&
+          [privateInitial containsObject:@".private"] && ![privateInitial containsObject:@".regular-old"],
+          "repeated same-host styles normalize hostname and remain isolated between regular and private policies");
+    [regular updatePreferences:@{@"customFilters": @"##.regular-new"}];
+    NSSet *edited = Hidden(regular, page, page);
+    CHECK([edited containsObject:@".regular-new"] && [edited containsObject:@".bundled"] && ![edited containsObject:@".regular-old"] &&
+          [Hidden(privatePolicy, page, page) isEqual:privateInitial],
+          "editing custom rules replaces warmed style content without changing another policy");
+    [regular updatePreferences:@{@"customFilters": @"##.regular-new", @"disabledSites": @[@"paused.example"]}];
+    CHECK(![regular cosmeticScriptForURL:page topURL:@"https://paused.example/"].length &&
+          [Hidden(regular, page, page) isEqual:edited], "a warm stylesheet still obeys each request's top-page pause");
+    [regular updatePreferences:@{@"customFilters": @"##.regular-new", @"cosmeticDisabled": @YES}];
+    CHECK(![regular cosmeticScriptForURL:page topURL:page].length, "cosmetic pause suppresses an already warmed stylesheet");
+    [regular updatePreferences:@{@"customFilters": @"##.regular-new"}];
+    CHECK([Hidden(regular, page, page) isEqual:edited], "resuming cosmetic hiding restores the current custom snapshot");
+    [LTContentBlocker install:replacement];
+    NSSet *regularUpdated = Hidden(regular, page, page), *privateUpdated = Hidden(privatePolicy, page, page);
+    CHECK([regularUpdated containsObject:@".replacement"] && [regularUpdated containsObject:@".regular-new"] &&
+          ![regularUpdated containsObject:@".bundled"] && [privateUpdated containsObject:@".replacement"] &&
+          [privateUpdated containsObject:@".private"] && ![privateUpdated containsObject:@".bundled-specific"],
+          "installing bundled filters refreshes warmed styles in every policy while preserving their custom rules");
+    [regular updatePreferences:@{@"customFilters": @"##.regular-new\n#@#.replacement"}];
+    CHECK(![Hidden(regular, page, page) containsObject:@".replacement"] &&
+          [Hidden(privatePolicy, page, page) isEqual:privateUpdated],
+          "a new custom exception removes a warmed bundled selector in only its own policy");
+    [LTContentBlocker install:bundle];
+    CHECK([Hidden(regular, page, page) containsObject:@".bundled"] && ![Hidden(regular, page, page) containsObject:@".replacement"] &&
+          [Hidden(privatePolicy, page, page) isEqual:privateInitial],
+          "reinstalling an earlier bundle does not reuse styles from the intervening bundle");
+    [regular updatePreferences:@{@"customFilters": @""}];
+    CHECK([[regular cosmeticScriptForURL:page topURL:page] isEqual:[bundle cosmeticScriptForURL:page]] &&
+          [Hidden(privatePolicy, page, page) isEqual:privateInitial],
+          "removing custom filters restores bundled-only output without clearing another policy's custom styles");
+    LTBlockingPolicy *racing = Policy(@"##.race");
+    NSSet *first = Hidden(racing, page, page);
+    [LTContentBlocker install:replacement];
+    NSSet *second = Hidden(racing, page, page);
+    dispatch_group_t group = dispatch_group_create();
+    dispatch_semaphore_t ready = dispatch_semaphore_create(0), start = dispatch_semaphore_create(0);
+    NSObject *lock = [NSObject new];
+    __block NSUInteger mismatches = 0;
+    for (NSUInteger worker = 0; worker < 4; ++worker) {
+        dispatch_group_async(group, dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+            dispatch_semaphore_signal(ready);
+            dispatch_semaphore_wait(start, DISPATCH_TIME_FOREVER);
+            NSUInteger local = 0;
+            for (NSUInteger request = 0; request < 500; ++request) {
+                @autoreleasepool {
+                    NSSet *selectors = Hidden(racing, page, page);
+                    if (![selectors isEqual:first] && ![selectors isEqual:second]) ++local;
+                }
+            }
+            @synchronized (lock) { mismatches += local; }
+        });
+    }
+    for (NSUInteger worker = 0; worker < 4; ++worker) dispatch_semaphore_wait(ready, DISPATCH_TIME_FOREVER);
+    for (NSUInteger worker = 0; worker < 4; ++worker) dispatch_semaphore_signal(start);
+    for (NSUInteger update = 0; update < 400; ++update) [LTContentBlocker install:update % 2 ? bundle : replacement];
+    dispatch_group_wait(group, DISPATCH_TIME_FOREVER);
+    [LTContentBlocker install:bundle];
+    CHECK(mismatches == 0 && [Hidden(racing, page, page) isEqual:first],
+          "concurrent bundled installs yield complete styles and cannot leave a stale result after the final install");
+}
+
+static void TestCosmeticCompositionCost(NSString *directory) {
+    LTContentBlocker *bundled = [[LTContentBlocker alloc] initWithDirectory:directory];
+    CHECK(bundled != nil, "the cosmetic composition benchmark loads the real bundled filter set");
+    if (!bundled) return;
+    [LTContentBlocker install:bundled];
+    NSArray<NSString *> *hosts = @[@"google.com", @"youtube.com", @"facebook.com", @"wikipedia.org", @"reddit.com",
+        @"amazon.com", @"yahoo.com", @"bing.com", @"instagram.com", @"twitter.com", @"x.com", @"linkedin.com",
+        @"netflix.com", @"twitch.tv", @"github.com", @"stackoverflow.com", @"apple.com", @"microsoft.com",
+        @"bbc.com", @"cnn.com", @"nytimes.com", @"theguardian.com", @"reuters.com", @"washingtonpost.com",
+        @"espn.com", @"imdb.com", @"fandom.com", @"pinterest.com", @"ebay.com", @"weather.com",
+        @"accuweather.com", @"forbes.com", @"bloomberg.com", @"medium.com", @"quora.com", @"tumblr.com",
+        @"wordpress.com", @"dailymotion.com", @"vimeo.com", @"spotify.com", @"soundcloud.com", @"dropbox.com",
+        @"office.com", @"zoom.us", @"discord.com", @"slack.com", @"duckduckgo.com", @"brave.com",
+        @"4j.com", @"1024tera.com"];
+    CHECK(hosts.count == 50, "the real-bundle cosmetic benchmark covers 50 distinct representative hosts");
+    for (NSArray<NSString *> *fixture in @[@[@"bundled only", @""], @[@"custom generic", @"##.lite-benchmark-hide"],
+                                           @[@"custom unrelated scope", @"unrelated.example##.lite-benchmark-hide"]]) {
+        LTBlockingPolicy *policy = Policy(fixture[1]);
+        double elapsed = 0, slowest = 0;
+        BOOL complete = YES;
+        for (NSString *host in hosts) {
+            @autoreleasepool {
+                NSString *url = [NSString stringWithFormat:@"https://%@/", host];
+                double started = NSProcessInfo.processInfo.systemUptime;
+                NSString *script = [policy cosmeticScriptForURL:url topURL:url];
+                double duration = NSProcessInfo.processInfo.systemUptime - started;
+                elapsed += duration;
+                if (duration > slowest) slowest = duration;
+                complete &= script.length > 100000;
+            }
+        }
+        CHECK(complete, "each measured host composes the full bundled cosmetic payload");
+        printf("Cosmetic composition (%s): 50 distinct hosts, mean %.3f ms, slowest %.3f ms\n",
+               fixture[0].UTF8String, elapsed * 1000 / hosts.count, slowest * 1000);
+        NSString *url = @"https://www.reddit.com/";
+        NSString *expected = [policy cosmeticScriptForURL:url topURL:url];
+        elapsed = slowest = 0;
+        BOOL stable = YES;
+        for (NSUInteger i = 0; i < 100; ++i) {
+            @autoreleasepool {
+                double started = NSProcessInfo.processInfo.systemUptime;
+                NSString *script = [policy cosmeticScriptForURL:url topURL:url];
+                double duration = NSProcessInfo.processInfo.systemUptime - started;
+                elapsed += duration;
+                if (duration > slowest) slowest = duration;
+                stable &= [script isEqual:expected];
+            }
+        }
+        CHECK(stable, "repeated full-bundle cosmetic requests preserve the composed stylesheet");
+        // A separate cosmetic budget: the uncached baseline was about 11.6 ms,
+        // while a warm request should only select the current immutable result.
+        CHECK(elapsed * 1000 / 100 < 1.0, "warm full-bundle cosmetic requests average less than 1 ms");
+        printf("Cosmetic composition (%s): 100 same-host requests after warm-up, mean %.3f ms, slowest %.3f ms\n",
+               fixture[0].UTF8String, elapsed * 1000 / 100, slowest * 1000);
+    }
+}
+
+int main(int argc, const char **argv) {
     @autoreleasepool {
         NSString *directory = [NSTemporaryDirectory() stringByAppendingPathComponent:NSUUID.UUID.UUIDString];
         LTContentBlocker *bundle = Bundle([directory stringByAppendingPathComponent:@"original"], NO);
@@ -584,10 +716,13 @@ int main(void) {
         TestCosmeticInput();
         TestMatching(bundle, replacement);
         TestCosmetics(bundle, replacement);
+        TestCosmeticCacheLifecycle(bundle, replacement);
         TestConcurrentReplacement();
         TestRequestCost();
         TestMixedRequestCost();
         TestPersistence(directory);
+        CHECK(argc == 2, "the real bundled-filter directory is supplied to the custom-filter suite");
+        if (argc == 2) TestCosmeticCompositionCost([NSString stringWithUTF8String:argv[1]]);
         [NSFileManager.defaultManager removeItemAtPath:directory error:nil];
         printf("%d custom filter checks passed, %d failed\n", passed, failed);
         return failed ? 1 : 0;

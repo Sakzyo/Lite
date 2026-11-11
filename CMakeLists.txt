@@ -83,7 +83,7 @@ add_test(NAME LiteBlockingTests COMMAND LiteBlockingTests "${CMAKE_SOURCE_DIR}/r
 add_executable(LiteCustomFilterTests lite/tests/custom_filter_tests.m)
 target_compile_options(LiteCustomFilterTests PRIVATE -fobjc-arc -Wall)
 target_link_libraries(LiteCustomFilterTests PRIVATE LiteCore)
-add_test(NAME LiteCustomFilterTests COMMAND LiteCustomFilterTests)
+add_test(NAME LiteCustomFilterTests COMMAND LiteCustomFilterTests "${CMAKE_SOURCE_DIR}/resources/ContentBlocking")
 add_executable(LiteRegexTests lite/tests/regex_tests.mm)
 target_compile_options(LiteRegexTests PRIVATE -fobjc-arc -Wall)
 target_link_libraries(LiteRegexTests PRIVATE "-framework Foundation")

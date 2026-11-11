@@ -279,18 +279,25 @@ BOOL LTValidateCustomFilters(id text, NSError **error) {
     return ParseCustomFilters(text, nullptr, nullptr, nil, error);
 }
 
+static NSString *CosmeticScript(NSSet<NSString *> *selectors);
+@interface LTContentBlocker ()
+- (NSSet<NSString *> *)cosmeticSelectorsForURL:(NSString *)url;
+@end
+
 // A policy swaps this immutable matcher as a whole; request threads retain their snapshot.
 @interface LTCustomFilterSet : NSObject
 @property (nonatomic, copy, readonly) NSString *text;
 - (instancetype)initWithText:(NSString *)text;
 - (LTNetworkDecision)decisionForURL:(NSString *)url type:(NSString *)type;
 - (BOOL)hasCosmetics;
-- (NSSet<NSString *> *)cosmeticSelectorsForURL:(NSString *)url bundled:(NSSet<NSString *> *)bundled;
+- (NSString *)cosmeticScriptForURL:(NSString *)url bundled:(LTContentBlocker *)bundled;
 @end
 @implementation LTCustomFilterSet {
     std::vector<Rule> _rules;
     std::vector<RegexRule> _regexes;
     NSArray<NSDictionary *> *_cosmetics;
+    NSCache<NSString *, NSString *> *_scripts;
+    LTContentBlocker *_scriptsBundle;
 }
 - (instancetype)initWithText:(NSString *)text {
     if ((self = [super init])) {
@@ -316,6 +323,7 @@ BOOL LTValidateCustomFilters(id text, NSError **error) {
     // Never truncate: matching an incomplete URL could turn a nonmatch into a block/exception.
     if (_regexes.empty() || full.size() > RegexURLBytes) return decision;
     for (bool allow : {true, false}) {
+        if (!allow && decision == LTNetworkBlock) return decision;
         size_t remaining = RegexPassSteps;
         for (const RegexRule &rule : _regexes) {
             if (rule.allow != allow) continue;
@@ -327,20 +335,45 @@ BOOL LTValidateCustomFilters(id text, NSError **error) {
     return decision;
 }
 - (BOOL)hasCosmetics { return _cosmetics.count != 0; }
-- (NSSet<NSString *> *)cosmeticSelectorsForURL:(NSString *)url bundled:(NSSet<NSString *> *)bundled {
+- (NSString *)cosmeticScriptForURL:(NSString *)url bundled:(LTContentBlocker *)bundled {
     NSString *host = N(Host(url));
-    // Bundled exceptions have already been applied to their original list strings.
-    NSMutableSet *selectors = [NSMutableSet new];
-    for (NSString *selector in bundled) [selectors addObjectsFromArray:CosmeticSelectorParts(selector)];
-    NSMutableSet *exceptions = [NSMutableSet new];
+    NSCache<NSString *, NSString *> *scripts;
+    @synchronized (self) {
+        // Custom identity is implicit in this owner. Retain the bundled identity,
+        // and replace the cache whole so an in-flight build cannot seed a new snapshot.
+        if (!_scripts || _scriptsBundle != bundled) {
+            _scriptsBundle = bundled;
+            _scripts = [NSCache new];
+            _scripts.countLimit = 16;
+            _scripts.totalCostLimit = 8 * 1024 * 1024;
+        }
+        scripts = _scripts;
+    }
+    NSString *cached = [scripts objectForKey:host];
+    if (cached) return cached;
+    NSMutableArray<NSDictionary *> *matching = [NSMutableArray new];
     for (NSDictionary *filter in _cosmetics) {
         NSString *scope = filter[@"host"];
         if (scope.length && ![host isEqual:scope] && ![host hasSuffix:[@"." stringByAppendingString:scope]]) continue;
-        if ([filter[@"exception"] boolValue]) [exceptions addObject:filter[@"selector"]];
-        else [selectors addObject:filter[@"selector"]];
+        [matching addObject:filter];
     }
-    [selectors minusSet:exceptions];
-    return selectors;
+    NSString *script;
+    if (!matching.count) script = [bundled cosmeticScriptForURL:url] ?: @"";
+    else {
+        // Bundled exceptions have already been applied to their original list strings.
+        NSMutableSet *selectors = [NSMutableSet new];
+        for (NSString *selector in [bundled cosmeticSelectorsForURL:url])
+            [selectors addObjectsFromArray:CosmeticSelectorParts(selector)];
+        NSMutableSet *exceptions = [NSMutableSet new];
+        for (NSDictionary *filter in matching) {
+            if ([filter[@"exception"] boolValue]) [exceptions addObject:filter[@"selector"]];
+            else [selectors addObject:filter[@"selector"]];
+        }
+        [selectors minusSet:exceptions];
+        script = CosmeticScript(selectors);
+    }
+    [scripts setObject:script forKey:host cost:script.length * 2];
+    return script;
 }
 @end
 
@@ -358,9 +391,6 @@ static NSString *CosmeticScript(NSSet<NSString *> *selectors) {
         [[NSString alloc] initWithData:json encoding:NSUTF8StringEncoding]];
 }
 
-@interface LTContentBlocker ()
-- (NSSet<NSString *> *)cosmeticSelectorsForURL:(NSString *)url;
-@end
 @implementation LTContentBlocker {
     std::vector<Rule> _rules;
     Index _domainIndex, _tokenIndex;
@@ -590,8 +620,7 @@ static os_unfair_lock blockerLock = OS_UNFAIR_LOCK_INIT;
     }
     LTContentBlocker *bundled = [LTContentBlocker shared];
     if (![custom hasCosmetics]) return [bundled cosmeticScriptForURL:url] ?: @"";
-    // Combined styles are not cached by hostname: either snapshot can change independently.
-    return CosmeticScript([custom cosmeticSelectorsForURL:url bundled:[bundled cosmeticSelectorsForURL:url]]);
+    return [custom cosmeticScriptForURL:url bundled:bundled];
 }
 - (BOOL)blocksURL:(NSString *)url initiator:(NSString *)initiator type:(NSString *)type
           method:(NSString *)method topURL:(NSString *)topURL {

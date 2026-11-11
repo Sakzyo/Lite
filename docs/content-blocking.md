@@ -208,9 +208,14 @@ whitespace/spelling differences are not canonicalized. An exception for `.advert
 not cancel a different selector that also happens to match that element.
 
 The policy retains one immutable custom snapshot and composes one stylesheet with the
-currently installed bundled filters. Custom selectors are never stored in the shared
-bundled matcher or its hostname-only cache, so filter updates cannot erase them or
-reuse stale custom styles. The existing constructed-stylesheet path handles dynamic
+currently installed bundled filters. Each custom snapshot owns a separate hostname
+script cache with a 16-entry / 8 MiB budget. Replacing the bundled snapshot replaces
+that cache; editing custom rules creates a new owner. In-flight builds retain their
+original cache, so they cannot seed a newer snapshot with stale styles. Hosts without
+applicable custom cosmetics reuse the bundled script. Custom selectors never enter the
+shared bundled matcher or its cache, so filter updates cannot erase them. Composition
+timings are recorded in [Performance](performance.md#custom-cosmetic-stylesheets).
+The existing constructed-stylesheet path handles dynamic
 elements and strict page CSP. Hiding remains page-level CSS, with the same closed-shadow
 and page-override limits as bundled cosmetics. Preferences affect newly loaded pages;
 Apply reloads the selected page, and other open pages must be reloaded. This does not
@@ -261,7 +266,7 @@ Ordinary regex requests finished within the 50,000-step block budget; every adve
 request exhausted that budget and exercised the bounded fallback. All three fixtures
 use the same 0.350/0.700 ms mean gates. Both suites print mean and slowest timings in CI;
 instruction caps, rather than a wall-clock timeout, bound regex work under scheduling
-variability. The 328 regex checks include the differential corpus; 216 custom-filter
+variability. The 328 regex checks include the differential corpus; 238 custom-filter
 checks cover validation, precedence, isolation, replacement and persistence. The focused
 Chromium suite passed 22 checks including scoped/dynamic/frame cosmetics and regex
 requests; the native editor/private-window suite passed all 73 checks.
