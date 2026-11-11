@@ -58,6 +58,8 @@ launched process. The Codex Run action uses the same script.
   search engine, except addresses and anything in a private window.
 - Reopen Closed Tab and Reopen Closed Window, which keep the 30 most recently closed
   tabs and windows across quitting. Deleting history removes them too.
+- Optional auto-archive, which closes temporary tabs left unused for a chosen period into
+  Recently Closed. Pinned tabs, Favorites, and anything visible or busy are kept.
 - Real Chromium pages, navigation, TLS status, DevTools, find, zoom, print, HTML save,
   download callbacks, permission prompts, and transient popup windows.
 - Two independent pages in a resizable horizontal or vertical split.

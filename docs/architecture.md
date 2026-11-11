@@ -30,6 +30,26 @@ identities and measurements remain stable, and releases it before CEF shutdown.
 `lite/performance` contains a small policy function and a tolerant timer/memory
 pressure source. `lite/tests` contains model/import tests and bundled-engine tests.
 
+## Command routing
+
+`LTCommandRouter` maps the 68 window command strings to `LTWindowAction` values.
+It depends only on Foundation and calls a single `LTCommandTarget` method, so routing
+can be tested with a recording target without creating a window or loading CEF. The
+router holds its target weakly and rejects unknown or empty commands without calling it.
+
+The Command Bar, menus, keyboard shortcuts, sidebar and Settings keep their existing
+entry points. `LTWindow` resolves a menu or keyboard command's item to the focused page,
+then the primary tab, then an empty identifier. Sidebar commands pass the clicked item
+unchanged. Window, page and model operations stay in `LTWindow` behind a typed action
+switch, including their existing guards and asynchronous saves. App-level commands and
+AppKit responder actions keep their existing handling in `main.mm`.
+
+`LiteCommandRouterTests` checks every mapping, unknown-command rejection and identifier
+passthrough. It queries the actual Command Bar results and reads the inline menu, sidebar
+and Settings catalogs to check that every emitted command has a route. Shortcuts inherit
+the menu catalog. These routing tests do not qualify the window operations themselves;
+the native-window suite continues to exercise those in the running app.
+
 ## Engine boundary
 
 CEF's macOS native-parent integration uses **Alloy style**, backed by Chromium.
@@ -310,6 +330,41 @@ windows. The validator rejects an entry of an unknown type, a tab that is not te
 has an address Lite cannot open, an invalid window state, and a list over the limit. A
 profile saved before the list existed loads with an empty one.
 
+### Auto-archive
+
+Settings > "Archive unused tabs after" offers Never (the default), 12 Hours, 1 Day, 7 Days
+and 30 Days, stored as `settings.archiveTabs`. Every five minutes the app delegate closes
+temporary tabs that have not been selected for that long. Each one goes through the
+window's normal close path, so it lands in Recently Closed like a tab closed by hand, and
+Reopen Closed Tab brings it back, also after quitting.
+
+A tab's age is its `lastUsed` time, which selecting the tab updates. A new tab starts
+aging when it is created, and a tab from a profile saved before `lastUsed` was recorded
+starts aging at the first sweep, so turning the setting on never closes a pile of old
+tabs at once. These are always kept:
+
+- pinned tabs, Favorites and folders, which are not temporary;
+- each Space's selected tab, and any tab a window shows, including the other side of a
+  split;
+- a tab whose page is playing audio, capturing, downloading, holding unsaved work,
+  kept awake, in Picture in Picture, or already closing;
+- every tab in a private window, which has its own store and is never swept.
+
+A loaded page is closed with `-[LTPage closeAutomatically]`, which never shows a Leave
+Site prompt: the renderer does not report every `beforeunload` handler, so a page that
+asks to stay is silently kept, marked kept awake like a page that refuses to be discarded,
+and skipped by later sweeps.
+
+`LTProfile -idleTabsAt:excluding:` chooses the tabs, oldest first; the window re-checks the
+tab's kind, use and age just before closing it. Selection times reach the main thread's
+profile only after their save, so the close itself checks the age once more on the writer,
+after any selection queued before it; a tab used again in between stays, unloaded. When no regular window is open, the app
+archives on the profile writer and checks the age again there. Recently Closed holds 30
+entries, so archiving many tabs at once can push older closed tabs out. Archived tabs are
+not a separate list. `LiteArchiveTests` covers the choices, idle selection and everything
+that is kept, older profiles, validation, and reopening an archived tab after the store is
+reopened.
+
 ### Search engines and suggestions
 
 Three profile settings hold the search configuration:
@@ -582,6 +637,30 @@ Window chrome is drawn with layer-backed AppKit views only (`LTTheme`): a
 `CAGradientLayer` backdrop tinted per Space (`spaceThemes` in profile settings) and
 rounded, clipped content cards hosting each split page. No image assets or extra
 frameworks beyond QuartzCore are used.
+
+### Display settings
+
+Lite follows the macOS Accessibility > Display settings in the chrome it draws itself.
+System label colors and the Command Bar's and find bar's visual-effect materials already
+follow them through AppKit; `LTTheme` covers the rest.
+
+- **Reduce Transparency** draws each Space backdrop as one flat color instead of a
+  gradient.
+- **Increase Contrast** mutes the Space tint toward the window's base color, so black
+  (light) or white (dark) labels keep at least 7:1 contrast for every Space color, both
+  on the bare backdrop and on the selected, hovered and Favorite tile washes drawn over
+  it. In light appearance those washes are raised; in dark appearance they are capped at
+  20% white, since a lighter wash would lower white-text contrast. Selected rows and
+  Favorites get a 1-point outline, floating-sidebar and page-card borders get stronger,
+  and the selected Space dot darkens until its white initial reaches 4.5:1.
+- **Reduce Motion** already skipped the Space tint fade and other animations.
+
+The settings are read when drawing, and `LTObserveDisplayOptions` redraws every window
+on `NSWorkspaceAccessibilityDisplayOptionsDidChangeNotification`, so changing them takes
+effect without a relaunch. `LiteCoreTests` checks the contrast ratios on every wash
+composited over each backdrop stop, flat backdrops and wash bounds for every palette color
+with explicit options; it does not change the Mac's
+own settings.
 
 ## Upstream references
 

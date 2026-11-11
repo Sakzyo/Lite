@@ -46,7 +46,17 @@ BOOL LTAppearanceIsDark(NSAppearance *appearance) {
         bestMatchFromAppearancesWithNames:@[ NSAppearanceNameAqua, NSAppearanceNameDarkAqua ]]
         isEqual:NSAppearanceNameDarkAqua];
 }
+LTDisplayOptions LTCurrentDisplayOptions(void) {
+    NSWorkspace *workspace = NSWorkspace.sharedWorkspace;
+    return (LTDisplayOptions){
+        .reduceTransparency = workspace.accessibilityDisplayShouldReduceTransparency,
+        .increaseContrast = workspace.accessibilityDisplayShouldIncreaseContrast,
+    };
+}
 NSArray<NSColor *> *LTBackdropColors(NSColor *tint, BOOL dark) {
+    return LTBackdropColorsWithOptions(tint, dark, LTCurrentDisplayOptions());
+}
+NSArray<NSColor *> *LTBackdropColorsWithOptions(NSColor *tint, BOOL dark, LTDisplayOptions options) {
     NSColor *base = [tint ?: LTPaletteColor(@"Graphite") colorUsingColorSpace:NSColorSpace.sRGBColorSpace];
     CGFloat h, s, b, a;
     [base getHue:&h saturation:&s brightness:&b alpha:&a];
@@ -57,10 +67,76 @@ NSArray<NSColor *> *LTBackdropColors(NSColor *tint, BOOL dark) {
                                               alpha:1];
     NSColor *toward = dark ? [NSColor colorWithSRGBRed:.07 green:.07 blue:.08 alpha:1]
                            : [NSColor colorWithSRGBRed:1 green:1 blue:1 alpha:1];
-    return @[
-        [base blendedColorWithFraction:dark ? .70 : .72 ofColor:toward] ?: toward,
-        [shifted blendedColorWithFraction:dark ? .80 : .60 ofColor:toward] ?: toward
-    ];
+    // Increase Contrast keeps a hint of the Space color but moves both stops much closer
+    // to the base, so labels drawn on it stay legible.
+    CGFloat first = options.increaseContrast ? (dark ? .93 : .90) : (dark ? .70 : .72);
+    CGFloat second = options.increaseContrast ? (dark ? .95 : .88) : (dark ? .80 : .60);
+    NSColor *start = [base blendedColorWithFraction:first ofColor:toward] ?: toward;
+    NSColor *end = [shifted blendedColorWithFraction:second ofColor:toward] ?: toward;
+    // Reduce Transparency draws a single flat color instead of a gradient.
+    if (options.reduceTransparency)
+        end = start;
+    return @[ start, end ];
+}
+CGFloat LTWashAlpha(CGFloat alpha, BOOL dark, LTDisplayOptions options) {
+    if (!options.increaseContrast)
+        return alpha;
+    // Light washes move halfway to opaque white, which only raises black text contrast.
+    // Dark washes lighten the surface under white text, so they are capped at .20 to keep
+    // labels at 7:1 on every Space color; the outline on selected shapes carries the rest.
+    return dark ? MIN(alpha * 1.8, MAX(alpha, .20)) : MIN(alpha + (1 - alpha) * .5, 1);
+}
+NSColor *LTBorderColor(BOOL dark, BOOL onBackdrop, LTDisplayOptions options) {
+    if (options.increaseContrast)
+        return [NSColor colorWithWhite:dark ? 1 : 0 alpha:dark ? .45 : .50];
+    if (onBackdrop)
+        return [NSColor colorWithWhite:1 alpha:dark ? .10 : .55];
+    return [NSColor colorWithWhite:dark ? 1 : 0 alpha:dark ? .09 : .07];
+}
+static CGFloat Luminance(NSColor *color) {
+    NSColor *c = [color colorUsingColorSpace:NSColorSpace.sRGBColorSpace];
+    if (!c)
+        return 0;
+    CGFloat rgb[3] = {c.redComponent, c.greenComponent, c.blueComponent};
+    for (int i = 0; i < 3; i++)
+        rgb[i] = rgb[i] <= .04045 ? rgb[i] / 12.92 : pow((rgb[i] + .055) / 1.055, 2.4);
+    return .2126 * rgb[0] + .7152 * rgb[1] + .0722 * rgb[2];
+}
+CGFloat LTContrastRatio(NSColor *a, NSColor *b) {
+    CGFloat la = Luminance(a), lb = Luminance(b);
+    return (MAX(la, lb) + .05) / (MIN(la, lb) + .05);
+}
+NSColor *LTFillForWhiteText(NSColor *fill) {
+    NSColor *color = [fill colorUsingColorSpace:NSColorSpace.sRGBColorSpace];
+    if (!color)
+        return fill;
+    for (int step = 0; step < 20 && LTContrastRatio(color, NSColor.whiteColor) < 4.5; step++)
+        color = [color blendedColorWithFraction:.08 ofColor:NSColor.blackColor] ?: color;
+    return color;
+}
+static void Restyle(NSView *view) {
+    view.needsDisplay = YES;
+    view.needsLayout = YES;
+    if ([view isKindOfClass:LTBackdrop.class] || [view isKindOfClass:LTCard.class])
+        [view viewDidChangeEffectiveAppearance];
+    for (NSView *child in view.subviews)
+        Restyle(child);
+}
+void LTObserveDisplayOptions(void) {
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+      [NSWorkspace.sharedWorkspace.notificationCenter
+          addObserverForName:NSWorkspaceAccessibilityDisplayOptionsDidChangeNotification
+                      object:nil
+                       queue:NSOperationQueue.mainQueue
+                  usingBlock:^(NSNotification *note) {
+                    for (NSWindow *window in NSApp.windows) {
+                        NSView *frame = window.contentView.superview ?: window.contentView;
+                        if (frame)
+                            Restyle(frame);
+                    }
+                  }];
+    });
 }
 static void SetShadowPath(CALayer *layer, NSRect bounds, CGFloat radius) {
     if (bounds.size.width <= 0 || bounds.size.height <= 0) {
@@ -78,6 +154,7 @@ static void SetShadowPath(CALayer *layer, NSRect bounds, CGFloat radius) {
     if ((self = [super initWithFrame:frame])) {
         _drawsBackdrop = YES;
         self.wantsLayer = YES;
+        LTObserveDisplayOptions();
         self.layerContentsRedrawPolicy = NSViewLayerContentsRedrawOnSetNeedsDisplay;
     }
     return self;
@@ -142,14 +219,15 @@ static void SetShadowPath(CALayer *layer, NSRect bounds, CGFloat radius) {
     if (![layer isKindOfClass:CAGradientLayer.class])
         return;
     BOOL dark = LTAppearanceIsDark(self.effectiveAppearance);
+    LTDisplayOptions options = LTCurrentDisplayOptions();
     if (_drawsBackdrop || _floating) {
-        NSArray<NSColor *> *colors = LTBackdropColors(_tint, dark);
+        NSArray<NSColor *> *colors = LTBackdropColorsWithOptions(_tint, dark, options);
         layer.colors = @[ (id)colors[0].CGColor, (id)colors[1].CGColor ];
     } else
         layer.colors = @[ (id)NSColor.clearColor.CGColor, (id)NSColor.clearColor.CGColor ];
     layer.cornerRadius = _floating ? 12 : 0;
     layer.borderWidth = _floating ? 1 : 0;
-    layer.borderColor = [NSColor colorWithWhite:1 alpha:dark ? .10 : .55].CGColor;
+    layer.borderColor = LTBorderColor(dark, YES, options).CGColor;
     layer.shadowColor = NSColor.blackColor.CGColor;
     layer.shadowOpacity = _floating ? (dark ? .5 : .2) : 0;
     layer.shadowRadius = 18;
@@ -167,7 +245,7 @@ static void SetShadowPath(CALayer *layer, NSRect bounds, CGFloat radius) {
 - (void)updateLayer {
     BOOL dark = LTAppearanceIsDark(self.effectiveAppearance);
     self.layer.backgroundColor = NSColor.textBackgroundColor.CGColor;
-    self.layer.borderColor = [NSColor colorWithWhite:dark ? 1 : 0 alpha:dark ? .09 : .07].CGColor;
+    self.layer.borderColor = LTBorderColor(dark, NO, LTCurrentDisplayOptions()).CGColor;
 }
 - (void)viewDidChangeEffectiveAppearance {
     [super viewDidChangeEffectiveAppearance];
@@ -206,6 +284,7 @@ static void SetShadowPath(CALayer *layer, NSRect bounds, CGFloat radius) {
 - (void)viewDidChangeEffectiveAppearance {
     [super viewDidChangeEffectiveAppearance];
     self.needsDisplay = YES;
+    _clip.needsDisplay = YES;
 }
 - (void)setFrameSize:(NSSize)size {
     [super setFrameSize:size];

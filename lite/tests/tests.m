@@ -681,6 +681,70 @@ int main(int argc, char **argv) {
         CHECK(LTBackdropColors(LTPaletteColor(@"Ocean"), YES).count == 2 &&
                   LTBackdropColors(nil, NO).count == 2,
               "backdrop gradient colors resolve");
+        {
+            LTDisplayOptions standard = {NO, NO}, flat = {YES, NO}, contrast = {NO, YES};
+            BOOL flatOK = YES, contrastOK = YES, gradientKept = YES, washOK = YES, dotOK = YES;
+            for (NSString *name in [LTPaletteNames() arrayByAddingObject:@"Private"]) {
+                NSColor *tint = LTPaletteColor(name);
+                for (int dark = 0; dark < 2; dark++) {
+                    NSArray<NSColor *> *f = LTBackdropColorsWithOptions(tint, dark, flat);
+                    flatOK &= [f[0] isEqual:f[1]];
+                    NSArray<NSColor *> *n = LTBackdropColorsWithOptions(tint, dark, standard);
+                    gradientKept &= ![n[0] isEqual:n[1]];
+                    NSColor *text = dark ? NSColor.whiteColor : NSColor.blackColor;
+                    for (NSColor *stop in LTBackdropColorsWithOptions(tint, dark, contrast))
+                        contrastOK &= LTContrastRatio(stop, text) >= 7;
+                }
+                dotOK &= LTContrastRatio(LTFillForWhiteText(tint), NSColor.whiteColor) >= 4.5;
+            }
+            // Every wash Lite draws behind sidebar labels: rows, Favorite tiles, Space dots and
+            // the window's hover box. Labels must keep 7:1 on the composited surface.
+            BOOL surfacesOK = YES;
+            NSArray<NSNumber *> *lightWashes = @[ @.45, @.55, @.72, @.92, @.95 ];
+            NSArray<NSNumber *> *darkWashes = @[ @.07, @.08, @.12, @.13, @.15, @.20 ];
+            for (NSString *name in [LTPaletteNames() arrayByAddingObject:@"Private"])
+                for (int dark = 0; dark < 2; dark++) {
+                    NSColor *text = dark ? NSColor.whiteColor : NSColor.blackColor;
+                    for (NSColor *stop in LTBackdropColorsWithOptions(LTPaletteColor(name), dark, contrast))
+                        for (NSNumber *wash in dark ? darkWashes : lightWashes) {
+                            CGFloat alpha = LTWashAlpha(wash.doubleValue, dark, contrast);
+                            NSColor *surface = [stop blendedColorWithFraction:alpha
+                                                                      ofColor:NSColor.whiteColor];
+                            if (LTContrastRatio(surface, text) < 7) {
+                                surfacesOK = NO;
+                                fprintf(stderr, "  %s %s wash %.2f: %.2f:1\n", name.UTF8String,
+                                        dark ? "dark" : "light", alpha, LTContrastRatio(surface, text));
+                            }
+                        }
+                }
+            CHECK(surfacesOK, "Increase Contrast keeps 7:1 on selected and hovered sidebar surfaces");
+            for (CGFloat a = 0; a <= 1; a += .05)
+                for (int dark = 0; dark < 2; dark++) {
+                    CGFloat raised = LTWashAlpha(a, dark, contrast);
+                    washOK &= raised >= a && raised <= 1 && LTWashAlpha(a, dark, standard) == a;
+                }
+            CHECK(flatOK && gradientKept, "Reduce Transparency flattens backdrops to one color");
+            CHECK(contrastOK, "Increase Contrast keeps backdrop text at 7:1 for every Space color");
+            CHECK(washOK, "Increase Contrast raises washes and leaves defaults unchanged");
+            CHECK(dotOK, "Space dots keep white labels at 4.5:1 under Increase Contrast");
+            CHECK(fabs(LTContrastRatio(NSColor.blackColor, NSColor.whiteColor) - 21) < .01 &&
+                      LTContrastRatio(NSColor.grayColor, NSColor.grayColor) == 1,
+                  "contrast ratio matches WCAG endpoints");
+            BOOL bordersOK = YES;
+            for (int dark = 0; dark < 2; dark++)
+                for (int onBackdrop = 0; onBackdrop < 2; onBackdrop++) {
+                    NSColor *bg = LTBackdropColorsWithOptions(LTPaletteColor(@"Ocean"), dark, standard)[0];
+                    CGFloat (^visible)(NSColor *) = ^CGFloat(NSColor *border) {
+                        NSColor *b = [border colorUsingColorSpace:NSColorSpace.sRGBColorSpace];
+                        NSColor *over = [bg blendedColorWithFraction:b.alphaComponent
+                                                             ofColor:[b colorWithAlphaComponent:1]];
+                        return LTContrastRatio(over, bg);
+                    };
+                    bordersOK &= visible(LTBorderColor(dark, onBackdrop, contrast)) >
+                                 visible(LTBorderColor(dark, onBackdrop, standard)) + .5;
+                }
+            CHECK(bordersOK, "Increase Contrast strengthens borders");
+        }
         printf("\n%d passed, %d failed\n", passed, failed);
         return failed ? 1 : 0;
     }

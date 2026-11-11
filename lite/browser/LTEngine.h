@@ -67,6 +67,9 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)focus;
 - (void)close;
 - (void)closeConfirmed;
+// Closes for an automatic reason such as auto-archive, never showing a Leave Site prompt: a page
+// that asks to stay is kept open and awake and reported through pageCloseCanceled:.
+- (void)closeAutomatically;
 - (void)discard;
 - (void)freeze:(BOOL)freeze;
 - (void)find:(NSString *)text forward:(BOOL)forward next:(BOOL)next;

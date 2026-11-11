@@ -91,15 +91,24 @@ apply: meeting these goals does not by itself qualify Lite as a production brows
 
 ### Accessibility and languages
 
-- **Respect display settings.** Honor Reduce Transparency and Increase Contrast,
-  including on the tinted backdrops.
+- **Respect display settings.** Done: Reduce Transparency draws each Space backdrop as
+  one flat color, and Increase Contrast mutes the Space tint so black or white text keeps
+  at least 7:1 contrast on the sidebar backdrop for every Space color, including on
+  selected and hovered rows. It also strengthens borders and outlines the selected row
+  and Favorites. Both take effect without a relaunch. Pages themselves are left to
+  Chromium. See [display settings](architecture.md#display-settings).
 - **Complete VoiceOver testing.** Cover spoken output across the sidebar, Command Bar
   and panels, and fix what it finds.
 - **Make the UI localizable.** Move all UI text out of hard-coded English.
 
 ### Browser features
 
-- **Auto-archive tabs.** Temporary tabs archive themselves after a period of disuse.
+- **Auto-archive tabs.** Done: Settings can archive temporary tabs left unselected for
+  12 hours, 1 day, 7 days or 30 days; it is off until chosen. Archived tabs go to
+  Recently Closed, so Reopen Closed Tab brings them back. Pinned tabs, Favorites, each
+  Space's selected tab, anything a window shows, and pages that are playing, capturing,
+  downloading or holding unsaved work are kept. Recently Closed still keeps 30 entries.
+  See [auto-archive](architecture.md#auto-archive).
 - **Add Peek.** Preview a link without leaving the current page.
 - **Add Boosts.** Support per-site customization.
 - **Add reader mode.**
@@ -110,8 +119,10 @@ apply: meeting these goals does not by itself qualify Lite as a production brows
 - **Correct stale docs.** Done: [release status](release-status.md) and the
   [readiness record](readiness-2026-10-01.md) now say hosted CI has passed on `master`
   since 2 November 2026, on macOS 15 arm64 and Intel runners.
-- **Split up `LTWindow.mm`.** Move string-based command dispatch into its own testable
-  router.
+- **Split up `LTWindow.mm`.** Done: `LTCommandRouter` maps window command strings to
+  typed actions through a small target protocol. Routing, unknown commands and item
+  identifiers are tested without a window or CEF; window operations keep their existing
+  behavior. See [command routing](architecture.md#command-routing).
 
 ### Not 1.0 goals
 

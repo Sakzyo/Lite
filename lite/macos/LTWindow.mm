@@ -5,6 +5,7 @@
 #import "../model/LTFilterUpdates.h"
 #import "../model/LTGitHub.h"
 #import "LTCommandPanel.h"
+#import "LTCommandRouter.h"
 #import "LTDownloadHistory.h"
 #import "LTExtensionsPanel.h"
 #import "LTFaviconCache.h"
@@ -85,9 +86,10 @@
     self.fillColor = [NSColor colorWithName:nil
                               dynamicProvider:^NSColor *(NSAppearance *appearance) {
                                 BOOL dark = LTAppearanceIsDark(appearance);
+                                CGFloat alpha = dark ? (hovered ? .12 : .08) : (hovered ? .72 : .55);
                                 return [NSColor colorWithWhite:1
-                                                         alpha:dark ? (hovered ? .12 : .08)
-                                                                    : (hovered ? .72 : .55)];
+                                                         alpha:LTWashAlpha(alpha, dark,
+                                                                           LTCurrentDisplayOptions())];
                               }];
     for (NSView *v in _hoverViews)
         v.hidden = !hovered;
@@ -150,7 +152,7 @@
     return NO;
 }
 @end
-@interface LTWindow () <NSWindowDelegate, NSSplitViewDelegate, NSSearchFieldDelegate>
+@interface LTWindow () <NSWindowDelegate, NSSplitViewDelegate, NSSearchFieldDelegate, LTCommandTarget>
 @end
 @implementation LTWindow {
     __weak NSTextField *_filterStatus;
@@ -185,6 +187,7 @@
     NSSearchField *_find;
     NSVisualEffectView *_findBar;
     LTCommandPanel *_command;
+    LTCommandRouter *_commandRouter;
     LTSearchSuggestions *_suggestions;
     LTLibraryPanel *_library;
     LTFaviconCache *_icons;
@@ -198,6 +201,9 @@
     double _splitRatio;
     NSTimer *_saveTimer;
     NSMutableSet<NSString *> *_pendingClose;
+    // Tabs being closed by auto-archive, with the archive interval, so the writer can re-check
+    // their age against the latest selection before removing them.
+    NSMutableDictionary<NSString *, NSNumber *> *_archiving;
 }
 - (instancetype)initWithStore:(LTStore *)store
                          mini:(BOOL)mini
@@ -222,6 +228,7 @@
     w.collectionBehavior = NSWindowCollectionBehaviorFullScreenPrimary;
     if ((self = [super initWithWindow:w])) {
         _store = store;
+        _commandRouter = [[LTCommandRouter alloc] initWithTarget:self];
         _icons = store.privateMode ? nil : icons;
         _passwords =
             !store.privateMode && logins ? [[LTPasswords alloc] initWithStore:logins] : nil;
@@ -296,6 +303,33 @@
 }
 - (NSArray<LTPage *> *)pages {
     return _pageMap.allValues;
+}
+- (NSSet<NSString *> *)tabsInUse {
+    NSMutableSet *inUse = [NSMutableSet new];
+    for (NSString *identifier in @[ _activeID ?: @"", _secondaryID ?: @"", _focusedID ?: @"" ])
+        if (identifier.length) [inUse addObject:identifier];
+    for (LTPage *page in _pageMap.allValues)
+        if (page.identifier && (page.visible || page.audible || page.capturing || page.dirty ||
+                                page.downloading || page.keepAwake || page.pictureInPicture || page.closing))
+            [inUse addObject:page.identifier];
+    return inUse;
+}
+- (void)archiveTab:(NSString *)identifier {
+    LTNode *n = [_store.profile node:identifier];
+    double interval = LTArchiveInterval(_store.profile.settings);
+    if (_mini || interval <= 0 || ![n.kind isEqual:@"temporary"] || [self.tabsInUse containsObject:identifier] ||
+        NSDate.date.timeIntervalSince1970 - n.lastUsed < interval)
+        return;
+    if (!_archiving) _archiving = [NSMutableDictionary new];
+    _archiving[identifier] = @(interval);
+    LTPage *page = _pageMap[identifier];
+    if (page.alive) {
+        // Never a Leave Site prompt for a close the user did not ask for: a page that wants to
+        // stay is kept, and stays kept awake, so later sweeps skip it.
+        [_pendingClose addObject:identifier];
+        [page closeAutomatically];
+    } else
+        [self completeClose:identifier];
 }
 - (void)setDownloadHistory:(LTDownloadHistory *)history {
     if (_downloadHistory) [NSNotificationCenter.defaultCenter removeObserver:self name:LTDownloadHistoryChanged object:_downloadHistory];
@@ -866,6 +900,8 @@
 }
 - (void)pageCloseCanceled:(LTPage *)page {
     [_pendingClose removeObject:page.identifier];
+    // The page stayed open, so a later close is no longer an archive.
+    if (page.identifier) [_archiving removeObjectForKey:page.identifier];
     _closingWindow = NO;
     [self displayPages];
 }
@@ -916,18 +952,29 @@
     [self command:command item:[self activePage].identifier ?: _activeID ?: @""];
 }
 - (void)command:(NSString *)command item:(NSString *)identifier {
+    [_commandRouter routeCommand:command item:identifier];
+}
+- (void)performWindowAction:(LTWindowAction)action item:(NSString *)identifier {
     LTNode *node = [_store.profile node:identifier];
-    if ([command isEqual:@"contentBlocking"]) {
+    switch (action) {
+    case LTWindowActionContentBlocking:
         [self contentBlocking:nil];
-    } else if ([command isEqual:@"newTab"]) {
+        break;
+    case LTWindowActionNewTab: {
         _addressMode = NO;
         [self showCommand:@""];
-    } else if ([command isEqual:@"address"]) {
+        break;
+    }
+    case LTWindowActionAddress: {
         _addressMode = YES;
         [self showCommand:[self activePage].url ?: @""];
-    } else if ([command isEqual:@"newWindow"] || [command isEqual:@"newPrivate"]) {
-        [NSNotificationCenter.defaultCenter postNotificationName:@"LTAppCommand" object:command];
-    } else if ([command isEqual:@"newSpace"]) {
+        break;
+    }
+    case LTWindowActionNewWindow:
+    case LTWindowActionNewPrivate:
+        [NSNotificationCenter.defaultCenter postNotificationName:@"LTAppCommand" object:action == LTWindowActionNewWindow ? @"newWindow" : @"newPrivate"];
+        break;
+    case LTWindowActionNewSpace: {
         LTAskName(self.window, @"New Space", @"", ^(NSString *name) {
           __block NSString *sid;
           [self commit:^(LTProfile *p) {
@@ -936,23 +983,34 @@
             [self selectSpace:sid];
           }];
         });
-    } else if ([command isEqual:@"githubFolder"] || [command isEqual:@"editGitHubFolder"]) {
-        [self configureGitHubFolder:[command isEqual:@"editGitHubFolder"] ? identifier : nil];
-    } else if ([command isEqual:@"refreshGitHubFolder"]) {
+        break;
+    }
+    case LTWindowActionGithubFolder:
+    case LTWindowActionEditGitHubFolder:
+        [self configureGitHubFolder:(action == LTWindowActionEditGitHubFolder) ? identifier : nil];
+        break;
+    case LTWindowActionRefreshGitHubFolder:
         [_github refreshFolder:identifier];
-    } else if ([command isEqual:@"stopGitHubFolder"]) {
+        break;
+    case LTWindowActionStopGitHubFolder: {
         [self commit:^(LTProfile *profile) {
             NSMutableDictionary *folders = [profile.settings[@"githubLiveFolders"] mutableCopy];
             [folders removeObjectForKey:identifier];
             profile.settings[@"githubLiveFolders"] = folders ?: @{};
         }];
-    } else if ([command isEqual:@"taskManager"] || [command isEqual:@"shortcuts"]) {
-        [NSNotificationCenter.defaultCenter postNotificationName:@"LTAppCommand" object:command];
-    } else if ([command isEqual:@"applePasswords"]) {
+        break;
+    }
+    case LTWindowActionTaskManager:
+    case LTWindowActionShortcuts:
+        [NSNotificationCenter.defaultCenter postNotificationName:@"LTAppCommand" object:action == LTWindowActionTaskManager ? @"taskManager" : @"shortcuts"];
+        break;
+    case LTWindowActionApplePasswords: {
         NSURL *app = [NSWorkspace.sharedWorkspace URLForApplicationWithBundleIdentifier:@"com.apple.Passwords"];
         if (app) [NSWorkspace.sharedWorkspace openURL:app];
         else [NSWorkspace.sharedWorkspace openURL:[NSURL URLWithString:@"x-apple.systempreferences:com.apple.Passwords-Settings.extension"]];
-    } else if ([command isEqual:@"renameSpace"]) {
+        break;
+    }
+    case LTWindowActionRenameSpace: {
         LTAskName(self.window, @"Rename Space", [_store.profile space:_spaceID].name,
                   ^(NSString *name) {
                     NSString *sid = self->_spaceID;
@@ -960,7 +1018,9 @@
                       [p space:sid].name = name;
                     }];
                   });
-    } else if ([command isEqual:@"deleteSpace"]) {
+        break;
+    }
+    case LTWindowActionDeleteSpace: {
         if (_store.profile.spaces.count <= 1) {
             LTAlert(self.window, @"Keep one Space",
                     @"Create another Space before deleting this one.");
@@ -986,15 +1046,21 @@
                       }
                     }];
                   });
-    } else if ([command isEqual:@"newFolder"] || [command isEqual:@"folderInside"]) {
-        NSString *parent = [command isEqual:@"folderInside"] ? identifier : @"";
+        break;
+    }
+    case LTWindowActionNewFolder:
+    case LTWindowActionFolderInside: {
+        NSString *parent = (action == LTWindowActionFolderInside) ? identifier : @"";
         LTAskName(self.window, @"New Folder", @"", ^(NSString *name) {
           NSString *sid = self->_spaceID;
           [self commit:^(LTProfile *p) {
             [p addNode:@"folder" title:name url:@"" space:sid parent:parent];
           }];
         });
-    } else if ([command isEqual:@"pinTab"] && node) {
+        break;
+    }
+    case LTWindowActionPinTab: {
+        if (!node) break;
         [self commit:^(LTProfile *p) {
           LTNode *n = [p node:identifier];
           if ([n.kind isEqual:@"favorite"])
@@ -1006,7 +1072,10 @@
           else
               n.parentID = @"";
         }];
-    } else if ([command isEqual:@"rename"] && node) {
+        break;
+    }
+    case LTWindowActionRename: {
+        if (!node) break;
         LTAskName(self.window, @"Rename", node.displayTitle, ^(NSString *name) {
           [self commit:^(LTProfile *p) {
             LTNode *n = [p node:identifier];
@@ -1016,56 +1085,87 @@
                 n.customTitle = name;
           }];
         });
-    } else if ([command isEqual:@"favorite"] && node) {
+        break;
+    }
+    case LTWindowActionFavorite: {
+        if (!node) break;
         NSString *title = node.displayTitle, *url = node.url;
         [self commit:^(LTProfile *p) {
           [p addNode:@"favorite" title:title url:url space:@"" parent:@""];
         }];
-    } else if ([command isEqual:@"duplicate"] && node)
+        break;
+    }
+    case LTWindowActionDuplicate: {
+        if (!node) break;
         [self openURL:node.url];
-    else if ([command isEqual:@"resetPinned"] && node.pinnedURL.length)
+        break;
+    }
+    case LTWindowActionResetPinned: {
+        if (!node.pinnedURL.length) break;
         [[self pageFor:identifier] navigate:node.pinnedURL];
-    else if ([command isEqual:@"copyURL"] && node) {
+        break;
+    }
+    case LTWindowActionCopyURL: {
+        if (!node) break;
         [NSPasteboard.generalPasteboard clearContents];
         [NSPasteboard.generalPasteboard setString:node.url forType:NSPasteboardTypeString];
-    } else if ([command isEqual:@"keepAwake"]) {
+        break;
+    }
+    case LTWindowActionKeepAwake: {
         LTPage *p = [self pageFor:identifier];
         p.keepAwake = !p.keepAwake;
-    } else if ([command isEqual:@"moveTab"] || [command isEqual:@"moveFolder"]) {
-        [self moveItem:identifier folder:[command isEqual:@"moveFolder"]];
-    } else if ([command isEqual:@"openAll"]) {
+        break;
+    }
+    case LTWindowActionMoveTab:
+    case LTWindowActionMoveFolder:
+        [self moveItem:identifier folder:(action == LTWindowActionMoveFolder)];
+        break;
+    case LTWindowActionOpenAll: {
         for (LTNode *n in [_store.profile children:identifier space:_spaceID kind:nil]) {
             if ([n.kind isEqual:@"folder"])
                 [self command:@"openAll" item:n.identifier];
             else
                 [[self pageFor:n.identifier] loadIfNeeded];
         }
-    } else if ([command isEqual:@"deleteNode"]) {
+        break;
+    }
+    case LTWindowActionDeleteNode: {
         LTConfirm(self.window, @"Delete this folder?",
                   @"The folder and its pinned tabs will be removed.", @"Delete", ^{
                     [self commit:^(LTProfile *p) {
                       [p removeNode:identifier];
                     }];
                   });
-    } else if ([command isEqual:@"closeTab"])
+        break;
+    }
+    case LTWindowActionCloseTab:
         [self closeTabID:identifier];
-    else if ([command isEqual:@"reopenTab"])
+        break;
+    case LTWindowActionReopenTab:
         [self reopenClosedTab];
-    else if ([command isEqual:@"reopenWindow"])
-        [NSNotificationCenter.defaultCenter postNotificationName:@"LTAppCommand" object:command];
-    else if ([command isEqual:@"splitRight"] || [command isEqual:@"splitDown"]) {
+        break;
+    case LTWindowActionReopenWindow:
+        [NSNotificationCenter.defaultCenter postNotificationName:@"LTAppCommand" object:@"reopenWindow"];
+        break;
+    case LTWindowActionSplitRight:
+    case LTWindowActionSplitDown: {
         if (!_activeID.length)
             return;
-        _verticalSplit = [command isEqual:@"splitRight"];
+        _verticalSplit = (action == LTWindowActionSplitRight);
         _splitPending = YES;
         [self showCommand:@""];
-    } else if ([command isEqual:@"splitTab"])
+        break;
+    }
+    case LTWindowActionSplitTab:
         [self splitWith:identifier vertical:YES];
-    else if ([command isEqual:@"closeSplit"]) {
+        break;
+    case LTWindowActionCloseSplit: {
         _secondaryID = @"";
         [self displayPages];
         [self scheduleSave];
-    } else if ([command isEqual:@"swapSplit"]) {
+        break;
+    }
+    case LTWindowActionSwapSplit: {
         if (_secondaryID.length) {
             NSString *old = _activeID;
             _activeID = _secondaryID;
@@ -1073,17 +1173,25 @@
             [self displayPages];
             [self scheduleSave];
         }
-    } else if ([command isEqual:@"focusSplit"]) {
+        break;
+    }
+    case LTWindowActionFocusSplit: {
         NSString *target = [[self activePage].identifier isEqual:_secondaryID] ? _activeID : _secondaryID;
         [_pageMap[target] focus];
-    } else if ([command isEqual:@"nextSpace"] || [command isEqual:@"previousSpace"]) {
+        break;
+    }
+    case LTWindowActionNextSpace:
+    case LTWindowActionPreviousSpace: {
         NSInteger i = [_store.profile.spaces indexOfObject:[_store.profile space:_spaceID]],
                   count = _store.profile.spaces.count;
         [self
             selectSpace:_store.profile
-                            .spaces[(i + ([command isEqual:@"nextSpace"] ? 1 : count - 1)) % count]
+                            .spaces[(i + ((action == LTWindowActionNextSpace) ? 1 : count - 1)) % count]
                             .identifier];
-    } else if ([command isEqual:@"nextTab"] || [command isEqual:@"previousTab"]) {
+        break;
+    }
+    case LTWindowActionNextTab:
+    case LTWindowActionPreviousTab: {
         NSMutableArray *tabs = [NSMutableArray new];
         for (LTNode *n in _store.profile.nodes)
             if ([n.spaceID isEqual:_spaceID] && ![n.kind isEqual:@"folder"])
@@ -1093,37 +1201,52 @@
             if (i == NSNotFound)
                 i = 0;
             [self selectTab:((LTNode *)
-                                 tabs[(i + ([command isEqual:@"nextTab"] ? 1 : tabs.count - 1)) %
+                                 tabs[(i + ((action == LTWindowActionNextTab) ? 1 : tabs.count - 1)) %
                                       tabs.count])
                                 .identifier];
         }
-    } else if ([command isEqual:@"toggleSidebar"])
+        break;
+    }
+    case LTWindowActionToggleSidebar:
         [self toggleSidebar:nil];
-    else if ([command isEqual:@"downloads"] || [command isEqual:@"history"] ||
-             [command isEqual:@"settings"]) {
-        [_library showMode:command owner:self.window downloads:_downloadHistory.rows];
-        if ([command isEqual:@"downloads"] && _downloadHistory.saveError.length)
+        break;
+    case LTWindowActionDownloads:
+    case LTWindowActionHistory:
+    case LTWindowActionSettings: {
+        NSString *mode = action == LTWindowActionDownloads ? @"downloads" : action == LTWindowActionHistory ? @"history" : @"settings";
+        [_library showMode:mode owner:self.window downloads:_downloadHistory.rows];
+        if ((action == LTWindowActionDownloads) && _downloadHistory.saveError.length)
             LTAlert(_library.window, @"Download history could not be saved", _downloadHistory.saveError);
-    } else if ([command isEqual:@"importArc"])
+        break;
+    }
+    case LTWindowActionImportArc:
         [self importArc];
-    else if ([command isEqual:@"importBookmarks"])
+        break;
+    case LTWindowActionImportBookmarks:
         [self importBookmarks];
-    else if ([command isEqual:@"exportBookmarks"] || [command isEqual:@"exportOrganization"])
-        [self exportData:[command isEqual:@"exportBookmarks"]];
-    else if ([command isEqual:@"saveLogin"] || [command isEqual:@"fillLogin"] ||
-             [command isEqual:@"passwords"]) {
+        break;
+    case LTWindowActionExportBookmarks:
+    case LTWindowActionExportOrganization:
+        [self exportData:(action == LTWindowActionExportBookmarks)];
+        break;
+    case LTWindowActionSaveLogin:
+    case LTWindowActionFillLogin:
+    case LTWindowActionPasswords: {
         if (!_passwords)
             LTAlert(self.window, @"Logins are unavailable in private windows",
                     @"Use a regular Lite window to save, fill, or manage logins.");
-        else if ([command isEqual:@"saveLogin"])
+        else if (action == LTWindowActionSaveLogin)
             [_passwords saveForPage:[self activePage] window:self.window];
-        else if ([command isEqual:@"fillLogin"])
+        else if (action == LTWindowActionFillLogin)
             [_passwords fillForPage:[self activePage] window:self.window];
         else
             [_passwords manageForWindow:self.window];
-    } else if ([command isEqual:@"googlePasswords"])
+        break;
+    }
+    case LTWindowActionGooglePasswords:
         [self openURL:@"https://passwords.google.com/"];
-    else if ([command isEqual:@"clearData"]) {
+        break;
+    case LTWindowActionClearData: {
         if (_store.privateMode) {
             LTConfirm(self.window, @"Clear this private window’s website data?", @"This closes every page and popup using this private context, ends downloads and capture, and discards unsaved website work. A fresh private window opens with separate, empty storage. Regular windows and other private windows are unchanged.", @"Clear Private Data", ^{
                 self->_closingWindow = YES;
@@ -1134,14 +1257,18 @@
                 [NSNotificationCenter.defaultCenter postNotificationName:@"LTAppCommand" object:@"newPrivate"];
             });
         } else [NSNotificationCenter.defaultCenter postNotificationName:@"LTClearAllWebsiteData" object:self];
-    } else if ([command isEqual:@"extensions"]) {
+        break;
+    }
+    case LTWindowActionExtensions: {
         if (_extensions)
-            [NSNotificationCenter.defaultCenter postNotificationName:@"LTAppCommand" object:command];
+            [NSNotificationCenter.defaultCenter postNotificationName:@"LTAppCommand" object:@"extensions"];
         else
             LTAlert(self.window, @"Extensions are off in private windows",
                     @"Extensions run only in regular windows, so they cannot see private browsing. "
                     @"Manage them from a regular Lite window.");
-    } else if ([command isEqual:@"defaultBrowser"]) {
+        break;
+    }
+    case LTWindowActionDefaultBrowser: {
         [NSWorkspace.sharedWorkspace
             setDefaultApplicationAtURL:NSBundle.mainBundle.bundleURL
                   toOpenURLsWithScheme:@"http"
@@ -1154,32 +1281,48 @@
         [NSWorkspace.sharedWorkspace setDefaultApplicationAtURL:NSBundle.mainBundle.bundleURL
                                            toOpenURLsWithScheme:@"https"
                                               completionHandler:nil];
-    } else if ([command isEqual:@"fullScreen"])
+        break;
+    }
+    case LTWindowActionFullScreen:
         [self.window toggleFullScreen:nil];
-    else if ([command isEqual:@"back"])
+        break;
+    case LTWindowActionBack:
         [[self activePage] back];
-    else if ([command isEqual:@"forward"])
+        break;
+    case LTWindowActionForward:
         [[self activePage] forward];
-    else if ([command isEqual:@"reload"])
+        break;
+    case LTWindowActionReload:
         [[self pageFor:identifier] reload];
-    else if ([command isEqual:@"find"]) {
+        break;
+    case LTWindowActionFind: {
         _findBar.hidden = NO;
         [self.window.contentView addSubview:_findBar positioned:NSWindowAbove relativeTo:nil];
         [self.window makeFirstResponder:_find];
-    } else if ([command isEqual:@"print"])
+        break;
+    }
+    case LTWindowActionPrint:
         [[self activePage] print];
-    else if ([command isEqual:@"save"])
+        break;
+    case LTWindowActionSave:
         [[self activePage] save];
-    else if ([command isEqual:@"zoomIn"])
+        break;
+    case LTWindowActionZoomIn:
         [[self activePage] zoom:0.5];
-    else if ([command isEqual:@"zoomOut"])
+        break;
+    case LTWindowActionZoomOut:
         [[self activePage] zoom:-0.5];
-    else if ([command isEqual:@"zoomReset"])
+        break;
+    case LTWindowActionZoomReset:
         [[self activePage] resetZoom];
-    else if ([command isEqual:@"devTools"])
+        break;
+    case LTWindowActionDevTools:
         [[self activePage] showDevTools];
-    else if ([command isEqual:@"pip"])
+        break;
+    case LTWindowActionPip:
         [[self activePage] enterPictureInPicture];
+        break;
+    }
 }
 - (void)configureGitHubFolder:(NSString *)identifier {
     if (_store.privateMode || !_github) {
@@ -1321,12 +1464,21 @@
     BOOL temporary = [n.kind isEqual:@"temporary"];
     NSString *spaceID = _spaceID, *activeID = _activeID;
     double closedAt = NSDate.date.timeIntervalSince1970;
+    double archiveInterval = _archiving[identifier].doubleValue;
+    [_archiving removeObjectForKey:identifier];
     [self commit:^(LTProfile *p) {
       if (temporary) {
           // Read on the writer, so the tab is recorded at the address its last queued save gave it.
           LTNode *closed = [p node:identifier];
-          if (closed) [p noteClosedTab:closed time:closedAt];
-          [p removeNode:identifier];
+          // A pin or Favorite saved after this close began wins: only a tab that is still temporary
+          // is recorded and removed. A selection saved after an archive sweep looked means the tab
+          // was used again, so it is kept too, unloaded.
+          BOOL stillTemporary = !closed || [closed.kind isEqual:@"temporary"];
+          BOOL usedAgain = archiveInterval > 0 && closed && closedAt - closed.lastUsed < archiveInterval;
+          if (stillTemporary && !usedAgain) {
+              if (closed) [p noteClosedTab:closed time:closedAt];
+              [p removeNode:identifier];
+          }
       }
       if (!activeID.length || [p node:activeID])
           [p space:spaceID].selectedID = activeID;
