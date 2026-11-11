@@ -30,6 +30,26 @@ identities and measurements remain stable, and releases it before CEF shutdown.
 `lite/performance` contains a small policy function and a tolerant timer/memory
 pressure source. `lite/tests` contains model/import tests and bundled-engine tests.
 
+## Command routing
+
+`LTCommandRouter` maps the 68 window command strings to `LTWindowAction` values.
+It depends only on Foundation and calls a single `LTCommandTarget` method, so routing
+can be tested with a recording target without creating a window or loading CEF. The
+router holds its target weakly and rejects unknown or empty commands without calling it.
+
+The Command Bar, menus, keyboard shortcuts, sidebar and Settings keep their existing
+entry points. `LTWindow` resolves a menu or keyboard command's item to the focused page,
+then the primary tab, then an empty identifier. Sidebar commands pass the clicked item
+unchanged. Window, page and model operations stay in `LTWindow` behind a typed action
+switch, including their existing guards and asynchronous saves. App-level commands and
+AppKit responder actions keep their existing handling in `main.mm`.
+
+`LiteCommandRouterTests` checks every mapping, unknown-command rejection and identifier
+passthrough. It queries the actual Command Bar results and reads the inline menu, sidebar
+and Settings catalogs to check that every emitted command has a route. Shortcuts inherit
+the menu catalog. These routing tests do not qualify the window operations themselves;
+the native-window suite continues to exercise those in the running app.
+
 ## Engine boundary
 
 CEF's macOS native-parent integration uses **Alloy style**, backed by Chromium.

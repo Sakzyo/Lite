@@ -23,7 +23,7 @@ target_compile_definitions(LiteCore PRIVATE LITE_CHROMIUM_VERSION="${LITE_CHROMI
 target_link_libraries(LiteCore PUBLIC "-framework Foundation" "-framework Security" sqlite3)
 # LiteTestApp is the same application plus the Chromium and native-window suites.
 # Release bundles use Lite, which must not contain any test code or test flags.
-set(LITE_APP_SOURCES lite/macos/LTDownloadHistory.m lite/macos/main.mm lite/macos/LTUpdater.m lite/macos/LTUI.m lite/macos/LTTheme.m lite/macos/LTSidebar.m lite/macos/LTWindow.mm lite/macos/LTCommandPanel.m lite/macos/LTLibraryPanel.m lite/macos/LTFaviconCache.m lite/macos/LTPasswords.m lite/macos/LTShortcuts.m lite/macos/LTTaskManager.m lite/macos/LTExtensionsPanel.m lite/browser/LTEngine.mm lite/performance/LTPerformance.m)
+set(LITE_APP_SOURCES lite/macos/LTDownloadHistory.m lite/macos/main.mm lite/macos/LTUpdater.m lite/macos/LTUI.m lite/macos/LTTheme.m lite/macos/LTSidebar.m lite/macos/LTWindow.mm lite/macos/LTCommandRouter.m lite/macos/LTCommandPanel.m lite/macos/LTLibraryPanel.m lite/macos/LTFaviconCache.m lite/macos/LTPasswords.m lite/macos/LTShortcuts.m lite/macos/LTTaskManager.m lite/macos/LTExtensionsPanel.m lite/browser/LTEngine.mm lite/performance/LTPerformance.m)
 add_executable(Lite ${LITE_APP_SOURCES})
 add_executable(LiteTestApp ${LITE_APP_SOURCES} lite/tests/LTSmoke.mm lite/tests/LTNativeSmoke.mm)
 target_compile_definitions(LiteTestApp PRIVATE LITE_TEST_BUILD)
@@ -42,6 +42,10 @@ add_executable(LiteTests lite/tests/tests.m lite/performance/LTPerformance.m lit
 target_compile_options(LiteTests PRIVATE -fobjc-arc)
 target_link_libraries(LiteTests PRIVATE LiteCore "-framework Cocoa" "-framework QuartzCore" "-framework ImageIO")
 add_test(NAME LiteCoreTests COMMAND LiteTests "${CMAKE_SOURCE_DIR}/lite/tests/fixtures")
+add_executable(LiteCommandRouterTests lite/tests/command_router_tests.m lite/macos/LTCommandRouter.m)
+target_compile_options(LiteCommandRouterTests PRIVATE -fobjc-arc -Wall)
+target_link_libraries(LiteCommandRouterTests PRIVATE LiteCore)
+add_test(NAME LiteCommandRouterTests COMMAND LiteCommandRouterTests "${CMAKE_SOURCE_DIR}")
 add_executable(LiteVaultTests lite/tests/login_vault_tests.m)
 target_compile_options(LiteVaultTests PRIVATE -fobjc-arc -Wall)
 target_link_libraries(LiteVaultTests PRIVATE LiteCore)
