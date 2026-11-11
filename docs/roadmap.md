@@ -100,7 +100,12 @@ apply: meeting these goals does not by itself qualify Lite as a production brows
 
 ### Browser features
 
-- **Auto-archive tabs.** Temporary tabs archive themselves after a period of disuse.
+- **Auto-archive tabs.** Done: Settings can archive temporary tabs left unselected for
+  12 hours, 1 day, 7 days or 30 days; it is off until chosen. Archived tabs go to
+  Recently Closed, so Reopen Closed Tab brings them back. Pinned tabs, Favorites, each
+  Space's selected tab, anything a window shows, and pages that are playing, capturing,
+  downloading or holding unsaved work are kept. Recently Closed still keeps 30 entries.
+  See [auto-archive](architecture.md#auto-archive).
 - **Add Peek.** Preview a link without leaving the current page.
 - **Add Boosts.** Support per-site customization.
 - **Add reader mode.**

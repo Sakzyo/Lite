@@ -75,7 +75,8 @@
     [_content addArrangedSubview:LTLabel(@"Settings", 26, NSFontWeightSemibold)];
     for (NSArray *setting in @[
              @[ @"Search engine", @"search" ],
-             @[ @"Memory policy", @"performance", @"Balanced", @"Efficient", @"Maximum Saving" ]
+             @[ @"Memory policy", @"performance", @"Balanced", @"Efficient", @"Maximum Saving" ],
+             [@[ @"Archive unused tabs after", @"archiveTabs" ] arrayByAddingObjectsFromArray:LTArchiveChoices()]
          ]) {
         BOOL search = [setting[1] isEqual:@"search"];
         NSPopUpButton *p = [NSPopUpButton new];
@@ -94,7 +95,11 @@
             [self reloadEngines];
         } else {
             [p addItemsWithTitles:[setting subarrayWithRange:NSMakeRange(2, setting.count - 2)]];
-            [p selectItemWithTitle:_store.profile.settings[setting[1]]];
+            NSString *chosen = _store.profile.settings[setting[1]];
+            // Auto-archive is off until chosen; other settings keep their saved value.
+            if (![chosen isKindOfClass:NSString.class] && [setting[1] isEqual:@"archiveTabs"])
+                chosen = LTArchiveChoices().firstObject;
+            [p selectItemWithTitle:chosen];
         }
         [_content addArrangedSubview:LTStack(row, NSUserInterfaceLayoutOrientationHorizontal, search ? 10 : 18)];
         if (search)

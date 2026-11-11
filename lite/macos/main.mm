@@ -55,6 +55,7 @@ static std::string extensionSwitch;
 @property LTDownloadHistory *downloads;
 @property LTExtensionsPanel *extensionsPanel;
 @property NSTimer *filterTimer;
+@property NSTimer *archiveTimer;
 - (void)start;
 - (void)quit;
 @end
@@ -174,6 +175,7 @@ static std::string extensionSwitch;
     };
     [_github start];
     [self scheduleFilterChecks];
+    [self scheduleArchiving];
     _performance.pages = ^NSArray * {
       NSMutableArray *p = [NSMutableArray new];
       for (LTWindow *w in weak.windows)
@@ -230,6 +232,51 @@ static std::string extensionSwitch;
     _filterTimer = [NSTimer scheduledTimerWithTimeInterval:MIN(3600, LTFilterUpdater.shared.retryInterval) repeats:YES block:^(NSTimer *timer) {
         [weak checkFiltersIfDue];
     }];
+}
+// Auto-archive: every five minutes, temporary tabs unused for the chosen period close into
+// Recently Closed. Tabs a window shows or keeps busy are skipped, so nothing visible or working closes.
+- (void)scheduleArchiving {
+    __weak typeof(self) weak = self;
+    _archiveTimer = [NSTimer scheduledTimerWithTimeInterval:300 repeats:YES block:^(NSTimer *timer) {
+        [weak archiveIdleTabs];
+    }];
+    _archiveTimer.tolerance = 60;
+}
+- (void)archiveIdleTabs {
+    double interval = LTArchiveInterval(_store.profile.settings);
+    if (_quitting || interval <= 0) return;
+    double now = NSDate.date.timeIntervalSince1970;
+    for (LTNode *node in _store.profile.nodes)
+        if ([node.kind isEqual:@"temporary"] && node.lastUsed <= 0) {
+            [_store commit:^(LTProfile *p) { [p stampUnusedTabs:now]; } completion:nil];
+            break;
+        }
+    NSMutableSet<NSString *> *inUse = [NSMutableSet new];
+    LTWindow *fallback = nil;
+    for (LTWindow *window in _windows) {
+        if (window.store != _store) continue;
+        [inUse unionSet:window.tabsInUse];
+        if (!window.mini && !fallback) fallback = window;
+    }
+    for (NSString *identifier in [_store.profile idleTabsAt:now excluding:inUse]) {
+        LTWindow *owner = nil;
+        for (LTWindow *window in _windows)
+            for (LTPage *page in window.store == _store ? window.pages : @[])
+                if (page.alive && [page.identifier isEqual:identifier]) owner = window;
+        if (owner.mini) continue;
+        if (owner ?: fallback) {
+            [(owner ?: fallback) archiveTab:identifier];
+            continue;
+        }
+        // No regular window is open: archive on the writer, checking again that it is still idle.
+        [_store commit:^(LTProfile *p) {
+          LTNode *n = [p node:identifier];
+          if ([n.kind isEqual:@"temporary"] && n.lastUsed > 0 && now - n.lastUsed >= interval) {
+              [p noteClosedTab:n time:now];
+              [p removeNode:identifier];
+          }
+        } completion:nil];
+    }
 }
 - (void)checkFiltersIfDue {
     NSDictionary *blocking = _store.profile.settings[@"contentBlocking"];

@@ -201,6 +201,9 @@
     double _splitRatio;
     NSTimer *_saveTimer;
     NSMutableSet<NSString *> *_pendingClose;
+    // Tabs being closed by auto-archive, with the archive interval, so the writer can re-check
+    // their age against the latest selection before removing them.
+    NSMutableDictionary<NSString *, NSNumber *> *_archiving;
 }
 - (instancetype)initWithStore:(LTStore *)store
                          mini:(BOOL)mini
@@ -300,6 +303,33 @@
 }
 - (NSArray<LTPage *> *)pages {
     return _pageMap.allValues;
+}
+- (NSSet<NSString *> *)tabsInUse {
+    NSMutableSet *inUse = [NSMutableSet new];
+    for (NSString *identifier in @[ _activeID ?: @"", _secondaryID ?: @"", _focusedID ?: @"" ])
+        if (identifier.length) [inUse addObject:identifier];
+    for (LTPage *page in _pageMap.allValues)
+        if (page.identifier && (page.visible || page.audible || page.capturing || page.dirty ||
+                                page.downloading || page.keepAwake || page.pictureInPicture || page.closing))
+            [inUse addObject:page.identifier];
+    return inUse;
+}
+- (void)archiveTab:(NSString *)identifier {
+    LTNode *n = [_store.profile node:identifier];
+    double interval = LTArchiveInterval(_store.profile.settings);
+    if (_mini || interval <= 0 || ![n.kind isEqual:@"temporary"] || [self.tabsInUse containsObject:identifier] ||
+        NSDate.date.timeIntervalSince1970 - n.lastUsed < interval)
+        return;
+    if (!_archiving) _archiving = [NSMutableDictionary new];
+    _archiving[identifier] = @(interval);
+    LTPage *page = _pageMap[identifier];
+    if (page.alive) {
+        // Never a Leave Site prompt for a close the user did not ask for: a page that wants to
+        // stay is kept, and stays kept awake, so later sweeps skip it.
+        [_pendingClose addObject:identifier];
+        [page closeAutomatically];
+    } else
+        [self completeClose:identifier];
 }
 - (void)setDownloadHistory:(LTDownloadHistory *)history {
     if (_downloadHistory) [NSNotificationCenter.defaultCenter removeObserver:self name:LTDownloadHistoryChanged object:_downloadHistory];
@@ -870,6 +900,8 @@
 }
 - (void)pageCloseCanceled:(LTPage *)page {
     [_pendingClose removeObject:page.identifier];
+    // The page stayed open, so a later close is no longer an archive.
+    if (page.identifier) [_archiving removeObjectForKey:page.identifier];
     _closingWindow = NO;
     [self displayPages];
 }
@@ -1432,12 +1464,21 @@
     BOOL temporary = [n.kind isEqual:@"temporary"];
     NSString *spaceID = _spaceID, *activeID = _activeID;
     double closedAt = NSDate.date.timeIntervalSince1970;
+    double archiveInterval = _archiving[identifier].doubleValue;
+    [_archiving removeObjectForKey:identifier];
     [self commit:^(LTProfile *p) {
       if (temporary) {
           // Read on the writer, so the tab is recorded at the address its last queued save gave it.
           LTNode *closed = [p node:identifier];
-          if (closed) [p noteClosedTab:closed time:closedAt];
-          [p removeNode:identifier];
+          // A pin or Favorite saved after this close began wins: only a tab that is still temporary
+          // is recorded and removed. A selection saved after an archive sweep looked means the tab
+          // was used again, so it is kept too, unloaded.
+          BOOL stillTemporary = !closed || [closed.kind isEqual:@"temporary"];
+          BOOL usedAgain = archiveInterval > 0 && closed && closedAt - closed.lastUsed < archiveInterval;
+          if (stillTemporary && !usedAgain) {
+              if (closed) [p noteClosedTab:closed time:closedAt];
+              [p removeNode:identifier];
+          }
       }
       if (!activeID.length || [p node:activeID])
           [p space:spaceID].selectedID = activeID;
