@@ -5,7 +5,9 @@ static BOOL Dark(NSView *view) {
     return LTAppearanceIsDark(view.effectiveAppearance);
 }
 static NSColor *Wash(NSView *view, CGFloat light, CGFloat dark) {
-    return [NSColor colorWithWhite:1 alpha:Dark(view) ? dark : light];
+    BOOL isDark = Dark(view);
+    return [NSColor colorWithWhite:1
+                             alpha:LTWashAlpha(isDark ? dark : light, isDark, LTCurrentDisplayOptions())];
 }
 static NSTrackingArea *Track(NSView *view, NSTrackingArea *old) {
     if (old)
@@ -31,6 +33,17 @@ static void FillRounded(NSRect rect, CGFloat radius, NSColor *color, BOOL lifted
     [color setFill];
     [[NSBezierPath bezierPathWithRoundedRect:rect xRadius:radius yRadius:radius] fill];
     [NSGraphicsContext restoreGraphicsState];
+}
+// Increase Contrast outlines selected shapes, since a lighter wash alone can be too subtle.
+static void OutlineRounded(NSView *view, NSRect rect, CGFloat radius) {
+    LTDisplayOptions options = LTCurrentDisplayOptions();
+    if (!options.increaseContrast)
+        return;
+    [LTBorderColor(Dark(view), YES, options) setStroke];
+    NSBezierPath *path =
+        [NSBezierPath bezierPathWithRoundedRect:NSInsetRect(rect, .5, .5) xRadius:radius yRadius:radius];
+    path.lineWidth = 1;
+    [path stroke];
 }
 
 @interface LTSidebarCell : NSTableCellView
@@ -104,6 +117,7 @@ static NSArray *ShownFields(LTNode *n) {
 }
 - (void)drawSelectionInRect:(NSRect)dirtyRect {
     FillRounded(self.pill, 8, Wash(self, .92, .15), !Dark(self));
+    OutlineRounded(self, self.pill, 8);
 }
 @end
 
@@ -146,6 +160,8 @@ static NSArray *ShownFields(LTNode *n) {
                     : self.hovered ? Wash(self, .72, .13)
                                    : Wash(self, .45, .07);
     FillRounded(tile, 10, fill, on && !Dark(self));
+    if (on)
+        OutlineRounded(self, tile, 10);
     NSImage *image = self.image;
     if (image.isTemplate) {
         NSImage *symbol = image;
@@ -190,7 +206,8 @@ static NSArray *ShownFields(LTNode *n) {
     BOOL on = self.state == NSControlStateValueOn;
     NSRect dot = NSMakeRect(NSMidX(self.bounds) - 11, NSMidY(self.bounds) - 11, 22, 22);
     if (on || self.hovered) {
-        [(on ? self.tint : Wash(self, .55, .12)) setFill];
+        NSColor *tint = LTCurrentDisplayOptions().increaseContrast ? LTFillForWhiteText(self.tint) : self.tint;
+        [(on ? tint : Wash(self, .55, .12)) setFill];
         [[NSBezierPath bezierPathWithOvalInRect:dot] fill];
     }
     NSDictionary *attributes = @{

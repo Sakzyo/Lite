@@ -85,9 +85,10 @@
     self.fillColor = [NSColor colorWithName:nil
                               dynamicProvider:^NSColor *(NSAppearance *appearance) {
                                 BOOL dark = LTAppearanceIsDark(appearance);
+                                CGFloat alpha = dark ? (hovered ? .12 : .08) : (hovered ? .72 : .55);
                                 return [NSColor colorWithWhite:1
-                                                         alpha:dark ? (hovered ? .12 : .08)
-                                                                    : (hovered ? .72 : .55)];
+                                                         alpha:LTWashAlpha(alpha, dark,
+                                                                           LTCurrentDisplayOptions())];
                               }];
     for (NSView *v in _hoverViews)
         v.hidden = !hovered;

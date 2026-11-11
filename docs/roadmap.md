@@ -88,8 +88,11 @@ apply: meeting these goals does not by itself qualify Lite as a production brows
 
 ### Accessibility and languages
 
-- **Respect display settings.** Honor Reduce Transparency and Increase Contrast,
-  including on the tinted backdrops.
+- **Respect display settings.** Done: Reduce Transparency draws each Space backdrop as
+  one flat color, and Increase Contrast mutes the Space tint so backdrop labels keep at
+  least 7:1 contrast for every Space color, strengthens washes and borders, and outlines
+  the selected row and Favorites. Both take effect without a relaunch. Pages themselves
+  are left to Chromium. See [display settings](architecture.md#display-settings).
 - **Complete VoiceOver testing.** Cover spoken output across the sidebar, Command Bar
   and panels, and fix what it finds.
 - **Make the UI localizable.** Move all UI text out of hard-coded English.
