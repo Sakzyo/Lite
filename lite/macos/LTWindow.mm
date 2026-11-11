@@ -2039,11 +2039,11 @@
 }
 - (void)editCustomFilters:(NSString *)draft problem:(NSString *)problem {
     NSAlert *alert = [NSAlert new];
-    alert.messageText = @"Custom network filters";
-    alert.informativeText = [NSString stringWithFormat:@"%@One URL pattern per line. Use ||ads.example^ to block a host’s requests, "
-        @"@@||ads.example/needed.js to allow a request, and ! for comments. *, ^, and | anchors are supported; "
-        @"options, regexes and cosmetic filters are not. Page navigation is not blocked.\n\n"
-        @"Up to 1,000 rules, 2,048 characters per line and 256 KiB total.%@",
+    alert.messageText = @"Custom filters";
+    alert.informativeText = [NSString stringWithFormat:@"%@One filter per line. URL patterns and /regex/ block requests; prefix @@ to allow. "
+        @"Use example.com##.ad or ##.ad to hide elements, and #@# for an exception. ! starts a comment. "
+        @"Options, CSS pseudos and scriptlets are unsupported. Page navigation is not blocked.\n\n"
+        @"Up to 1,000 rules (32 regexes), 2,048 characters per line and 256 KiB total.%@",
         problem.length ? [problem stringByAppendingString:@"\n\n"] : @"",
         _store.privateMode ? @" Changes stay in this private window." : @" Saved locally in your profile."];
     NSScrollView *scroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(0, 0, 480, 180)];
@@ -2059,7 +2059,7 @@
     editor.textContainerInset = NSMakeSize(8, 8);
     editor.autoresizingMask = NSViewWidthSizable;
     editor.textContainer.widthTracksTextView = YES;
-    editor.accessibilityLabel = @"Custom network filters";
+    editor.accessibilityLabel = @"Custom filters";
     editor.string = draft;
     scroll.documentView = editor;
     alert.accessoryView = scroll;

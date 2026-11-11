@@ -1,5 +1,8 @@
 #import "LTContentBlocker.h"
+#import "LTCustomCosmetics.h"
+#include "LTRegex.h"
 #include <algorithm>
+#include <array>
 #include <os/lock.h>
 #include <string>
 #include <unordered_map>
@@ -131,12 +134,19 @@ BOOL CustomFilterError(NSError **error, NSUInteger line, NSString *message) {
     }
     return NO;
 }
-BOOL ParseCustomFilters(id value, std::vector<Rule> *rules, NSError **error) {
+struct RegexRule {
+    std::unique_ptr<lite::Regex> expression;
+    bool allow;
+};
+// The two passes have independent caps so expensive blocks cannot starve an exception.
+constexpr size_t RegexPassSteps = 50000, RegexURLBytes = 8192;
+BOOL ParseCustomFilters(id value, std::vector<Rule> *rules,
+                        std::vector<RegexRule> *regexes, NSMutableArray *cosmetics, NSError **error) {
     if (![value isKindOfClass:NSString.class]) return CustomFilterError(error, 0, @"Enter a plain-text filter list.");
     NSString *text = value;
     if (![text canBeConvertedToEncoding:NSUTF8StringEncoding] || [text lengthOfBytesUsingEncoding:NSUTF8StringEncoding] > 256 * 1024)
         return CustomFilterError(error, 0, @"The list must fit within 256 KiB of UTF-8 text.");
-    NSUInteger number = 0, count = 0;
+    NSUInteger number = 0, count = 0, regexCount = 0, regexSize = 0, selectorCount = 0;
     BOOL firstNonempty = YES;
     NSCharacterSet *padding = [NSCharacterSet characterSetWithCharactersInString:@" \t"];
     for (NSString *raw in [text componentsSeparatedByString:@"\n"]) {
@@ -157,12 +167,41 @@ BOOL ParseCustomFilters(id value, std::vector<Rule> *rules, NSError **error) {
         BOOL allow = [line hasPrefix:@"@@"];
         NSString *pattern = allow ? [line substringFromIndex:2] : line;
         if (!pattern.length) return CustomFilterError(error, number, @"A rule needs a URL pattern.");
-        if (pattern.length >= 2 && [pattern hasPrefix:@"/"] && [pattern hasSuffix:@"/"])
-            return CustomFilterError(error, number, @"Regular expressions are not supported.");
+        if (pattern.length >= 2 && [pattern hasPrefix:@"/"] && [pattern hasSuffix:@"/"]) {
+            NSString *body = [pattern substringWithRange:NSMakeRange(1, pattern.length - 2)];
+            if (!body.length) return CustomFilterError(error, number, @"A regular expression cannot be empty.");
+            for (NSUInteger i = 0; i < body.length; ++i)
+                if ([body characterAtIndex:i] < 32 || [body characterAtIndex:i] >= 127)
+                    return CustomFilterError(error, number, @"Regular expressions must use printable ASCII; use escapes for control characters.");
+            if (++regexCount > 32) return CustomFilterError(error, number, @"The list cannot exceed 32 regular expressions.");
+            std::string reason;
+            auto expression = lite::Regex::Compile(S(body), reason);
+            if (!expression) return CustomFilterError(error, number,
+                [@"Invalid regular expression: " stringByAppendingString:N(reason)]);
+            regexSize += expression->programSize();
+            if (regexSize > 2048) return CustomFilterError(error, number,
+                @"Regular expressions together cannot exceed 2,048 compiled instructions. Simplify the expressions.");
+            if (regexes) regexes->push_back({std::move(expression), bool(allow)});
+            continue;
+        }
+        if ([line containsString:@"##"] || [line containsString:@"#@#"]) {
+            NSString *reason = nil;
+            NSDictionary *filter = LTParseCustomCosmeticFilter(line, &reason);
+            if (!filter) return CustomFilterError(error, number, reason);
+            for (NSString *selector in filter[@"selectors"]) {
+                if (++selectorCount > 1000) return CustomFilterError(error, number,
+                    @"The list cannot exceed 1,000 cosmetic selectors, including comma-separated selectors.");
+                [cosmetics addObject:@{@"host": filter[@"host"], @"selector": selector,
+                                       @"exception": filter[@"exception"]}];
+            }
+            continue;
+        }
+        if ([line containsString:@"#?#"] || [line containsString:@"#$#"] || [line containsString:@"#%#"])
+            return CustomFilterError(error, number, @"Procedural cosmetic filters and scriptlets are not supported.");
         for (NSUInteger i = 0; i < pattern.length; ++i) {
             unichar c = [pattern characterAtIndex:i];
             if (c <= 32 || c >= 127) return CustomFilterError(error, number, @"URL patterns must use ASCII without spaces or control characters.");
-            if (c == '$' || c == '#') return CustomFilterError(error, number, @"Filter options and cosmetic rules are not supported.");
+            if (c == '$' || c == '#') return CustomFilterError(error, number, @"Filter options and this cosmetic syntax are not supported.");
         }
         NSString *body = pattern;
         if ([body hasPrefix:@"||"]) body = [body substringFromIndex:2];
@@ -185,10 +224,59 @@ BOOL ParseCustomFilters(id value, std::vector<Rule> *rules, NSError **error) {
     }
     return YES;
 }
+
+// Split only top-level list commas. Bundled selectors also use functions, quoted
+// attributes, escapes and comments; keep an unfamiliar/malformed list intact.
+NSArray<NSString *> *CosmeticSelectorParts(NSString *selector) {
+    if (![selector containsString:@","]) return @[selector];
+    NSMutableArray *parts = [NSMutableArray new];
+    NSCharacterSet *spaces = [NSCharacterSet characterSetWithCharactersInString:@" \t\r\n\f"];
+    std::array<unichar, 64> nesting;
+    NSUInteger depth = 0, start = 0;
+    unichar quote = 0;
+    BOOL comment = NO;
+    for (NSUInteger i = 0; i < selector.length; ++i) {
+        unichar c = [selector characterAtIndex:i];
+        unichar next = i + 1 < selector.length ? [selector characterAtIndex:i + 1] : 0;
+        if (comment) {
+            if (c == '*' && next == '/') { comment = NO; ++i; }
+            continue;
+        }
+        if (c == '\\') {
+            if (i + 1 == selector.length) return @[selector];
+            ++i;
+            continue;
+        }
+        if (quote) {
+            if (c == quote) quote = 0;
+            continue;
+        }
+        if (c == '\'' || c == '"') quote = c;
+        else if (c == '/' && next == '*') { comment = YES; ++i; }
+        else if (c == '(' || c == '[') {
+            if (depth == nesting.size()) return @[selector];
+            nesting[depth++] = c;
+        } else if (c == ')' || c == ']') {
+            if (!depth || nesting[depth - 1] != (c == ')' ? '(' : '[')) return @[selector];
+            --depth;
+        } else if (c == ',' && !depth) {
+            NSString *part = [[selector substringWithRange:NSMakeRange(start, i - start)]
+                stringByTrimmingCharactersInSet:spaces];
+            if (!part.length) return @[selector];
+            [parts addObject:part];
+            start = i + 1;
+        }
+    }
+    if (quote || comment || depth) return @[selector];
+    NSString *part = [[selector substringFromIndex:start] stringByTrimmingCharactersInSet:spaces];
+    if (!part.length) return @[selector];
+    [parts addObject:part];
+    return parts;
+}
 }
 
 BOOL LTValidateCustomFilters(id text, NSError **error) {
-    return ParseCustomFilters(text, nullptr, error);
+    return ParseCustomFilters(text, nullptr, nullptr, nil, error);
 }
 
 // A policy swaps this immutable matcher as a whole; request threads retain their snapshot.
@@ -196,19 +284,25 @@ BOOL LTValidateCustomFilters(id text, NSError **error) {
 @property (nonatomic, copy, readonly) NSString *text;
 - (instancetype)initWithText:(NSString *)text;
 - (LTNetworkDecision)decisionForURL:(NSString *)url type:(NSString *)type;
+- (BOOL)hasCosmetics;
+- (NSSet<NSString *> *)cosmeticSelectorsForURL:(NSString *)url bundled:(NSSet<NSString *> *)bundled;
 @end
 @implementation LTCustomFilterSet {
     std::vector<Rule> _rules;
+    std::vector<RegexRule> _regexes;
+    NSArray<NSDictionary *> *_cosmetics;
 }
 - (instancetype)initWithText:(NSString *)text {
     if ((self = [super init])) {
         _text = [text copy];
-        if (!ParseCustomFilters(_text, &_rules, nil)) return nil;
+        NSMutableArray *cosmetics = [NSMutableArray new];
+        if (!ParseCustomFilters(_text, &_rules, &_regexes, cosmetics, nil)) return nil;
+        _cosmetics = [cosmetics copy];
     }
     return self;
 }
 - (LTNetworkDecision)decisionForURL:(NSString *)url type:(NSString *)type {
-    if (_rules.empty() || [type isEqual:@"main_frame"]) return LTNetworkNoMatch;
+    if ((_rules.empty() && _regexes.empty()) || [type isEqual:@"main_frame"]) return LTNetworkNoMatch;
     NSString *scheme = [NSURL URLWithString:url].scheme.lowercaseString;
     if (![@[@"http", @"https", @"ws", @"wss"] containsObject:scheme]) return LTNetworkNoMatch;
     std::string full = S(url), lower = Lower(full), host = Host(url), resource = S(type);
@@ -219,10 +313,54 @@ BOOL LTValidateCustomFilters(id text, NSError **error) {
         if (rule.allow) return LTNetworkAllow;
         decision = LTNetworkBlock;
     }
+    // Never truncate: matching an incomplete URL could turn a nonmatch into a block/exception.
+    if (_regexes.empty() || full.size() > RegexURLBytes) return decision;
+    for (bool allow : {true, false}) {
+        size_t remaining = RegexPassSteps;
+        for (const RegexRule &rule : _regexes) {
+            if (rule.allow != allow) continue;
+            auto result = rule.expression->search(full, remaining);
+            if (result == lite::MatchResult::LimitExceeded) return decision;
+            if (result == lite::MatchResult::Match) return allow ? LTNetworkAllow : LTNetworkBlock;
+        }
+    }
     return decision;
+}
+- (BOOL)hasCosmetics { return _cosmetics.count != 0; }
+- (NSSet<NSString *> *)cosmeticSelectorsForURL:(NSString *)url bundled:(NSSet<NSString *> *)bundled {
+    NSString *host = N(Host(url));
+    // Bundled exceptions have already been applied to their original list strings.
+    NSMutableSet *selectors = [NSMutableSet new];
+    for (NSString *selector in bundled) [selectors addObjectsFromArray:CosmeticSelectorParts(selector)];
+    NSMutableSet *exceptions = [NSMutableSet new];
+    for (NSDictionary *filter in _cosmetics) {
+        NSString *scope = filter[@"host"];
+        if (scope.length && ![host isEqual:scope] && ![host hasSuffix:[@"." stringByAppendingString:scope]]) continue;
+        if ([filter[@"exception"] boolValue]) [exceptions addObject:filter[@"selector"]];
+        else [selectors addObject:filter[@"selector"]];
+    }
+    [selectors minusSet:exceptions];
+    return selectors;
 }
 @end
 
+// Both bundled-only and per-context styles use the same injection/marker path.
+static NSString *CosmeticScript(NSSet<NSString *> *selectors) {
+    // :is() is forgiving for upstream selectors unsupported by this Chromium version.
+    NSString *css = [NSString stringWithFormat:@":is(%@){display:none!important;}",
+        [[selectors.allObjects sortedArrayUsingSelector:@selector(compare:)] componentsJoinedByString:@",\n"]];
+    NSData *json = [NSJSONSerialization dataWithJSONObject:@[css] options:0 error:nil];
+    return [NSString stringWithFormat:
+        @"(()=>{if(document.adoptedStyleSheets.some(s=>s.__liteContentBlocking))return;"
+        @"const s=new CSSStyleSheet();s.replaceSync(%@[0]);"
+        @"Object.defineProperty(s,'__liteContentBlocking',{value:true});"
+        @"document.adoptedStyleSheets=[...document.adoptedStyleSheets,s];})()",
+        [[NSString alloc] initWithData:json encoding:NSUTF8StringEncoding]];
+}
+
+@interface LTContentBlocker ()
+- (NSSet<NSString *> *)cosmeticSelectorsForURL:(NSString *)url;
+@end
 @implementation LTContentBlocker {
     std::vector<Rule> _rules;
     Index _domainIndex, _tokenIndex;
@@ -373,12 +511,8 @@ static os_unfair_lock blockerLock = OS_UNFAIR_LOCK_INIT;
 - (NSString *)youtubeScriptForURL:(NSString *)url {
     return LTIsYouTubeURL(url) ? _youtubeScript : @"";
 }
-- (NSString *)cosmeticScriptForURL:(NSString *)url {
-    NSString *scheme = [NSURL URLWithString:url].scheme.lowercaseString;
-    if (![@[@"http", @"https"] containsObject:scheme]) return @"";
+- (NSSet<NSString *> *)cosmeticSelectorsForURL:(NSString *)url {
     NSString *host = N(Host(url));
-    NSString *cached = [_scripts objectForKey:host];
-    if (cached) return cached;
     NSMutableSet *selectors = [NSMutableSet setWithArray:_cosmetic[@"generic"]];
     NSMutableSet *exceptions = [NSMutableSet new];
     NSMutableArray *keys = [NSMutableArray arrayWithObject:@"*"];
@@ -395,16 +529,15 @@ static os_unfair_lock blockerLock = OS_UNFAIR_LOCK_INIT;
         [exceptions addObjectsFromArray:_cosmetic[@"exceptions"][key] ?: @[]];
     }
     [selectors minusSet:exceptions];
-    // :is() is forgiving: one unsupported selector cannot invalidate other rules.
-    NSString *css = [NSString stringWithFormat:@":is(%@){display:none!important;}",
-                     [[selectors.allObjects sortedArrayUsingSelector:@selector(compare:)] componentsJoinedByString:@",\n"]];
-    NSData *json = [NSJSONSerialization dataWithJSONObject:@[css] options:0 error:nil];
-    NSString *script = [NSString stringWithFormat:
-        @"(()=>{if(document.adoptedStyleSheets.some(s=>s.__liteContentBlocking))return;"
-        @"const s=new CSSStyleSheet();s.replaceSync(%@[0]);"
-        @"Object.defineProperty(s,'__liteContentBlocking',{value:true});"
-        @"document.adoptedStyleSheets=[...document.adoptedStyleSheets,s];})()",
-        [[NSString alloc] initWithData:json encoding:NSUTF8StringEncoding]];
+    return selectors;
+}
+- (NSString *)cosmeticScriptForURL:(NSString *)url {
+    NSString *scheme = [NSURL URLWithString:url].scheme.lowercaseString;
+    if (![@[@"http", @"https"] containsObject:scheme]) return @"";
+    NSString *host = N(Host(url));
+    NSString *cached = [_scripts objectForKey:host];
+    if (cached) return cached;
+    NSString *script = CosmeticScript([self cosmeticSelectorsForURL:url]);
     [_scripts setObject:script forKey:host cost:script.length * 2];
     return script;
 }
@@ -445,6 +578,20 @@ static os_unfair_lock blockerLock = OS_UNFAIR_LOCK_INIT;
 }
 - (BOOL)cosmeticEnabledForURL:(NSString *)url {
     @synchronized (self) { return !_cosmeticDisabled && [self enabledForURL:url]; }
+}
+- (NSString *)cosmeticScriptForURL:(NSString *)url topURL:(NSString *)topURL {
+    NSString *scheme = [NSURL URLWithString:url].scheme.lowercaseString;
+    if (![@[@"http", @"https"] containsObject:scheme]) return @"";
+    LTCustomFilterSet *custom;
+    @synchronized (self) {
+        // Preserve the existing top-page pause behavior for every embedded frame.
+        if (_disabled || _cosmeticDisabled || [_disabledSites containsObject:N(Host(topURL))]) return @"";
+        custom = _custom;
+    }
+    LTContentBlocker *bundled = [LTContentBlocker shared];
+    if (![custom hasCosmetics]) return [bundled cosmeticScriptForURL:url] ?: @"";
+    // Combined styles are not cached by hostname: either snapshot can change independently.
+    return CosmeticScript([custom cosmeticSelectorsForURL:url bundled:[bundled cosmeticSelectorsForURL:url]]);
 }
 - (BOOL)blocksURL:(NSString *)url initiator:(NSString *)initiator type:(NSString *)type
           method:(NSString *)method topURL:(NSString *)topURL {

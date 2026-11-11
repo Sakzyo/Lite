@@ -3,7 +3,7 @@ NS_ASSUME_NONNULL_BEGIN
 
 FOUNDATION_EXPORT BOOL LTFilterYouTubeResponse(NSString *url, NSString *type, NSString *mimeType);
 FOUNDATION_EXPORT BOOL LTIsYouTubeURL(NSString *url);
-// Validates the whole custom network filter list; errors identify the offending line.
+// Validates the whole custom network/cosmetic list; errors identify the offending line.
 FOUNDATION_EXPORT BOOL LTValidateCustomFilters(id _Nullable text, NSError * _Nullable * _Nullable error);
 
 typedef NS_ENUM(NSInteger, LTNetworkDecision) {
@@ -41,6 +41,7 @@ typedef NS_ENUM(NSInteger, LTNetworkDecision) {
 - (void)updatePreferences:(nullable NSDictionary *)preferences;
 - (BOOL)enabledForURL:(NSString *)url;
 - (BOOL)cosmeticEnabledForURL:(NSString *)url;
+- (NSString *)cosmeticScriptForURL:(NSString *)url topURL:(NSString *)topURL;
 - (BOOL)blocksURL:(NSString *)url initiator:(NSString *)initiator type:(NSString *)type
           method:(NSString *)method topURL:(NSString *)topURL;
 @end

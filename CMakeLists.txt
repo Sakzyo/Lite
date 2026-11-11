@@ -21,6 +21,7 @@ add_library(LiteCore STATIC lite/model/LTWebsiteData.m lite/model/LTModel.m lite
 target_compile_options(LiteCore PRIVATE -fobjc-arc -Wall)
 target_compile_definitions(LiteCore PRIVATE LITE_CHROMIUM_VERSION="${LITE_CHROMIUM_VERSION}")
 target_link_libraries(LiteCore PUBLIC "-framework Foundation" "-framework Security" sqlite3)
+target_sources(LiteCore PRIVATE lite/browser/LTCustomCosmetics.m)
 # LiteTestApp is the same application plus the Chromium and native-window suites.
 # Release bundles use Lite, which must not contain any test code or test flags.
 set(LITE_APP_SOURCES lite/macos/LTDownloadHistory.m lite/macos/main.mm lite/macos/LTUpdater.m lite/macos/LTUI.m lite/macos/LTTheme.m lite/macos/LTSidebar.m lite/macos/LTWindow.mm lite/macos/LTCommandPanel.m lite/macos/LTLibraryPanel.m lite/macos/LTFaviconCache.m lite/macos/LTPasswords.m lite/macos/LTShortcuts.m lite/macos/LTTaskManager.m lite/macos/LTExtensionsPanel.m lite/browser/LTEngine.mm lite/performance/LTPerformance.m)
@@ -83,6 +84,11 @@ add_executable(LiteCustomFilterTests lite/tests/custom_filter_tests.m)
 target_compile_options(LiteCustomFilterTests PRIVATE -fobjc-arc -Wall)
 target_link_libraries(LiteCustomFilterTests PRIVATE LiteCore)
 add_test(NAME LiteCustomFilterTests COMMAND LiteCustomFilterTests)
+add_executable(LiteRegexTests lite/tests/regex_tests.mm)
+target_compile_options(LiteRegexTests PRIVATE -fobjc-arc -Wall)
+target_link_libraries(LiteRegexTests PRIVATE "-framework Foundation")
+add_test(NAME LiteRegexTests COMMAND LiteRegexTests)
+set_tests_properties(LiteRegexTests PROPERTIES TIMEOUT 30)
 
 # Sparkle is vendored from its upstream checksum-pinned binary distribution.
 set(SPARKLE_FRAMEWORK "${CMAKE_SOURCE_DIR}/vendor/sparkle/Sparkle.framework")

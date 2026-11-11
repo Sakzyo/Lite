@@ -10,6 +10,13 @@
 static NSString *const StorageSeedScript = @"(async()=>{document.cookie='deleteMe=yes;path=/';localStorage.setItem('deleteMe','yes');sessionStorage.setItem('deleteMe','yes');let r=indexedDB.open('delete-me',1);await new Promise((ok,no)=>{r.onsuccess=()=>{r.result.close();ok()};r.onerror=no});await(await caches.open('delete-me')).put('/echo',new Response('cached'));await navigator.serviceWorker.register('/blocking-worker.js');await navigator.serviceWorker.ready;return true})()";
 static NSString *const StorageCheckScript = @"(async()=>({cookies:!document.cookie.includes('deleteMe'),local:localStorage.getItem('deleteMe')===null,session:sessionStorage.getItem('deleteMe')===null,indexedDB:!(await indexedDB.databases()).some(d=>d.name==='delete-me'),cache:!(await caches.keys()).includes('delete-me'),workers:(await navigator.serviceWorker.getRegistrations()).length===0}))()";
 static NSString *const MediaRequestScript = @"window.liteMediaResult=navigator.mediaDevices.getUserMedia({audio:true,video:true}).then(stream=>{window.liteMedia=stream;return {granted:true,kinds:stream.getTracks().map(t=>t.kind).sort(),live:stream.getTracks().every(t=>t.readyState==='live')}}).catch(error=>({granted:false,error:error.name}));true";
+static NSString *const CustomFilterRules =
+    @"/\\/custom\\/(probe|filter-test)(\\?|$)/\n"
+    @"/custom/glob-probe\nwebtracking.min.js\n@@/webtracking[.]min[.]js/\n"
+    @"##.custom-generic-ad\n127.0.0.1##.custom-host-ad\n"
+    @"127.0.0.1##[data-custom=\"ad\"], .custom-comma-ad\n"
+    @"##.custom-except-ad\n127.0.0.1#@#.custom-except-ad\n"
+    @"unrelated.example##.custom-wrong-host\n127.0.0.1#@##AC_ad";
 // Chromium's capture needs macOS camera and microphone consent for this signature:
 // the exact build when ad hoc signed, or every build of a stable local identity.
 // Unattended machines cannot answer that system prompt.
@@ -442,36 +449,48 @@ static LTSmoke *running;
             // fixture's asynchronous load handler has read its elements.
             if (![NSProcessInfo.processInfo.arguments containsObject:@"--lite-blocking-smoke"])
                 [self checkPrivateLoginCapture];
-            [self.normalContext updateBlockingPreferences:@{@"customFilters":
-                @"/custom/probe\n/custom/filter-test\nwebtracking.min.js\n@@webtracking.min.js"}];
+            [self.normalContext updateBlockingPreferences:@{@"customFilters": CustomFilterRules}];
             self.stage = 400;
             [self.normal navigate:[self.origin stringByAppendingString:@"custom/filter-test?phase=custom-enabled"]];
         }];
     } else if ((_stage == 400 || _stage == 402 || _stage == 404 || _stage == 406 ||
-                _stage == 408 || _stage == 410) &&
+                _stage == 408 || _stage == 410 || _stage == 412 || _stage == 414) &&
                !((_stage == 406 || _stage == 408) ? _privatePage.loading : _normal.loading)) {
         NSInteger phase = _stage++;
         LTPage *page = (phase == 406 || phase == 408) ? _privatePage : _normal;
         [page evaluateForTesting:@"window.customFilterResult || null" completion:^(id value, BOOL success) {
             NSString *expectedPhase = @[@"custom-enabled", @"custom-site-pause", @"custom-global-pause",
-                @"custom-private-seed", @"custom-private-edit", @"custom-regular-unchanged"][(phase - 400) / 2];
+                @"custom-private-seed", @"custom-private-edit", @"custom-regular-unchanged",
+                @"custom-cosmetic-pause", @"custom-cleared"][(phase - 400) / 2];
             if (!success || ![value isKindOfClass:NSDictionary.class] || ![value[@"phase"] isEqual:expectedPhase]) {
                 self.stage = phase; return;
             }
-            BOOL customBlocked = phase == 400 || phase == 406 || phase == 410;
-            BOOL exceptionAllowed = phase != 408;
+            BOOL customBlocked = phase == 400 || phase == 406 || phase == 410 || phase == 412;
+            BOOL exceptionAllowed = phase != 408 && phase != 414;
+            BOOL customHidden = phase == 400 || phase == 406 || phase == 410;
+            BOOL bundledHidden = phase != 402 && phase != 404 && phase != 412;
             NSString *key = phase == 400 ? @"customFiltersEnabled" : phase == 402 ? @"customFiltersSitePause" :
                 phase == 404 ? @"customFiltersGlobalPause" : phase == 406 ? @"customFiltersPrivateSeed" :
-                phase == 408 ? @"customFiltersPrivateEdit" : @"customFiltersRegularUnchanged";
-            self.results[key] = @([value[@"direct"] boolValue] != customBlocked &&
+                phase == 408 ? @"customFiltersPrivateEdit" : phase == 410 ? @"customFiltersRegularUnchanged" :
+                phase == 412 ? @"customFiltersCosmeticPause" : @"customFiltersCleared";
+            BOOL passed = [value[@"direct"] boolValue] != customBlocked &&
                 [value[@"redirected"] boolValue] != customBlocked &&
+                [value[@"glob"] boolValue] != customBlocked &&
                 [value[@"workerBlocked"] isKindOfClass:NSNumber.class] && [value[@"workerBlocked"] boolValue] == customBlocked &&
                 [value[@"exception"] boolValue] == exceptionAllowed &&
-                [value[@"hits"] integerValue] == (customBlocked ? 0 : 3) &&
-                [value[@"exceptionHits"] integerValue] == (exceptionAllowed ? 1 : 0));
+                [value[@"hits"] integerValue] == (customBlocked ? 0 : 4) &&
+                [value[@"exceptionHits"] integerValue] == (exceptionAllowed ? 1 : 0) &&
+                [value[@"bundledHidden"] boolValue] == bundledHidden &&
+                [value[@"bundledExceptionVisible"] boolValue] == exceptionAllowed &&
+                [value[@"privateEditHidden"] boolValue] == (phase == 408);
+            for (NSString *name in @[@"genericHidden", @"hostHidden", @"attributeHidden", @"commaHidden",
+                                     @"dynamicHidden", @"frameGenericHidden", @"frameHostHidden"])
+                passed &= [value[name] isKindOfClass:NSNumber.class] && [value[name] boolValue] == customHidden;
+            for (NSString *name in @[@"customExceptionVisible", @"unrelatedVisible", @"normalVisible", @"frameNormalVisible"])
+                passed &= [value[name] boolValue];
+            self.results[key] = @(passed);
             self.results[[key stringByAppendingString:@"Details"]] = value;
-            NSString *text = @"/custom/probe\n/custom/filter-test\nwebtracking.min.js\n@@webtracking.min.js";
-            if (phase == 410) {
+            if (phase == 414) {
                 [self.normalContext updateBlockingPreferences:nil];
                 [self.privateContext updateBlockingPreferences:nil];
                 self.stage = 29;
@@ -481,21 +500,28 @@ static LTSmoke *running;
             NSString *nextPhase;
             LTPage *next = self.normal;
             if (phase == 400) {
-                [self.normalContext updateBlockingPreferences:@{@"customFilters": text, @"disabledSites": @[@"127.0.0.1"]}];
+                [self.normalContext updateBlockingPreferences:@{@"customFilters": CustomFilterRules, @"disabledSites": @[@"127.0.0.1"]}];
                 nextPhase = @"custom-site-pause";
             } else if (phase == 402) {
-                [self.normalContext updateBlockingPreferences:@{@"customFilters": text, @"disabled": @YES}];
+                [self.normalContext updateBlockingPreferences:@{@"customFilters": CustomFilterRules, @"disabled": @YES}];
                 nextPhase = @"custom-global-pause";
             } else if (phase == 404) {
-                [self.normalContext updateBlockingPreferences:@{@"customFilters": text}];
-                [self.privateContext updateBlockingPreferences:@{@"customFilters": text}];
+                [self.normalContext updateBlockingPreferences:@{@"customFilters": CustomFilterRules}];
+                [self.privateContext updateBlockingPreferences:@{@"customFilters": CustomFilterRules}];
                 next = self.privatePage;
                 nextPhase = @"custom-private-seed";
             } else if (phase == 406) {
-                [self.privateContext updateBlockingPreferences:@{@"customFilters": @""}];
+                [self.privateContext updateBlockingPreferences:@{@"customFilters": @"##.private-edit-only"}];
                 next = self.privatePage;
                 nextPhase = @"custom-private-edit";
-            } else nextPhase = @"custom-regular-unchanged";
+            } else if (phase == 408) nextPhase = @"custom-regular-unchanged";
+            else if (phase == 410) {
+                [self.normalContext updateBlockingPreferences:@{@"customFilters": CustomFilterRules, @"cosmeticDisabled": @YES}];
+                nextPhase = @"custom-cosmetic-pause";
+            } else {
+                [self.normalContext updateBlockingPreferences:@{@"customFilters": @""}];
+                nextPhase = @"custom-cleared";
+            }
             self.stage = phase + 2;
             [next navigate:[self.origin stringByAppendingFormat:@"custom/filter-test?phase=%@", nextPhase]];
         }];

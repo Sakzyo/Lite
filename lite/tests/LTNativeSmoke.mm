@@ -5,7 +5,7 @@
 #import "../model/LTExtensions.h"
 #import "../model/LTFilterUpdates.h"
 
-static NSString *const CustomFilterFixture = @"! Native editor\n||custom-native.test^\n@@||custom-native.test/needed.js";
+static NSString *const CustomFilterFixture = @"! Native editor\n||custom-native.test^\n@@||custom-native.test/needed.js\n/custom-native[0-9]+/\ncustom-native.test##.ad, [id^=\"ad-\"]\ncustom-native.test#@#.allowed";
 
 // Exercise the same native command paths as the UI without exposing test flags
 // in the browser engine or changing lifecycle state to manufacture a pass.
@@ -365,7 +365,7 @@ static LTNativeSmoke *runningNative;
         }
         case 100: {
             NSWindow *sheet = _owner.window.attachedSheet;
-            NSTextView *editor = (NSTextView *)Label(sheet, @"Custom network filters");
+            NSTextView *editor = (NSTextView *)Label(sheet, @"Custom filters");
             if (![editor isKindOfClass:NSTextView.class]) return;
             [self record:@"nativeCustomFilterEditor" passed:editor.editable && !editor.richText &&
                 sheet.firstResponder == editor && Button(sheet, @"Apply and Reload") && Button(sheet, @"Cancel")];
@@ -375,14 +375,14 @@ static LTNativeSmoke *runningNative;
                 ![blocking[@"updatesDisabled"] boolValue]];
             _customFilterSheet = sheet;
             _customFilterProfile = [NSJSONSerialization dataWithJSONObject:_owner.store.profile.JSON options:NSJSONWritingSortedKeys error:nil];
-            editor.string = @"! Native editor\n||custom-native.test^@@||custom-native.test/needed.js";
+            editor.string = [CustomFilterFixture stringByReplacingOccurrencesOfString:@"^\n@@" withString:@"^@@"];
             editor.selectedRange = NSMakeRange([@"! Native editor\n||custom-native.test^" length], 0);
             Key(sheet, @"\r", 36, 0);
             [self advance:108 delay:.5]; break;
         }
         case 108: {
             NSWindow *sheet = _owner.window.attachedSheet;
-            NSTextView *editor = (NSTextView *)Label(sheet, @"Custom network filters");
+            NSTextView *editor = (NSTextView *)Label(sheet, @"Custom filters");
             NSData *profile = [NSJSONSerialization dataWithJSONObject:_owner.store.profile.JSON options:NSJSONWritingSortedKeys error:nil];
             BOOL unchanged = sheet == _customFilterSheet && [editor isKindOfClass:NSTextView.class] &&
                 [editor.string isEqual:CustomFilterFixture] && [profile isEqual:_customFilterProfile];
@@ -405,7 +405,7 @@ static LTNativeSmoke *runningNative;
         }
         case 103: {
             NSWindow *sheet = _owner.window.attachedSheet;
-            NSTextView *editor = (NSTextView *)Label(sheet, @"Custom network filters");
+            NSTextView *editor = (NSTextView *)Label(sheet, @"Custom filters");
             if (![editor isKindOfClass:NSTextView.class]) return;
             [self record:@"nativeCustomFilterApply" passed:[editor.string isEqual:CustomFilterFixture]];
             NSDictionary *blocking = _owner.store.profile.settings[@"contentBlocking"];
@@ -423,20 +423,20 @@ static LTNativeSmoke *runningNative;
             [Button(_owner.window.attachedSheet, @"Custom Filters…") performClick:nil]; [self advance:106 delay:.2]; break;
         case 106: {
             NSWindow *sheet = _owner.window.attachedSheet;
-            NSTextView *editor = (NSTextView *)Label(sheet, @"Custom network filters");
+            NSTextView *editor = (NSTextView *)Label(sheet, @"Custom filters");
             if (![editor isKindOfClass:NSTextView.class]) return;
-            editor.string = @"||valid-native.test^\n||unsupported.test^$third-party";
+            editor.string = @"||valid-native.test^\n/(unclosed/\n##.draft-ad";
             [Button(sheet, @"Apply and Reload") performClick:nil]; [self advance:107 delay:.2]; break;
         }
         case 107: {
             NSWindow *sheet = _owner.window.attachedSheet;
-            NSTextView *editor = (NSTextView *)Label(sheet, @"Custom network filters");
+            NSTextView *editor = (NSTextView *)Label(sheet, @"Custom filters");
             if (![editor isKindOfClass:NSTextView.class]) return;
             BOOL lineError = NO;
             for (NSView *view in Views(sheet.contentView))
                 if ([view isKindOfClass:NSTextField.class] && [((NSTextField *)view).stringValue containsString:@"line 2"])
                     lineError = YES;
-            [self record:@"nativeCustomFilterRejectsWholeDraft" passed:lineError && [editor.string containsString:@"$third-party"] &&
+            [self record:@"nativeCustomFilterRejectsWholeDraft" passed:lineError && [editor.string containsString:@"/(unclosed/"] &&
                 [_owner.store.profile.settings[@"contentBlocking"][@"customFilters"] isEqual:CustomFilterFixture]];
             [Button(sheet, @"Cancel") performClick:nil]; [self advance:78 delay:.2]; break;
         }
@@ -518,7 +518,7 @@ static LTNativeSmoke *runningNative;
             [Button(_privateWindow.window.attachedSheet, @"Custom Filters…") performClick:nil]; [self advance:111 delay:.2]; break;
         case 111: {
             NSWindow *sheet = _privateWindow.window.attachedSheet;
-            NSTextView *editor = (NSTextView *)Label(sheet, @"Custom network filters");
+            NSTextView *editor = (NSTextView *)Label(sheet, @"Custom filters");
             if (![editor isKindOfClass:NSTextView.class]) return;
             editor.string = @"||private-native.test^";
             [Button(sheet, @"Apply and Reload") performClick:nil]; [self advance:112 delay:.2]; break;

@@ -454,8 +454,8 @@ class Client : public CefClient,
     void InjectCosmetics(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame) {
         UpdateYouTubeGuard(browser, frame, blocking_);
         auto main = browser->GetMainFrame();
-        if (!main || ![blocking_ cosmeticEnabledForURL:N(main->GetURL())]) return;
-        NSString *script = [[LTContentBlocker shared] cosmeticScriptForURL:N(frame->GetURL())];
+        if (!main) return;
+        NSString *script = [blocking_ cosmeticScriptForURL:N(frame->GetURL()) topURL:N(main->GetURL())];
         if (script.length) frame->ExecuteJavaScript(C(script), frame->GetURL(), 0);
     }
     void OnLoadEnd(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame, int) override {

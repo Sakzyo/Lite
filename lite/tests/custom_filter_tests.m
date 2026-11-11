@@ -1,4 +1,4 @@
-// Custom network filters: bounded input, matching and precedence, policy replacement,
+// Custom network and cosmetic filters: bounded input, precedence, policy replacement,
 // and the real profile validation/persistence path. All fixtures stay on this Mac.
 #import "../browser/LTContentBlocker.h"
 #import "../model/LTStore.h"
@@ -20,6 +20,22 @@ static LTBlockingPolicy *Policy(NSString *text) {
 static BOOL Blocks(LTBlockingPolicy *policy, NSString *url) {
     return [policy blocksURL:url initiator:@"https://page.example/" type:@"script" method:@"GET" topURL:@"https://page.example/"];
 }
+// Decode the actual JavaScript payload so quotes and commas in attribute values
+// are checked as CSS data, without accidentally matching the surrounding code.
+static NSSet<NSString *> *Hidden(LTBlockingPolicy *policy, NSString *url, NSString *top) {
+    NSString *script = [policy cosmeticScriptForURL:url topURL:top];
+    NSRange begin = [script rangeOfString:@"s.replaceSync("];
+    if (!script.length || begin.location == NSNotFound) return nil;
+    NSString *tail = [script substringFromIndex:NSMaxRange(begin)];
+    NSRange end = [tail rangeOfString:@"[0]);"];
+    if (end.location == NSNotFound) return nil;
+    NSArray *json = [NSJSONSerialization JSONObjectWithData:[[tail substringToIndex:end.location] dataUsingEncoding:NSUTF8StringEncoding] options:0 error:nil];
+    if (![json isKindOfClass:NSArray.class] || json.count != 1 || ![json[0] isKindOfClass:NSString.class]) return nil;
+    NSString *css = json[0], *prefix = @":is(", *suffix = @"){display:none!important;}";
+    if (![css hasPrefix:prefix] || ![css hasSuffix:suffix]) return nil;
+    NSString *selectors = [css substringWithRange:NSMakeRange(prefix.length, css.length - prefix.length - suffix.length)];
+    return selectors.length ? [NSSet setWithArray:[selectors componentsSeparatedByString:@",\n"]] : [NSSet set];
+}
 static NSString *Repeated(NSString *text, NSUInteger count) {
     NSMutableString *result = [NSMutableString new];
     for (NSUInteger i = 0; i < count; ++i) [result appendString:text];
@@ -34,8 +50,15 @@ static LTContentBlocker *Bundle(NSString *directory, BOOL replacement) {
         @{@"action": @{@"type": @"allow"}, @"condition": @{@"urlFilter": @"||allowed.example^"}},
         @{@"action": @{@"type": @"block"}, @"condition": @{@"urlFilter": @"||navigation.example^", @"resourceTypes": @[@"main_frame"]}}
     ];
-    NSDictionary *files = @{@"network.json": rules,
-        @"cosmetic.json": @{@"generic": @[], @"specific": @{}, @"exceptions": @{}},
+    NSDictionary *cosmetic = replacement ? @{@"generic": @[@".replacement"], @"specific": @{}, @"exceptions": @{}} :
+        @{@"generic": @[@".bundled", @".upstream-excepted"],
+          @"specific": @{@"page.example": @[@".bundled-specific"],
+                         @"groups.example": @[@"#bio_ep, #bio_ep_bg",
+                            @".outer:is(.left,.right), [data-ad=\"x,y\"]",
+                            @".escaped\\,comma, .commented/* a,b */", @"#gone_one, #gone_two"]},
+          @"exceptions": @{@"page.example": @[@".upstream-excepted"],
+                           @"groups.example": @[@"#gone_one, #gone_two"]}};
+    NSDictionary *files = @{@"network.json": rules, @"cosmetic.json": cosmetic,
         @"provenance.json": @{@"networkRules": @(rules.count), @"serial": replacement ? @202611100002 : @202611100001}};
     for (NSString *name in files)
         [JSON(files[name]) writeToFile:[directory stringByAppendingPathComponent:name] atomically:YES];
@@ -73,15 +96,15 @@ static void TestInput(void) {
     }
     CHECK(!LTValidateCustomFilters(nil, nil), "a non-string nil value is not custom filter text");
     for (NSArray *example in @[@[@"||ads.example^$third-party", @"option"],
-                               @[@"page.example##.advert", @"cosmetic"], @[@"/ads[0-9]+/", @"regular expression"]]) {
+                               @[@"page.example#?#.advert", @"cosmetic"], @[@"/(?=ads)/", @"regular expression"]]) {
         NSError *error = nil;
         CHECK(!LTValidateCustomFilters(example[0], &error) && [error.localizedDescription.lowercaseString containsString:example[1]],
               "unsupported filter errors name the kind of syntax that was refused");
     }
     NSArray *invalid = @[
         @"||ads.example^$third-party", @"||ads.example^$domain=page.example",
-        @"page.example##.advert", @"page.example#@#.advert", @"page.example#?#div:has(.advert)",
-        @"/ads[0-9]+/", @"@@/ads[0-9]+/", @"//", @"@@//", @"@@", @"|", @"||", @"|||ads.example^",
+        @"page.example##.advert:hover", @"page.example#@#.advert::before", @"page.example#?#div:has(.advert)",
+        @"/(?=ads)/", @"@@/(?=ads)/", @"//", @"@@//", @"@@", @"|", @"||", @"|||ads.example^",
         @"ad|vert", @"||ads.example^||", @"space here", @"tab\there", @"café.example",
         @"control\x01here", @"newline\rhere"
     ];
@@ -113,6 +136,166 @@ static void TestInput(void) {
     CHECK(!LTValidateCustomFilters(oversized, nil) && !Profile(oversized), "the UTF-8 byte limit is enforced even below the character limit");
     CHECK(!LTValidateCustomFilters([limit stringByAppendingString:@" "], nil) && !Profile([limit stringByAppendingString:@" "]),
           "the original UTF-8 size is limited before whitespace-only lines are ignored");
+}
+
+static void TestRegex(void) {
+    LTBlockingPolicy *policy = Policy(@"/track(er|ing)[0-9]+[.]js$/\n@@/tracker12[.]js$/");
+    CHECK(LTValidateCustomFilters(@"/track(er|ing)[0-9]+[.]js$/\n@@/tracker12[.]js$/", nil) &&
+          Blocks(policy, @"https://cdn.example/TRACKING34.JS") && !Blocks(policy, @"https://cdn.example/tracker12.js") &&
+          !Blocks(policy, @"https://cdn.example/tracker.js") && !Blocks(policy, @"https://cdn.example/tracking34.js?extra"),
+          "regex blocks and exceptions preserve alternation, repetition, case folding and end anchors");
+    for (NSString *text in @[@"||bundled.example^\n@@/bundled[.]example/", @"@@/bundled[.]example/\n||bundled.example^",
+                             @"/bundled[.]example/\n@@||bundled.example^"])
+        CHECK(!Blocks(Policy(text), @"https://bundled.example/a"), "regex and glob exceptions override custom and bundled blocks in either order");
+    CHECK(Blocks(Policy(@"/allowed[.]example/"), @"https://allowed.example/a"), "a regex block overrides a bundled exception");
+    CHECK(![policy blocksURL:@"https://cdn.example/tracking34.js" initiator:@"" type:@"main_frame" method:@"GET" topURL:@"https://cdn.example/"],
+          "custom regex rules do not block main-frame navigation");
+    CHECK(!Blocks(Policy(@"/tracker/"), @"file:///tracker.js"), "regex rules leave non-network schemes alone");
+    CHECK(LTValidateCustomFilters(@"/foo##bar/", nil) && Profile(@"/foo#@#bar/"), "cosmetic delimiters inside regex bodies stay regex data");
+    NSArray *invalid = @[@"/(/", @"/[z-a]/", @"/a(?=b)/", @"/(a)\\1/", @"/a++/", @"/a{33}/", @"/é/", @"/a\x01b/"];
+    for (NSString *line in invalid) {
+        NSError *error = nil;
+        NSString *text = [@"##.kept\n" stringByAppendingString:line];
+        CHECK(!LTValidateCustomFilters(text, &error) && [error.localizedDescription containsString:@"line 2"] && !Profile(text),
+              "invalid, unsupported and non-ASCII regex input refuses the whole profile edit");
+    }
+    unichar nul[] = {'/', 'a', 0, 'b', '/'};
+    NSString *withNul = [NSString stringWithCharacters:nul length:5];
+    CHECK(!LTValidateCustomFilters(withNul, nil) && !Profile(withNul), "a regex containing NUL is refused without truncating its pattern");
+    NSString *rules32 = Repeated(@"/z/\n", 32);
+    CHECK(LTValidateCustomFilters(rules32, nil) && Profile(rules32) &&
+          !LTValidateCustomFilters([rules32 stringByAppendingString:@"/z/"], nil) && !Profile([rules32 stringByAppendingString:@"/z/"]),
+          "32 regex rules are accepted and a 33rd is refused");
+    NSString *pattern512 = [NSString stringWithFormat:@"/[%@]/", Repeated(@"a", 510)];
+    NSString *pattern513 = [NSString stringWithFormat:@"/[%@]/", Repeated(@"a", 511)];
+    CHECK(LTValidateCustomFilters(pattern512, nil) && Profile(pattern512) && !LTValidateCustomFilters(pattern513, nil) && !Profile(pattern513),
+          "regex source limit is 512 ASCII bytes independently of compiled size");
+    NSString *program256 = [NSString stringWithFormat:@"/%@/\n", Repeated(@"a", 255)];
+    NSString *program257 = [NSString stringWithFormat:@"/%@/", Repeated(@"a", 256)];
+    CHECK(LTValidateCustomFilters(program256, nil) && !LTValidateCustomFilters(program257, nil) && !Profile(program257),
+          "a regex may compile to 256 instructions including its final match, but not 257");
+    NSString *total2048 = Repeated(program256, 8);
+    CHECK(LTValidateCustomFilters(total2048, nil) && Profile(total2048) &&
+          !LTValidateCustomFilters([total2048 stringByAppendingString:program256], nil) && !Profile([total2048 stringByAppendingString:program256]),
+          "the entire list is limited to 2048 compiled regex instructions");
+    NSString *base = @"https://ordinary.example/over-limit/";
+    NSString *url8192 = [base stringByAppendingString:Repeated(@"x", 8192 - base.length)];
+    NSString *url8193 = [url8192 stringByAppendingString:@"x"];
+    CHECK(Blocks(Policy(@"/over-limit/"), url8192) && !Blocks(Policy(@"/over-limit/"), url8193),
+          "regex matches an 8192-byte URL but does not truncate a longer URL");
+    CHECK(Blocks(Policy(@"over-limit\n/not-found/"), url8193), "oversized regex URLs still use custom glob rules");
+    NSString *bundledLong = [@"https://bundled.example/" stringByAppendingString:Repeated(@"a", 8193)];
+    CHECK(Blocks(Policy(@"@@/bundled[.]example/"), bundledLong), "skipping regex on a long URL preserves bundled network decisions");
+    NSString *expensive = Repeated(@"/a+a+a+a+a+b$/\n", 31);
+    NSString *tail = Repeated(@"a", 600);
+    NSString *ordinary = [@"https://ordinary.example/" stringByAppendingString:tail];
+    NSString *bundled = [@"https://bundled.example/" stringByAppendingString:tail];
+    CHECK(Blocks(Policy(@"/ordinary[.]example/"), ordinary) &&
+          !Blocks(Policy([expensive stringByAppendingString:@"/ordinary[.]example/"]), ordinary),
+          "exhausting the block-regex pass skips a later matching regex rather than exceeding its budget");
+    CHECK(!Blocks(Policy([expensive stringByAppendingString:@"@@/bundled[.]example/"]), bundled) &&
+          Blocks(Policy(expensive), bundled), "expensive block regexes cannot starve a later exception, and budget fallback preserves bundled blocking");
+    NSString *expensiveExceptions = Repeated(@"@@/a+a+a+a+a+b$/\n", 31);
+    CHECK(!Blocks(Policy([expensiveExceptions stringByAppendingString:@"/ordinary[.]example/"]), ordinary) &&
+          Blocks(Policy([expensiveExceptions stringByAppendingString:@"||ordinary.example^"]), ordinary),
+          "exhausting regex exceptions skips all regex decisions but preserves custom glob decisions");
+}
+
+static void TestCosmeticInput(void) {
+    NSArray *valid = @[@"example.com##.ad", @"EXAMPLE.COM.###ad", @"##.ad, #Keep", @"localhost#@#.ad",
+        @"127.0.0.1##div.banner > a + * ~ #id", @"xn--bcher-kva.example##[data-ad]",
+        @"##div[data-test = value]", @"##[data-x^='abc']", @"##[data-x$=\"abc\"]", @"##[data-x*=x]",
+        @"##[data-x~=x]", @"##[data-x|=en]", @"##[data-x='']", @"##[data-x='a,b'] , .keep",
+        @"##[data-x='};@import']", @"##-custom.--x#_id[data-x=--value]", @"##div .ad[attr]"];
+    for (NSString *line in valid)
+        CHECK(LTValidateCustomFilters(line, nil) && Profile(line), "supported CSS compounds, lists, attributes and scopes validate in both editor and profile");
+    NSArray *invalid = @[@"##", @"##div,", @"##,div", @"##div,,span", @"##div >", @"##div > + span",
+        @"##div:not(.ad)", @"##.ad::before", @"##.a\\:b", @"##[data-x=123]", @"##[data-x='x' i]",
+        @"##[data-x!='x']", @"##[data-x=]", @"##[data-x='unterminated]", @"##[data-x='x' garbage]",
+        @"##div){display:none}@import url(x)", @"##.ad;@import", @"##.ad{color:red}", @"##[data-x='x'];body",
+        @"example.com,other.com##.ad", @"~example.com##.ad", @"example.*##.ad", @"https://example.com##.ad",
+        @"example.com:80##.ad", @"example..com##.ad", @"-example.com##.ad", @"example-.com##.ad",
+        @"999.0.0.1##.ad", @"example.com#?#div", @"example.com##+js(test)", @"##div\t.ad", @"##.é", @"K.example##.ad",
+        @"##svg|rect", @"##[x|name=foo]", @"##.1bad", @"##-", @"##*div", @"##[x='escaped\\value']"];
+    for (NSString *line in invalid) {
+        NSError *error = nil;
+        NSString *text = [@"/valid-regex/\n" stringByAppendingString:line];
+        CHECK(!LTValidateCustomFilters(text, &error) && [error.localizedDescription containsString:@"line 2"] && !Profile(text),
+              "unsupported or injection-shaped cosmetic syntax rejects the whole mixed edit with its line number");
+    }
+    NSString *thousand = Repeated(@"##.a,.b\n", 500);
+    CHECK(LTValidateCustomFilters(thousand, nil) && Profile(thousand) &&
+          !LTValidateCustomFilters([thousand stringByAppendingString:@"##.c"], nil) && !Profile([thousand stringByAppendingString:@"##.c"]),
+          "1000 expanded cosmetic selectors are accepted but a 1001st is refused below the line-count limit");
+}
+
+static void TestCosmetics(LTContentBlocker *bundle, LTContentBlocker *replacement) {
+    [LTContentBlocker install:bundle];
+    NSString *groups = @"https://groups.example/";
+    NSSet *bundledOnly = Hidden(Policy(@""), groups, groups);
+    CHECK([bundledOnly containsObject:@"#bio_ep, #bio_ep_bg"] &&
+          [bundledOnly containsObject:@".outer:is(.left,.right), [data-ad=\"x,y\"]"],
+          "bundled-only styles retain their original grouped selector strings");
+    NSSet *oneException = Hidden(Policy(@"groups.example#@##bio_ep"), groups, groups);
+    CHECK(![oneException containsObject:@"#bio_ep"] && ![oneException containsObject:@"#bio_ep, #bio_ep_bg"] &&
+          [oneException containsObject:@"#bio_ep_bg"],
+          "one custom exception removes only its member of a bundled selector list");
+    NSSet *twoExceptions = Hidden(Policy(@"groups.example#@##bio_ep, #bio_ep_bg"), groups, groups);
+    CHECK(![twoExceptions containsObject:@"#bio_ep"] && ![twoExceptions containsObject:@"#bio_ep_bg"] &&
+          ![twoExceptions containsObject:@"#bio_ep, #bio_ep_bg"],
+          "a custom exception list removes both bundled selector-list members");
+    CHECK([oneException containsObject:@".outer:is(.left,.right)"] &&
+          [oneException containsObject:@"[data-ad=\"x,y\"]"] &&
+          [oneException containsObject:@".escaped\\,comma"] &&
+          [oneException containsObject:@".commented/* a,b */"],
+          "bundle composition preserves commas inside functions, quotes, escapes and comments");
+    CHECK(![oneException containsObject:@"#gone_one"] && ![oneException containsObject:@"#gone_two"] &&
+          ![oneException containsObject:@"#gone_one, #gone_two"],
+          "bundled exceptions are applied before selector lists are split for custom composition");
+    NSString *page = @"https://page.example/";
+    NSString *text = @"##.generic\nPAGE.EXAMPLE.##.scoped\npage.example##.a,.b\npage.example#@#.a\n#@#.bundled\n"
+        @"page.example##.upstream-excepted\n##.quoted[data-value=\"a,b\"] > #KeEp\npage.example#@#.generic";
+    LTBlockingPolicy *policy = Policy(text);
+    NSSet *expected = [NSSet setWithArray:@[@".bundled-specific", @".scoped", @".b", @".upstream-excepted", @".quoted[data-value=\"a,b\"] > #KeEp"]];
+    CHECK([Hidden(policy, page, page) isEqual:expected], "one composed stylesheet applies custom exceptions to bundled/custom rules and custom hides over bundled exceptions");
+    CHECK([Hidden(policy, @"https://SUB.PAGE.EXAMPLE./", page) isEqual:expected], "cosmetic host scope includes subdomains and normalizes host case and trailing dots");
+    for (NSString *url in @[@"https://notpage.example/", @"https://page.example.evil/"]) {
+        NSSet *selectors = Hidden(policy, url, page);
+        CHECK([selectors containsObject:@".generic"] && ![selectors containsObject:@".scoped"] && ![selectors containsObject:@".b"],
+              "generic selectors reach other hosts without crossing a scoped hostname boundary");
+    }
+    for (NSString *rules in @[@"##.same\n#@#.same", @"#@#.same\n##.same"])
+        CHECK(![Hidden(Policy(rules), page, page) containsObject:@".same"], "cosmetic exceptions win regardless of line order");
+    CHECK(![Hidden(Policy(@"##.a,.b\n#@#.a"), page, page) containsObject:@".a"] &&
+          [Hidden(Policy(@"##.a,.b\n#@#.a"), page, page) containsObject:@".b"], "an exception removes one expanded list member without removing its neighbors");
+    CHECK([Hidden(Policy(@"@@||page.example^\n##.custom"), page, page) containsObject:@".custom"],
+          "network exceptions do not disable cosmetic hiding");
+    CHECK(![policy cosmeticScriptForURL:@"file:///tmp/example" topURL:page].length &&
+          ![policy cosmeticScriptForURL:@"about:blank" topURL:page].length, "cosmetic scripts do not run on internal or file documents");
+    for (NSDictionary *pause in @[@{@"disabled": @YES}, @{@"cosmeticDisabled": @YES}, @{@"disabledSites": @[@"page.example"]}]) {
+        NSMutableDictionary *preferences = [pause mutableCopy]; preferences[@"customFilters"] = text;
+        [policy updatePreferences:preferences];
+        CHECK(![policy cosmeticScriptForURL:@"https://frame.example/" topURL:page].length,
+              "global, cosmetic and top-host pause each suppress the entire composed stylesheet");
+    }
+    [policy updatePreferences:@{@"customFilters": text, @"disabledSites": @[@"frame.example"]}];
+    CHECK([Hidden(policy, @"https://frame.example/", page) containsObject:@".generic"],
+          "embedded-frame cosmetics retain the existing top-page pause policy");
+    [policy updatePreferences:@{@"customFilters": text}];
+    [policy updatePreferences:@{@"customFilters": @"/new-block/\n##.broken:hover", @"disabled": @YES}];
+    CHECK([Hidden(policy, page, page) isEqual:expected] && !Blocks(policy, @"https://ordinary.example/new-block"),
+          "a bad selector preserves the previous whole policy and installs no accompanying regex");
+    [LTContentBlocker install:replacement];
+    NSSet *changed = Hidden(policy, page, page);
+    CHECK([changed containsObject:@".replacement"] && [changed containsObject:@".scoped"] && ![changed containsObject:@".bundled-specific"],
+          "replacing shared filters preserves custom cosmetics and uses the new bundled selector snapshot");
+    LTBlockingPolicy *exception = Policy(@"#@#.replacement\n##.private-only");
+    CHECK(![Hidden(exception, page, page) containsObject:@".replacement"] &&
+          [Hidden(exception, page, page) containsObject:@".private-only"] && ![Hidden(policy, page, page) containsObject:@".private-only"],
+          "independent contexts keep their own cosmetic exceptions and additions after replacement");
+    [policy updatePreferences:@{@"customFilters": @""}];
+    CHECK(([Hidden(policy, page, page) isEqual:[NSSet setWithObject:@".replacement"]]), "removing custom filters leaves only the current bundled stylesheet");
+    [LTContentBlocker install:bundle];
 }
 
 static void TestMatching(LTContentBlocker *bundle, LTContentBlocker *replacement) {
@@ -180,7 +363,7 @@ static void TestMatching(LTContentBlocker *bundle, LTContentBlocker *replacement
     [policy updatePreferences:@{@"customFilters": text, @"cosmeticDisabled": @YES}];
     CHECK(Blocks(policy, @"https://custom.example/a") && ![policy cosmeticEnabledForURL:@"https://page.example"],
           "disabling cosmetic hiding keeps custom network blocks active");
-    [policy updatePreferences:@{@"customFilters": @"||new.example^\nsite.example##.ad", @"disabled": @YES}];
+    [policy updatePreferences:@{@"customFilters": @"||new.example^\nsite.example##.ad:hover", @"disabled": @YES}];
     CHECK(Blocks(policy, @"https://custom.example/a") && !Blocks(policy, @"https://new.example/a") &&
           [policy enabledForURL:@"https://page.example"] && ![policy cosmeticEnabledForURL:@"https://page.example"],
           "invalid update preserves the previous whole policy and applies no partial rules");
@@ -201,11 +384,12 @@ static void TestPersistence(NSString *directory) {
     NSString *path = [directory stringByAppendingPathComponent:@"profile.sqlite"];
     NSError *error = nil;
     LTStore *store = [[LTStore alloc] initWithPath:path error:&error];
-    NSString *text = @" \t\r\n[Adblock Plus 2.0]\r\n ! Kept exactly\r\n\t||saved.example^  \r\n @@||saved.example/safe\t\r\n";
+    NSString *text = @" \t\r\n[Adblock Plus 2.0]\r\n ! Kept exactly\r\n\t||saved.example^  \r\n @@||saved.example/safe\t\r\n"
+        @" /saved-regex/ \r\n ##.saved-cosmetic \r\n #@#.bundled \r\n";
     CHECK(store && [store commit:^(LTProfile *p) { p.settings[@"contentBlocking"] = @{@"customFilters": text}; } error:&error],
           "valid custom filter text commits through the real store");
     error = nil;
-    CHECK(![store commit:^(LTProfile *p) { p.settings[@"contentBlocking"] = @{@"customFilters": @"||new.example^\n/ad[0-9]/"}; } error:&error] && error &&
+    CHECK(![store commit:^(LTProfile *p) { p.settings[@"contentBlocking"] = @{@"customFilters": @"||new.example^\n/(?=ad)/"}; } error:&error] && error &&
           [store.profile.settings[@"contentBlocking"][@"customFilters"] isEqual:text],
           "a failed profile commit keeps the entire previous custom filter text");
     [store close];
@@ -213,19 +397,30 @@ static void TestPersistence(NSString *directory) {
     CHECK([store.profile.settings[@"contentBlocking"][@"customFilters"] isEqual:text], "custom filters persist exactly across reopening SQLite");
     LTBlockingPolicy *regular = [LTBlockingPolicy new];
     [regular updatePreferences:store.profile.settings[@"contentBlocking"]];
-    CHECK(Blocks(regular, @"https://saved.example/a") && !Blocks(regular, @"https://saved.example/safe"),
-          "reopened custom filters retain block and exception behavior");
+    CHECK(Blocks(regular, @"https://saved.example/a") && !Blocks(regular, @"https://saved.example/safe") &&
+          Blocks(regular, @"https://ordinary.example/saved-regex") &&
+          [Hidden(regular, @"https://page.example/", @"https://page.example/") containsObject:@".saved-cosmetic"] &&
+          ![Hidden(regular, @"https://page.example/", @"https://page.example/") containsObject:@".bundled"],
+          "reopened custom filters retain glob, regex and cosmetic behavior");
     LTStore *privateStore = [[LTStore alloc] initWithPath:nil error:nil];
     CHECK([privateStore commit:^(LTProfile *p) { p.settings[@"contentBlocking"] = @{@"customFilters": text}; } error:nil],
           "a copied custom filter snapshot can be stored in a private profile");
     LTBlockingPolicy *privatePolicy = [LTBlockingPolicy new];
     [privatePolicy updatePreferences:privateStore.profile.settings[@"contentBlocking"]];
-    CHECK(Blocks(privatePolicy, @"https://saved.example/a"), "copied private filters initially enforce the regular snapshot");
-    [privateStore commit:^(LTProfile *p) { p.settings[@"contentBlocking"] = @{@"customFilters": @"||private.example^"}; } error:nil];
+    CHECK(Blocks(privatePolicy, @"https://saved.example/a") && Blocks(privatePolicy, @"https://ordinary.example/saved-regex") &&
+          [Hidden(privatePolicy, @"https://page.example/", @"https://page.example/") containsObject:@".saved-cosmetic"],
+          "copied private filters initially enforce the complete regular snapshot");
+    [privateStore commit:^(LTProfile *p) { p.settings[@"contentBlocking"] = @{@"customFilters": @"||private.example^\n/private-regex/\n##.private-cosmetic"}; } error:nil];
     [privatePolicy updatePreferences:privateStore.profile.settings[@"contentBlocking"]];
     CHECK(Blocks(privatePolicy, @"https://private.example/a") && !Blocks(privatePolicy, @"https://saved.example/a") &&
-          Blocks(regular, @"https://saved.example/a") && !Blocks(regular, @"https://private.example/a"),
-          "private edits change only their own matcher");
+          Blocks(regular, @"https://saved.example/a") && !Blocks(regular, @"https://private.example/a") &&
+          Blocks(privatePolicy, @"https://ordinary.example/private-regex") && !Blocks(privatePolicy, @"https://ordinary.example/saved-regex") &&
+          Blocks(regular, @"https://ordinary.example/saved-regex") && !Blocks(regular, @"https://ordinary.example/private-regex") &&
+          [Hidden(privatePolicy, @"https://page.example/", @"https://page.example/") containsObject:@".private-cosmetic"] &&
+          ![Hidden(privatePolicy, @"https://page.example/", @"https://page.example/") containsObject:@".saved-cosmetic"] &&
+          [Hidden(regular, @"https://page.example/", @"https://page.example/") containsObject:@".saved-cosmetic"] &&
+          ![Hidden(regular, @"https://page.example/", @"https://page.example/") containsObject:@".private-cosmetic"],
+          "private edits change only their own glob, regex and cosmetic matchers");
     [privateStore close];
     [store close];
     store = [[LTStore alloc] initWithPath:path error:nil];
@@ -233,7 +428,7 @@ static void TestPersistence(NSString *directory) {
     [store close];
     // Bypass the store writer, as an outside editor can, then use the normal disk reader.
     NSMutableDictionary *malformed = [LTProfile.fresh.JSON mutableCopy];
-    malformed[@"settings"] = @{@"contentBlocking": @{@"customFilters": @"||saved.example^\nsite.example##.ad"}};
+    malformed[@"settings"] = @{@"contentBlocking": @{@"customFilters": @"||saved.example^\nsite.example##.ad:hover"}};
     NSData *data = JSON(malformed);
     sqlite3 *db = NULL; sqlite3_stmt *statement = NULL;
     sqlite3_open(path.fileSystemRepresentation, &db);
@@ -247,11 +442,11 @@ static void TestPersistence(NSString *directory) {
 }
 
 static void TestConcurrentReplacement(void) {
-    // Both complete sets enforce these same two decisions. Different sizes and
+    // Both complete sets enforce the same network and cosmetic decisions. Different sizes and
     // ordering expose a partially rebuilt set without depending on which set won.
     NSString *first = [Repeated(@"||other.example^\n", 128)
-        stringByAppendingString:@"||always.example^\n@@||bundled.example^"];
-    NSString *second = [@"@@||bundled.example^\n||always.example^\n"
+        stringByAppendingString:@"||always.example^\n@@||bundled.example^\n/regex-always/\n##.alwaysHidden\n#@#.bundled"];
+    NSString *second = [@"#@#.bundled\n##.alwaysHidden\n/regex-always/\n@@||bundled.example^\n||always.example^\n"
         stringByAppendingString:Repeated(@"||another.example^\n", 64)];
     LTBlockingPolicy *policy = Policy(first);
     dispatch_group_t group = dispatch_group_create();
@@ -265,7 +460,10 @@ static void TestConcurrentReplacement(void) {
             NSUInteger localMismatches = 0;
             for (NSUInteger request = 0; request < 2000; ++request) {
                 @autoreleasepool {
-                    if (!Blocks(policy, @"https://always.example/a") || Blocks(policy, @"https://bundled.example/a"))
+                    NSSet *hidden = Hidden(policy, @"https://page.example/", @"https://page.example/");
+                    if (!Blocks(policy, @"https://always.example/a") || Blocks(policy, @"https://bundled.example/a") ||
+                        !Blocks(policy, @"https://ordinary.example/regex-always") ||
+                        ![hidden containsObject:@".alwaysHidden"] || [hidden containsObject:@".bundled"])
                         ++localMismatches;
                 }
             }
@@ -327,16 +525,68 @@ static void TestRequestCost(void) {
            (unsigned long)requests.count, meanMS, slowest * 1000, budgetMS);
 }
 
+static void TestMixedRequestCost(void) {
+    NSMutableString *rules = [NSMutableString new];
+    for (NSUInteger i = 0; i < 966; ++i) {
+        if (i % 2) [rules appendFormat:@"metrics*segment-%lu*pixel^\n", (unsigned long)i];
+        else [rules appendFormat:@"||host-%lu.metrics.example^\n", (unsigned long)i];
+    }
+    [rules appendString:@"/late-block\n@@/late-block/allowed\n"];
+    for (NSUInteger i = 0; i < 32; ++i)
+        [rules appendFormat:@"/regex-%lu-.*pixel$/\n", (unsigned long)i];
+    LTBlockingPolicy *policy = Policy(rules);
+    NSMutableArray<NSString *> *requests = [NSMutableArray new];
+    NSString *base = [@"https://cdn.example/assets/metrics/" stringByAppendingString:Repeated(@"segment/", 24)];
+    BOOL bounded = YES;
+    for (NSUInteger i = 0; i < 3000; ++i) {
+        NSString *url = [NSString stringWithFormat:@"%@ordinary/resource-%lu.js?version=1", base, (unsigned long)i];
+        bounded &= url.length <= 512;
+        [requests addObject:url];
+    }
+    CHECK(bounded && LTValidateCustomFilters(rules, nil), "mixed request-cost fixture has 968 globs, 32 regexes and URLs of at most 512 characters");
+    CHECK(Blocks(policy, [base stringByAppendingString:@"late-block/resource.js"]) &&
+          !Blocks(policy, [base stringByAppendingString:@"late-block/allowed/resource.js"]) &&
+          Blocks(policy, @"https://cdn.example/regex-31-pixel"), "last glob block, glob exception and regex take effect in a mixed 1000-rule set");
+    for (NSUInteger i = 0; i < 30; ++i) Blocks(policy, requests[i]);
+    NSUInteger mismatches = 0;
+    double elapsed = 0, slowest = 0;
+    for (NSString *url in requests) {
+        @autoreleasepool {
+            double started = NSProcessInfo.processInfo.systemUptime;
+            BOOL blocked = Blocks(policy, url);
+            double duration = NSProcessInfo.processInfo.systemUptime - started;
+            elapsed += duration;
+            if (duration > slowest) slowest = duration;
+            if (blocked) ++mismatches;
+        }
+    }
+    double meanMS = elapsed * 1000 / requests.count;
+    CHECK(mismatches == 0, "1000 mixed custom rules preserve every nonmatching request");
+#if defined(__x86_64__)
+    const double budgetMS = .700;
+#else
+    const double budgetMS = .350;
+#endif
+    CHECK(meanMS < budgetMS, "1000 mixed custom rules stay within the architecture's mean request budget");
+    printf("Custom mixed filter request cost: 968 globs + 32 regexes, %lu nonmatching requests, mean %.3f ms, slowest %.3f ms (mean budget %.3f ms)\n",
+           (unsigned long)requests.count, meanMS, slowest * 1000, budgetMS);
+}
+
 int main(void) {
     @autoreleasepool {
         NSString *directory = [NSTemporaryDirectory() stringByAppendingPathComponent:NSUUID.UUID.UUIDString];
         LTContentBlocker *bundle = Bundle([directory stringByAppendingPathComponent:@"original"], NO);
         LTContentBlocker *replacement = Bundle([directory stringByAppendingPathComponent:@"replacement"], YES);
         CHECK(bundle && replacement, "local bundled filter fixtures load");
+        [LTContentBlocker install:bundle];
         TestInput();
+        TestRegex();
+        TestCosmeticInput();
         TestMatching(bundle, replacement);
+        TestCosmetics(bundle, replacement);
         TestConcurrentReplacement();
         TestRequestCost();
+        TestMixedRequestCost();
         TestPersistence(directory);
         [NSFileManager.defaultManager removeItemAtPath:directory error:nil];
         printf("%d custom filter checks passed, %d failed\n", passed, failed);

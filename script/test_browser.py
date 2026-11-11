@@ -107,6 +107,7 @@ try:
     required += ['taskManagerReportsTasks', 'taskManagerMeasurements', 'taskManagerProtectsBrowser', 'taskManagerEndProcess', 'taskManagerReloadAfterEnd']
     blocking_checks = ['blockingEnabled', 'blockingSitePause', 'blockingResumed', 'blockingGlobalPause', 'blockingCounter', 'blockingPrivateIsolation']
     blocking_checks += ['customFiltersEnabled', 'customFiltersSitePause', 'customFiltersGlobalPause', 'customFiltersPrivateSeed', 'customFiltersPrivateEdit', 'customFiltersRegularUnchanged']
+    blocking_checks += ['customFiltersCosmeticPause', 'customFiltersCleared']
     blocking_checks += ['youtubeEnabled', 'youtubeSitePause', 'youtubeResumed', 'youtubeGlobalPause', 'youtubePrivateIsolation']
     blocking_checks += ['youtubeLivePause', 'youtubeLiveResume', 'devToolsOpenClose']
     required = blocking_checks if blocking_only else required + blocking_checks

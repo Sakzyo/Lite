@@ -148,12 +148,23 @@ addEventListener('load',async()=>{
             content = 'text/html'
         elif parsed.path == '/custom/filter-test':
             body = '''<!doctype html><meta charset="utf-8"><title>Lite custom filter test</title>
-<h1>Custom network filter verification</h1>
+<h1>Custom filter verification</h1><p id="custom-normal">Normal content remains visible.</p>
+<div class="custom-generic-ad">Generic cosmetic fixture</div>
+<div class="custom-host-ad">Host cosmetic fixture</div>
+<div data-custom="ad">Attribute cosmetic fixture</div>
+<div class="custom-comma-ad">Comma-separated cosmetic fixture</div>
+<div class="custom-except-ad">Custom exception fixture</div>
+<div class="custom-wrong-host">Unrelated host fixture</div>
+<div class="private-edit-only">Private edit fixture</div>
+<div id="AC_ad">Bundled selector with custom exception</div>
+<div id="AD_160">Bundled selector without exception</div>
+<iframe id="custom-frame" src="/custom/frame" title="Cosmetic frame fixture"></iframe>
 <script nonce="lite-test">addEventListener('load',async()=>{
  const phase=new URL(location.href).searchParams.get('phase');
  const get=async path=>{try{return (await fetch(path,{cache:'no-store'})).ok}catch{return false}};
  const direct=await get('/custom/probe?phase='+phase);
  const redirected=await get('/custom/redirect?phase='+phase);
+ const glob=await get('/custom/glob-probe?phase='+phase);
  const exception=await get('/webtracking.min.js?phase='+phase);
  const registration=await navigator.serviceWorker.register('/custom-worker.js',{scope:'/custom/'});
  const worker=registration.installing||registration.waiting||registration.active;
@@ -166,8 +177,26 @@ addEventListener('load',async()=>{
   registration.active.postMessage(phase,[channel.port2]);});
  const hits=await(await fetch('/custom/hits?phase='+phase)).json();
  const exceptionHits=await(await fetch('/blocking-hits?phase='+phase)).json();
- window.customFilterResult={phase,direct,redirected,exception,workerBlocked,hits,exceptionHits};
+ const late=document.createElement('div');late.className='custom-generic-ad';
+ late.textContent='Dynamic custom cosmetic fixture';document.body.append(late);
+ const hidden=selector=>getComputedStyle(document.querySelector(selector)).display==='none';
+ const frame=document.querySelector('#custom-frame').contentWindow;
+ const frameHidden=selector=>frame.getComputedStyle(frame.document.querySelector(selector)).display==='none';
+ window.customFilterResult={phase,direct,redirected,glob,exception,workerBlocked,hits,exceptionHits,
+  genericHidden:hidden('.custom-generic-ad'),hostHidden:hidden('.custom-host-ad'),
+  attributeHidden:hidden('[data-custom="ad"]'),commaHidden:hidden('.custom-comma-ad'),
+  dynamicHidden:getComputedStyle(late).display==='none',customExceptionVisible:!hidden('.custom-except-ad'),
+  bundledExceptionVisible:!hidden('#AC_ad'),bundledHidden:hidden('#AD_160'),
+  unrelatedVisible:!hidden('.custom-wrong-host'),normalVisible:!hidden('#custom-normal'),
+  privateEditHidden:hidden('.private-edit-only'),frameGenericHidden:frameHidden('.custom-generic-ad'),
+  frameHostHidden:frameHidden('.custom-host-ad'),frameNormalVisible:!frameHidden('#custom-frame-normal')};
 });</script>'''.encode()
+            content = 'text/html'
+        elif parsed.path == '/custom/frame':
+            body = b'''<!doctype html><meta charset="utf-8"><title>Custom cosmetic frame</title>
+<p id="custom-frame-normal">Normal frame content</p>
+<div class="custom-generic-ad">Generic frame fixture</div>
+<div class="custom-host-ad">Host frame fixture</div>'''
             content = 'text/html'
         elif parsed.path == '/custom-worker.js':
             body = b'''self.addEventListener('install',()=>self.skipWaiting());
@@ -184,7 +213,7 @@ self.addEventListener('message',e=>e.waitUntil((async()=>{
             self.send_header('Content-Length', '0')
             self.end_headers()
             return
-        elif parsed.path == '/custom/probe':
+        elif parsed.path in ('/custom/probe', '/custom/glob-probe'):
             custom_filter_hits[phase] = custom_filter_hits.get(phase, 0) + 1
             body, content = b'custom filter probe', 'text/plain'
         elif parsed.path == '/custom/hits':
@@ -261,7 +290,7 @@ self.addEventListener('message',e=>e.waitUntil((async()=>{
         if parsed.path == '/scroll':
             body += b'<style>body{min-height:5000px}</style>'
         self.send_response(200)
-        if parsed.path in ('/content-blocking', '/custom/filter-test', '/watch'):
+        if parsed.path in ('/content-blocking', '/custom/filter-test', '/custom/frame', '/watch'):
             self.send_header('Content-Security-Policy', "default-src 'self'; script-src 'self' 'nonce-lite-test'; style-src 'none'")
         if parsed.path == '/lifecycle-probe':
             self.send_header('Content-Security-Policy', "default-src 'self' blob:; script-src 'nonce-lite-test'; style-src 'none'")
