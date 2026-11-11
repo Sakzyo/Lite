@@ -889,6 +889,8 @@
 }
 - (void)pageCloseCanceled:(LTPage *)page {
     [_pendingClose removeObject:page.identifier];
+    // The page stayed open, so a later close is no longer an archive.
+    if (page.identifier) [_archiving removeObjectForKey:page.identifier];
     _closingWindow = NO;
     [self displayPages];
 }
@@ -1350,9 +1352,12 @@
       if (temporary) {
           // Read on the writer, so the tab is recorded at the address its last queued save gave it.
           LTNode *closed = [p node:identifier];
-          // A selection saved after the sweep looked means the tab was used again: keep it, unloaded.
+          // A pin or Favorite saved after this close began wins: only a tab that is still temporary
+          // is recorded and removed. A selection saved after an archive sweep looked means the tab
+          // was used again, so it is kept too, unloaded.
+          BOOL stillTemporary = !closed || [closed.kind isEqual:@"temporary"];
           BOOL usedAgain = archiveInterval > 0 && closed && closedAt - closed.lastUsed < archiveInterval;
-          if (!usedAgain) {
+          if (stillTemporary && !usedAgain) {
               if (closed) [p noteClosedTab:closed time:closedAt];
               [p removeNode:identifier];
           }
