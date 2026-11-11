@@ -697,6 +697,27 @@ int main(int argc, char **argv) {
                 }
                 dotOK &= LTContrastRatio(LTFillForWhiteText(tint), NSColor.whiteColor) >= 4.5;
             }
+            // Every wash Lite draws behind sidebar labels: rows, Favorite tiles, Space dots and
+            // the window's hover box. Labels must keep 7:1 on the composited surface.
+            BOOL surfacesOK = YES;
+            NSArray<NSNumber *> *lightWashes = @[ @.45, @.55, @.72, @.92, @.95 ];
+            NSArray<NSNumber *> *darkWashes = @[ @.07, @.08, @.12, @.13, @.15, @.20 ];
+            for (NSString *name in [LTPaletteNames() arrayByAddingObject:@"Private"])
+                for (int dark = 0; dark < 2; dark++) {
+                    NSColor *text = dark ? NSColor.whiteColor : NSColor.blackColor;
+                    for (NSColor *stop in LTBackdropColorsWithOptions(LTPaletteColor(name), dark, contrast))
+                        for (NSNumber *wash in dark ? darkWashes : lightWashes) {
+                            CGFloat alpha = LTWashAlpha(wash.doubleValue, dark, contrast);
+                            NSColor *surface = [stop blendedColorWithFraction:alpha
+                                                                      ofColor:NSColor.whiteColor];
+                            if (LTContrastRatio(surface, text) < 7) {
+                                surfacesOK = NO;
+                                fprintf(stderr, "  %s %s wash %.2f: %.2f:1\n", name.UTF8String,
+                                        dark ? "dark" : "light", alpha, LTContrastRatio(surface, text));
+                            }
+                        }
+                }
+            CHECK(surfacesOK, "Increase Contrast keeps 7:1 on selected and hovered sidebar surfaces");
             for (CGFloat a = 0; a <= 1; a += .05)
                 for (int dark = 0; dark < 2; dark++) {
                     CGFloat raised = LTWashAlpha(a, dark, contrast);

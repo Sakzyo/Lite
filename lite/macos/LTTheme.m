@@ -69,8 +69,8 @@ NSArray<NSColor *> *LTBackdropColorsWithOptions(NSColor *tint, BOOL dark, LTDisp
                            : [NSColor colorWithSRGBRed:1 green:1 blue:1 alpha:1];
     // Increase Contrast keeps a hint of the Space color but moves both stops much closer
     // to the base, so labels drawn on it stay legible.
-    CGFloat first = options.increaseContrast ? (dark ? .88 : .90) : (dark ? .70 : .72);
-    CGFloat second = options.increaseContrast ? (dark ? .92 : .88) : (dark ? .80 : .60);
+    CGFloat first = options.increaseContrast ? (dark ? .93 : .90) : (dark ? .70 : .72);
+    CGFloat second = options.increaseContrast ? (dark ? .95 : .88) : (dark ? .80 : .60);
     NSColor *start = [base blendedColorWithFraction:first ofColor:toward] ?: toward;
     NSColor *end = [shifted blendedColorWithFraction:second ofColor:toward] ?: toward;
     // Reduce Transparency draws a single flat color instead of a gradient.
@@ -81,8 +81,10 @@ NSArray<NSColor *> *LTBackdropColorsWithOptions(NSColor *tint, BOOL dark, LTDisp
 CGFloat LTWashAlpha(CGFloat alpha, BOOL dark, LTDisplayOptions options) {
     if (!options.increaseContrast)
         return alpha;
-    // Raise washes enough that a selected or hovered row reads as a distinct shape.
-    return MIN(dark ? alpha * 1.8 : alpha + (1 - alpha) * .5, 1);
+    // Light washes move halfway to opaque white, which only raises black text contrast.
+    // Dark washes lighten the surface under white text, so they are capped at .20 to keep
+    // labels at 7:1 on every Space color; the outline on selected shapes carries the rest.
+    return dark ? MIN(alpha * 1.8, MAX(alpha, .20)) : MIN(alpha + (1 - alpha) * .5, 1);
 }
 NSColor *LTBorderColor(BOOL dark, BOOL onBackdrop, LTDisplayOptions options) {
     if (options.increaseContrast)
