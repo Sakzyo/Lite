@@ -9,8 +9,8 @@ import tempfile
 from sdk_support import digest, download, extract_tar, installation_lock, recover, replace_directory, valid_receipt, write_receipt
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-VERSION = '156.0.26+g8ea0c73+chromium-156.0.8078.88'
-DIGESTS = {'macosarm64': 'ca4fafe7a9c52d9f28200bb8713971a9662b891c', 'macosx64': 'f0f47aa3cdefa7eea54f2e8c6e73c68b4db125f3'}
+VERSION = '158.0.6+g23f1736+chromium-158.0.8127.89'
+DIGESTS = {'macosarm64': '63faae7ccd6a497430c06d26b17c4cac20dca387', 'macosx64': '49f270a76788af4ff8d5d6de05b1adf22377108c'}
 
 
 def sdk_matches(directory, arch):
